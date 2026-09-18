@@ -1,0 +1,26 @@
+# Data directories (created at runtime)
+data/
+backend/storage/
+storage/
+
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# Node
+frontend/node_modules/
+.next/
+
+# Crash dumps
+*.stackdump
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
