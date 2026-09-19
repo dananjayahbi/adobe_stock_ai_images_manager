@@ -97,8 +97,13 @@ class AutoFixResponse(BaseModel):
     ``success`` on the endpoint means a corrected file was written - not that
     the image now passes. ``manual`` lists the issue codes that need a human
     decision and were deliberately left alone.
+
+    In ``adaptive`` mode ``log`` is the primary payload: it explains every pass
+    and, most importantly, why the loop stopped.
     """
     record_id: str
+    #: "single" (one recipe pass) or "adaptive" (escalating repeat passes).
+    mode: str = "single"
     fixed: list[str] = []
     remaining_fixable: list[str] = []
     manual: list[str] = []
@@ -114,6 +119,20 @@ class AutoFixResponse(BaseModel):
     srgb_embedded: bool = False
     history: list[dict[str, Any]] = []
     summary: str = ""
+
+    # ---- Adaptive-mode detail (empty in single mode) ----
+    #: Why the loop stopped. The single most useful field when the score
+    #: plateaued, because the usual cause is a cap the engine cannot move.
+    stop_reason: str = ""
+    #: Per-dimension goal the run aimed for (0-1), when adaptive.
+    target: float | None = None
+    target_met: bool = False
+    #: Structured decision log: one entry per pass, plus setup and stop reasons.
+    log: list[dict[str, Any]] = []
+    #: Per-dimension progress snapshots, before and after the run.
+    progress_before: dict[str, Any] | None = None
+    progress_after: dict[str, Any] | None = None
+
     #: The refreshed record, so the caller can update its list without refetching.
     record: RecordResponse
 

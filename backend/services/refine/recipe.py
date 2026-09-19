@@ -128,13 +128,34 @@ def _severity_scale(issue: Issue, ideal: float, fail: float) -> float:
     return float(np.clip((value - ideal) / (fail - ideal), 0.25, 1.0))
 
 
-def _capped(strength: float) -> float:
+#: Absolute ceiling an escalated correction may reach. Above this the edit would
+#: read as the heavy colour grading and overprocessing Adobe lists as refusal
+#: reasons, even if it would score better.
+ABSOLUTE_MAX_STRENGTH = 0.85
+
+
+def _capped(strength: float, escalation: float = 1.0) -> float:
     """Clamp a correction strength to Adobe-safe territory.
 
     Guards the DON'Ts: no single operation may be dramatic enough to read as
     overprocessing, regardless of how far outside tolerance the measurement is.
+
+    ``escalation`` scales the correction for *repeated* attempts on the same
+    image. This exists because the recipe is otherwise idempotent: the strength
+    is a pure function of the measured issue, so re-running it on its own output
+    recomputes the identical strength and produces an identical image. That is
+    why an earlier auto-fix could report "fixed 4 issues" while the score did
+    not move by a single point. A caller that wants to make real progress must
+    ask for progressively stronger corrections - and this clamp is what stops
+    that progression from ever reaching an un-exportable edit.
+
+    At ``escalation == 1.0`` the limit is exactly :data:`MAX_CORRECTION_STRENGTH`,
+    so the single-shot behaviour is unchanged; it only opens up as the caller
+    escalates, and never past :data:`ABSOLUTE_MAX_STRENGTH`.
     """
-    return float(min(strength, MAX_CORRECTION_STRENGTH))
+    factor = max(1.0, escalation)
+    limit = min(MAX_CORRECTION_STRENGTH * factor, ABSOLUTE_MAX_STRENGTH)
+    return float(min(strength * factor, limit))
 
 
 def apply_recipe(
@@ -142,6 +163,7 @@ def apply_recipe(
     issues: list[Issue],
     *,
     metrics: dict[str, float] | None = None,
+    escalation: float = 1.0,
 ) -> RefineOutcome:
     """Apply every corrective operation implied by ``issues``.
 
@@ -153,6 +175,10 @@ def apply_recipe(
         image: BGR uint8 array to correct (mutated copy is returned).
         issues: Issues reported by the acceptance scorer.
         metrics: Current measurements, used to size the grain addition.
+        escalation: Multiplier on every correction strength. 1.0 is the default
+            single-shot behaviour; the adaptive auto-fix loop raises it on each
+            retry so a stalled metric actually moves. Clamped internally to
+            :data:`ABSOLUTE_MAX_STRENGTH`.
 
     Returns:
         A :class:`RefineOutcome` carrying the corrected image and a log of the
@@ -161,6 +187,7 @@ def apply_recipe(
     metrics = metrics or {}
     outcome = RefineOutcome(image=image.copy())
     by_code = {issue.code: issue for issue in issues}
+    cap = lambda strength: _capped(strength, escalation)  # noqa: E731
 
     # ---------------------------------------------------------------- #
     # 1. Tone: clamp blown highlights and crushed shadows.
@@ -199,7 +226,7 @@ def apply_recipe(
     if SKIN_TONE_CAST in by_code:
         issue = by_code[SKIN_TONE_CAST]
         scale = _severity_scale(issue, 0.42, 0.68)
-        amount = _capped(0.18 * scale)
+        amount = cap(0.18 * scale)
         factor = 1.0 - amount
         outcome.image = ops.desaturate_hue_band(
             outcome.image, *HUE_RED_ORANGE, factor=factor
@@ -216,7 +243,7 @@ def apply_recipe(
     if NEON_GREENS in by_code:
         issue = by_code[NEON_GREENS]
         scale = _severity_scale(issue, 0.50, 0.80)
-        amount = _capped(0.16 * scale)
+        amount = cap(0.16 * scale)
         factor = 1.0 - amount
         outcome.image = ops.desaturate_hue_band(
             outcome.image, *HUE_YELLOW_GREEN, factor=factor
@@ -243,8 +270,12 @@ def apply_recipe(
             for step in outcome.steps
             if step.operation.startswith("desaturate")
         )
-        remaining = max(MAX_TOTAL_DESATURATION - already, MIN_DESATURATION_STEP)
-        amount = min(_capped(0.12 * scale), remaining)
+        # The total-desaturation budget is a *composition* limit, not a
+        # per-pass one, so it scales with the escalation too. Otherwise a retry
+        # would be blocked by the desaturation the previous pass already spent.
+        budget = min(MAX_TOTAL_DESATURATION * max(1.0, escalation), ABSOLUTE_MAX_STRENGTH)
+        remaining = max(budget - already, MIN_DESATURATION_STEP)
+        amount = min(cap(0.12 * scale), remaining)
         factor = 1.0 - amount
         outcome.image = ops.desaturate_overall(outcome.image, factor)
         outcome.steps.append(
@@ -262,7 +293,7 @@ def apply_recipe(
     if CHROMA_FRINGE in by_code:
         issue = by_code[CHROMA_FRINGE]
         scale = _severity_scale(issue, 0.02, 0.15)
-        strength = _capped(0.4 + 0.5 * scale)
+        strength = cap(0.4 + 0.5 * scale)
         outcome.image = ops.defringe(outcome.image, strength=strength)
         outcome.steps.append(
             RefineStep(
@@ -276,7 +307,7 @@ def apply_recipe(
     if EDGE_HALO in by_code:
         issue = by_code[EDGE_HALO]
         scale = _severity_scale(issue, 0.05, 0.30)
-        strength = _capped(0.4 + 0.4 * scale)
+        strength = cap(0.4 + 0.4 * scale)
         outcome.image = ops.remove_halo(outcome.image, strength=strength)
         outcome.steps.append(
             RefineStep(
@@ -297,7 +328,7 @@ def apply_recipe(
             if issue.value is not None
             else 0.5
         )
-        amount = _capped(0.35 + 0.35 * scale)
+        amount = cap(0.35 + 0.35 * scale)
         outcome.image = ops.sharpen(outcome.image, amount=amount, radius=1.1)
         outcome.steps.append(
             RefineStep(
@@ -326,13 +357,16 @@ def apply_recipe(
         outcome.addressed.append(FLAT_SYNTHETIC_TEXTURE)
 
     if EXCESSIVE_NOISE in by_code:
-        # Denoise lightly; aggressive denoising recreates the flat look.
-        outcome.image = ops.deblock(outcome.image, strength=0.35)
+        # Denoise lightly; aggressive denoising recreates the flat look. The
+        # strength still escalates, because a single light pass is not enough to
+        # bring a badly noisy frame under the natural-noise ceiling.
+        denoise_strength = cap(0.35)
+        outcome.image = ops.deblock(outcome.image, strength=denoise_strength)
         outcome.image = ops.sharpen(outcome.image, amount=0.25, radius=1.0)
         outcome.steps.append(
             RefineStep(
                 "light_denoise",
-                0.35,
+                denoise_strength,
                 "Smoothed excessive sensor noise while preserving edge detail.",
             )
         )

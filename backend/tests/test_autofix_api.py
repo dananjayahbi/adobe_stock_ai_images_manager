@@ -105,15 +105,82 @@ def test_autofix_unknown_record_returns_404(client):
 def test_autofix_does_not_move_the_record_between_stages(client, saturated_record):
     """An auto-fix is a correction attempt, not a pipeline transition.
 
-    The operator decides whether to re-run the compatibility check; moving the
-    record here would make that decision for them.
+    Moving the record would silently promote an image the operator has not
+    reviewed, and would make the "re-run the compatibility check" decision for
+    them. Checked for both modes.
     """
-    before = client.get("/api/records").json()["items"]
-    stage_before = next(r for r in before if r["id"] == saturated_record)["stage"]
+    for mode in ("single", "adaptive"):
+        before = client.get("/api/records").json()["items"]
+        record_before = next(r for r in before if r["id"] == saturated_record)
 
-    client.post(f"/api/records/{saturated_record}/autofix")
+        response = client.post(
+            f"/api/records/{saturated_record}/autofix", params={"mode": mode}
+        )
+        assert response.status_code == 200, response.text
 
-    after = client.get("/api/records").json()["items"]
-    stage_after = next(r for r in after if r["id"] == saturated_record)["stage"]
+        after = client.get("/api/records").json()["items"]
+        record_after = next(r for r in after if r["id"] == saturated_record)
 
-    assert stage_after == stage_before
+        assert record_after["stage"] == record_before["stage"], (
+            f"{mode} mode changed the stage"
+        )
+        assert record_after["queued_stage"] == record_before["queued_stage"], (
+            f"{mode} mode changed the queue"
+        )
+
+
+# --------------------------------------------------------------------------- #
+# Modes
+# --------------------------------------------------------------------------- #
+
+def test_single_mode_is_the_default(client, saturated_record):
+    body = client.post(f"/api/records/{saturated_record}/autofix").json()
+    assert body["mode"] == "single"
+    # Single mode has no loop, so no target and no log.
+    assert body["log"] == []
+    assert body["target"] is None
+    assert body["stop_reason"] == ""
+
+
+def test_adaptive_mode_returns_the_log_and_target(client, saturated_record):
+    response = client.post(
+        f"/api/records/{saturated_record}/autofix",
+        params={"mode": "adaptive", "target": 0.8},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+
+    assert body["mode"] == "adaptive"
+    assert body["target"] == pytest.approx(0.8)
+    assert body["log"], "adaptive mode must always return a decision log"
+    assert body["stop_reason"], "adaptive mode must explain why it stopped"
+    assert body["progress_before"] is not None
+    assert body["progress_after"] is not None
+    assert body["progress_after"]["dimensions"]
+
+    for entry in body["log"]:
+        assert set(entry) == {"level", "message", "pass", "score"}
+
+
+def test_adaptive_target_is_clamped_server_side(client, saturated_record):
+    body = client.post(
+        f"/api/records/{saturated_record}/autofix",
+        params={"mode": "adaptive", "target": 0.01},
+    ).json()
+    assert body["target"] == pytest.approx(0.6)
+
+
+def test_adaptive_never_reports_a_worse_score(client, saturated_record):
+    body = client.post(
+        f"/api/records/{saturated_record}/autofix",
+        params={"mode": "adaptive", "target": 0.95},
+    ).json()
+    assert body["final_score"] >= body["initial_score"]
+
+
+def test_autofix_rejects_an_unknown_mode(client, saturated_record):
+    response = client.post(
+        f"/api/records/{saturated_record}/autofix", params={"mode": "turbo"}
+    )
+    assert response.status_code == 400
+    assert "mode" in response.json()["detail"].lower()

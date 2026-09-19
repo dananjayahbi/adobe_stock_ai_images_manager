@@ -242,9 +242,44 @@ export async function deleteRecords(ids: string[]): Promise<BulkActionResult> {
   return data;
 }
 
+/** One line of an adaptive auto-fix run log. */
+export interface AutoFixLogEntry {
+  level: "info" | "change" | "warn" | "stop" | "done";
+  message: string;
+  /** Pass number; 0 is setup, before any correction. */
+  pass: number;
+  score: number | null;
+}
+
+/** One score dimension the adaptive loop tries to lift. */
+export interface AutoFixDimension {
+  key: string;
+  label: string;
+  score: number;
+  weight: number;
+  fixable_codes: string[];
+  manual_codes: string[];
+  is_fixable: boolean;
+}
+
+/** Per-dimension goal tracking, before or after a run. */
+export interface AutoFixProgress {
+  target: number;
+  overall_score: number;
+  all_met: boolean;
+  blocked_by_manual: boolean;
+  dimensions: AutoFixDimension[];
+  unmet_fixable: string[];
+  unmet_manual: string[];
+}
+
+/** Correction modes. `single` = one recipe pass; `adaptive` = repeat + escalate. */
+export type AutoFixMode = "single" | "adaptive";
+
 /** Outcome of an automatic correction attempt (see `POST /api/records/{id}/autofix`). */
 export interface AutoFixResult {
   record_id: string;
+  mode: AutoFixMode;
   /** Issue codes the engine successfully addressed. */
   fixed: string[];
   /** Codes still auto-fixable - a retry may help. */
@@ -262,24 +297,49 @@ export interface AutoFixResult {
   srgb_embedded: boolean;
   history: Record<string, unknown>[];
   summary: string;
+  /** Why the loop stopped - the key field when the score plateaued. */
+  stop_reason: string;
+  /** Per-dimension goal the run aimed for (0-1), when adaptive. */
+  target: number | null;
+  target_met: boolean;
+  /** Structured decision log: one entry per pass, plus setup and stop reasons. */
+  log: AutoFixLogEntry[];
+  progress_before: AutoFixProgress | null;
+  progress_after: AutoFixProgress | null;
   /** The refreshed record, so callers need not refetch the list. */
   record: ImageRecord;
 }
 
+/** Target bounds, mirrored from `backend/services/autofix/targets.py`. */
+export const AUTOFIX_DEFAULT_TARGET = 0.8;
+export const AUTOFIX_MIN_TARGET = 0.6;
+export const AUTOFIX_MAX_TARGET = 0.95;
+
 /**
- * Apply every automatically fixable correction to a record and re-score it.
+ * Apply automatically fixable corrections to a record and re-score it.
  *
  * The backend writes the corrected file as the record's working copy, so the
  * preview must be refetched afterwards.
+ *
+ * @param mode `single` applies the recipe once; `adaptive` repeats with
+ *   escalating strength until every auto-fixable dimension reaches `target`.
+ *   Adaptive is the mode that can actually move the score, because the
+ *   single-pass recipe recomputes identical strengths and is idempotent.
+ * @param target Per-dimension goal for adaptive mode (0-1).
  */
 export async function autoFixRecord(
   id: string,
-  variant: "working" | "refined" | "upscaled" = "working"
+  options: {
+    variant?: "working" | "refined" | "upscaled";
+    mode?: AutoFixMode;
+    target?: number;
+  } = {}
 ): Promise<AutoFixResult> {
+  const { variant = "working", mode = "single", target } = options;
   const { data } = await api.post<AutoFixResult>(
     `/api/records/${id}/autofix`,
     null,
-    { params: { variant } }
+    { params: { variant, mode, ...(target !== undefined ? { target } : {}) } }
   );
   return data;
 }
