@@ -172,15 +172,15 @@ export default function BeforeAfterCompare({
   return (
     <section className="space-y-2">
       <header className="flex flex-wrap items-center gap-2">
-        <div className="flex overflow-hidden rounded-md border border-zinc-700">
+        <div className="flex overflow-hidden rounded-md border border-navy-700">
           <button
             type="button"
             onClick={() => setMode("split")}
             aria-pressed={mode === "split"}
             className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium transition-colors ${
               mode === "split"
-                ? "bg-sky-500/20 text-sky-200"
-                : "bg-zinc-800/60 text-zinc-400 hover:bg-zinc-700"
+                ? "bg-accent-500/20 text-accent-200"
+                : "bg-navy-800/60 text-navy-300 hover:bg-navy-700"
             }`}
           >
             <SplitSquareHorizontal className="h-3.5 w-3.5" />
@@ -190,10 +190,10 @@ export default function BeforeAfterCompare({
             type="button"
             onClick={() => setMode("side")}
             aria-pressed={mode === "side"}
-            className={`inline-flex items-center gap-1 border-l border-zinc-700 px-2.5 py-1 text-xs font-medium transition-colors ${
+            className={`inline-flex items-center gap-1 border-l border-navy-700 px-2.5 py-1 text-xs font-medium transition-colors ${
               mode === "side"
-                ? "bg-sky-500/20 text-sky-200"
-                : "bg-zinc-800/60 text-zinc-400 hover:bg-zinc-700"
+                ? "bg-accent-500/20 text-accent-200"
+                : "bg-navy-800/60 text-navy-300 hover:bg-navy-700"
             }`}
           >
             <Columns2 className="h-3.5 w-3.5" />
@@ -201,17 +201,17 @@ export default function BeforeAfterCompare({
           </button>
         </div>
 
-        <div className="flex items-center gap-1 rounded-md border border-zinc-700 bg-zinc-800/60">
+        <div className="flex items-center gap-1 rounded-md border border-navy-700 bg-navy-800/60">
           <button
             type="button"
             onClick={() => applyZoom(zoom / 1.5)}
             disabled={zoom <= MIN_ZOOM}
             aria-label="Zoom out"
-            className="p-1.5 text-zinc-400 transition-colors hover:text-zinc-100 disabled:opacity-40"
+            className="p-1.5 text-navy-300 transition-colors hover:text-navy-50 disabled:opacity-40"
           >
             <ZoomOut className="h-3.5 w-3.5" />
           </button>
-          <span className="w-12 text-center text-xs tabular-nums text-zinc-400">
+          <span className="w-12 text-center text-xs tabular-nums text-navy-300">
             {zoom.toFixed(1)}×
           </span>
           <button
@@ -219,7 +219,7 @@ export default function BeforeAfterCompare({
             onClick={() => applyZoom(zoom * 1.5)}
             disabled={zoom >= MAX_ZOOM}
             aria-label="Zoom in"
-            className="p-1.5 text-zinc-400 transition-colors hover:text-zinc-100 disabled:opacity-40"
+            className="p-1.5 text-navy-300 transition-colors hover:text-navy-50 disabled:opacity-40"
           >
             <ZoomIn className="h-3.5 w-3.5" />
           </button>
@@ -227,13 +227,13 @@ export default function BeforeAfterCompare({
             type="button"
             onClick={() => applyZoom(1)}
             aria-label="Reset zoom"
-            className="border-l border-zinc-700 p-1.5 text-zinc-400 transition-colors hover:text-zinc-100"
+            className="border-l border-navy-700 p-1.5 text-navy-300 transition-colors hover:text-navy-50"
           >
             <Maximize2 className="h-3.5 w-3.5" />
           </button>
         </div>
 
-        <span className="text-xs text-zinc-500">
+        <span className="text-xs text-navy-400">
           Scroll to zoom, drag to pan. Both views stay locked together.
         </span>
       </header>
@@ -242,7 +242,7 @@ export default function BeforeAfterCompare({
         <div
           ref={splitRef}
           {...frameProps}
-          className="relative h-[28rem] select-none overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950"
+          className="relative h-[28rem] select-none overflow-hidden rounded-lg border border-navy-800 bg-navy-950"
         >
           {/* After, as the base layer. */}
           <img
@@ -270,7 +270,7 @@ export default function BeforeAfterCompare({
 
           {/* Divider. */}
           <div
-            className="absolute inset-y-0 w-0.5 cursor-col-resize bg-sky-400/90"
+            className="absolute inset-y-0 w-0.5 cursor-col-resize bg-accent-400/90"
             style={{ left: `${split}%` }}
             onMouseDown={(event) => {
               event.preventDefault();
@@ -282,7 +282,7 @@ export default function BeforeAfterCompare({
             aria-valuemin={0}
             aria-valuemax={100}
           >
-            <span className="absolute left-1/2 top-1/2 h-7 w-7 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-sky-400 bg-zinc-900" />
+            <span className="absolute left-1/2 top-1/2 h-7 w-7 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-accent-400 bg-navy-900" />
           </div>
 
           <Tag position="left">{beforeLabel}</Tag>
@@ -299,7 +299,7 @@ export default function BeforeAfterCompare({
             <figure key={pane.key} className="space-y-1.5">
               <div
                 {...frameProps}
-                className="relative h-[24rem] select-none overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950"
+                className="relative h-[24rem] select-none overflow-hidden rounded-lg border border-navy-800 bg-navy-950"
               >
                 <img
                   src={pane.url}
@@ -315,7 +315,7 @@ export default function BeforeAfterCompare({
                 {!loaded[pane.key as "before" | "after"] && <Spinner />}
               </div>
               {pane.dims && (
-                <figcaption className="text-center text-xs tabular-nums text-zinc-500">
+                <figcaption className="text-center text-xs tabular-nums text-navy-400">
                   {pane.dims[0]}×{pane.dims[1]}
                 </figcaption>
               )}
@@ -324,7 +324,7 @@ export default function BeforeAfterCompare({
         </div>
       )}
 
-      {caption && <p className="text-xs text-zinc-500">{caption}</p>}
+      {caption && <p className="text-xs text-navy-400">{caption}</p>}
     </section>
   );
 }
@@ -338,7 +338,7 @@ function Tag({
 }) {
   return (
     <span
-      className={`pointer-events-none absolute top-2 rounded bg-zinc-950/80 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-300 ${
+      className={`pointer-events-none absolute top-2 rounded bg-navy-950/80 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-navy-200 ${
         position === "left" ? "left-2" : "right-2"
       }`}
     >
@@ -349,8 +349,8 @@ function Tag({
 
 function Spinner() {
   return (
-    <span className="absolute inset-0 grid place-items-center bg-zinc-950/40">
-      <Loader2 className="h-5 w-5 animate-spin text-zinc-500" />
+    <span className="absolute inset-0 grid place-items-center bg-navy-950/40">
+      <Loader2 className="h-5 w-5 animate-spin text-navy-400" />
     </span>
   );
 }

@@ -17,14 +17,14 @@ interface AcceptanceReportPanelProps {
 const SEVERITY_STYLES: Record<string, string> = {
   critical: "border-red-500/40 bg-red-500/10 text-red-200",
   major: "border-amber-500/40 bg-amber-500/10 text-amber-200",
-  minor: "border-zinc-600/50 bg-zinc-700/20 text-zinc-300",
+  minor: "border-navy-600/50 bg-navy-700/20 text-navy-200",
 };
 
 const TONE_BAR: Record<ReturnType<typeof scoreTone>, string> = {
   good: "bg-emerald-500",
   warn: "bg-amber-500",
   bad: "bg-red-500",
-  none: "bg-zinc-600",
+  none: "bg-navy-600",
 };
 
 /**
@@ -43,20 +43,20 @@ export default function AcceptanceReportPanel({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-lg border border-zinc-800 bg-zinc-900/60 p-4">
+      <div className="rounded-lg border border-navy-800 bg-navy-900/60 p-4">
         <div className="flex items-end justify-between gap-3">
           <div>
-            <p className="text-xs uppercase tracking-wide text-zinc-500">
+            <p className="text-xs uppercase tracking-wide text-navy-400">
               Acceptance score
             </p>
-            <p className="text-3xl font-bold tabular-nums text-zinc-100">
+            <p className="text-3xl font-bold tabular-nums text-navy-50">
               {formatScore(report.score)}
             </p>
           </div>
-          <div className="text-right text-xs text-zinc-500">
+          <div className="text-right text-xs text-navy-400">
             <p>
               Threshold{" "}
-              <span className="font-semibold text-zinc-300">
+              <span className="font-semibold text-navy-200">
                 {formatScore(report.threshold)}
               </span>
             </p>
@@ -68,7 +68,7 @@ export default function AcceptanceReportPanel({
           </div>
         </div>
 
-        <div className="mt-3 h-2 overflow-hidden rounded-full bg-zinc-800">
+        <div className="mt-3 h-2 overflow-hidden rounded-full bg-navy-800">
           <div
             className={`h-full rounded-full ${TONE_BAR[tone]}`}
             style={{ width: `${Math.min(report.score * 100, 100)}%` }}
@@ -88,7 +88,7 @@ export default function AcceptanceReportPanel({
 
       {/* Weighted component breakdown */}
       <div className="space-y-2">
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-navy-400">
           Score components
         </h4>
         {components.map((component) => {
@@ -96,17 +96,17 @@ export default function AcceptanceReportPanel({
           return (
             <div key={component.key}>
               <div className="mb-1 flex items-center justify-between text-xs">
-                <span className="text-zinc-400">
+                <span className="text-navy-300">
                   {component.label}
-                  <span className="ml-1.5 text-zinc-600">
+                  <span className="ml-1.5 text-navy-600">
                     {Math.round(component.weight * 100)}%
                   </span>
                 </span>
-                <span className="tabular-nums text-zinc-300">
+                <span className="tabular-nums text-navy-200">
                   {formatScore(component.score)}
                 </span>
               </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-zinc-800">
+              <div className="h-1.5 overflow-hidden rounded-full bg-navy-800">
                 <div
                   className={`h-full rounded-full ${TONE_BAR[componentTone]}`}
                   style={{ width: `${Math.min(component.score * 100, 100)}%` }}
@@ -120,7 +120,7 @@ export default function AcceptanceReportPanel({
       {/* Detected issues */}
       {report.issues.length > 0 && (
         <div className="space-y-2">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-navy-400">
             Detected issues ({report.issues.length})
           </h4>
           <ul className="space-y-1.5">
@@ -155,14 +155,14 @@ export default function AcceptanceReportPanel({
       {/* Stage 5 remediation advice */}
       {remediation && remediation.length > 0 && (
         <div className="space-y-2">
-          <h4 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+          <h4 className="text-xs font-semibold uppercase tracking-wide text-navy-400">
             What to do
           </h4>
           <ul className="space-y-1.5">
             {remediation.map((hint, index) => (
               <li
                 key={index}
-                className="flex items-start gap-2 rounded border border-sky-500/30 bg-sky-500/10 px-2.5 py-1.5 text-xs text-sky-100"
+                className="flex items-start gap-2 rounded border border-accent-500/30 bg-accent-500/10 px-2.5 py-1.5 text-xs text-accent-100"
               >
                 <Info className="mt-0.5 h-3 w-3 shrink-0" />
                 <span>{hint}</span>

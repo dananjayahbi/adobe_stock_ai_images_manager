@@ -76,6 +76,8 @@ def _set_stage(
 ) -> None:
     """Advance a record to ``stage``, recording an optional per-stage detail."""
     record.stage = stage
+    # Reaching the stage satisfies any pending queue entry for it.
+    record.queued_stage = None
     record.stage_updated_at = utcnow()
     if detail_key and detail is not None:
         details = dict(record.stage_details or {})

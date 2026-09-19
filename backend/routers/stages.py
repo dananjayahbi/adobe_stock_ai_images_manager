@@ -29,6 +29,7 @@ from models import ImageRecord, ImageStatus, PipelineStage, utcnow
 from schemas import (
     CategoryResponse,
     CsvExportRequest,
+    GpuListResponse,
     JobResponse,
     MetadataUpdateRequest,
     RecordResponse,
@@ -358,6 +359,17 @@ async def upscale_catalog(refresh: bool = Query(default=False)):
 async def upscale_default_options() -> dict:
     """The Stage 3 options panel's opening state."""
     return upscaler.default_options().to_dict()
+
+
+@router.get("/api/upscale/gpus", response_model=GpuListResponse)
+async def upscale_gpus(refresh: bool = Query(default=False)):
+    """The Vulkan devices this machine actually exposes.
+
+    The device list is enumerated from the CLI rather than hard-coded, so the
+    picker never offers a GPU that is not present and never hides a second
+    discrete GPU. ``refresh`` re-probes after a driver change.
+    """
+    return GpuListResponse(**upscaler.gpus_payload(refresh=refresh))
 
 
 @router.post("/api/upscale/estimate", response_model=UpscaleEstimateResponse)

@@ -12,6 +12,20 @@ STORAGE_ROOT = REPO_ROOT / "storage"
 class Settings(BaseSettings):
     """Centralized application settings with QC thresholds for Adobe Stock compliance."""
 
+    # ------------------------------------------------------------------ #
+    # Server / CORS
+    # ------------------------------------------------------------------ #
+    #: Port the API listens on. Kept in config rather than only on the uvicorn
+    #: command line so the CORS default below can stay in step with it.
+    BACKEND_PORT: int = 8100
+    #: Origins allowed to call the API. The frontend runs on a different port,
+    #: so browsers block its requests unless the exact origin is listed here.
+    #: Override with a JSON array or comma-separated string in .env.
+    CORS_ORIGINS: list[str] = [
+        "http://localhost:3100",
+        "http://127.0.0.1:3100",
+    ]
+
     # LLM gateway (OpenAI-compatible). Defaults to the local multi-provider router.
     LLM_BASE_URL: str = "http://localhost:4006/api/gateway/v1"
     LLM_API_KEY: str = ""

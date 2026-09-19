@@ -44,10 +44,10 @@ export default function GalleryPreviewModal({
       onClick={onClose}
     >
       <div
-        className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-zinc-800 bg-zinc-950 lg:flex-row"
+        className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-xl border border-navy-800 bg-navy-950 lg:flex-row"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex flex-1 items-center justify-center overflow-auto bg-zinc-900 p-4">
+        <div className="flex flex-1 items-center justify-center overflow-auto bg-navy-900 p-4">
           {thumbUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -56,17 +56,17 @@ export default function GalleryPreviewModal({
               className="max-h-[80vh] w-auto object-contain"
             />
           ) : (
-            <p className="text-sm text-zinc-500">No thumbnail available.</p>
+            <p className="text-sm text-navy-400">No thumbnail available.</p>
           )}
         </div>
 
-        <aside className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto border-t border-zinc-800 p-5 lg:w-80 lg:border-l lg:border-t-0">
+        <aside className="flex w-full shrink-0 flex-col gap-4 overflow-y-auto border-t border-navy-800 p-5 lg:w-80 lg:border-l lg:border-t-0">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
-              <h2 className="truncate text-sm font-semibold text-zinc-100">
+              <h2 className="truncate text-sm font-semibold text-navy-50">
                 {record.generated_title || record.filename}
               </h2>
-              <p className="mt-0.5 font-mono text-[11px] text-zinc-500">
+              <p className="mt-0.5 font-mono text-[11px] text-navy-400">
                 {record.filename}
               </p>
             </div>
@@ -74,7 +74,7 @@ export default function GalleryPreviewModal({
               type="button"
               onClick={onClose}
               aria-label="Close preview"
-              className="rounded-md p-1 text-zinc-500 transition-colors hover:text-zinc-200"
+              className="rounded-md p-1 text-navy-400 transition-colors hover:text-navy-100"
             >
               <X className="h-4 w-4" />
             </button>
@@ -107,10 +107,10 @@ export default function GalleryPreviewModal({
 
           {record.generated_description && (
             <div>
-              <p className="mb-1 text-[11px] uppercase tracking-wide text-zinc-500">
+              <p className="mb-1 text-[11px] uppercase tracking-wide text-navy-400">
                 Description
               </p>
-              <p className="text-xs leading-relaxed text-zinc-300">
+              <p className="text-xs leading-relaxed text-navy-200">
                 {record.generated_description}
               </p>
             </div>
@@ -118,14 +118,14 @@ export default function GalleryPreviewModal({
 
           {record.generated_keywords && record.generated_keywords.length > 0 && (
             <div>
-              <p className="mb-1.5 text-[11px] uppercase tracking-wide text-zinc-500">
+              <p className="mb-1.5 text-[11px] uppercase tracking-wide text-navy-400">
                 Keywords ({record.generated_keywords.length})
               </p>
               <div className="flex flex-wrap gap-1">
                 {record.generated_keywords.map((keyword) => (
                   <span
                     key={keyword}
-                    className="rounded-full border border-zinc-700 px-2 py-0.5 text-[11px] text-zinc-300"
+                    className="rounded-full border border-navy-700 px-2 py-0.5 text-[11px] text-navy-200"
                   >
                     {keyword}
                   </span>
@@ -138,7 +138,7 @@ export default function GalleryPreviewModal({
             <button
               type="button"
               onClick={() => onToggleUsed(record)}
-              className="inline-flex items-center justify-center gap-1.5 rounded-md border border-zinc-700 px-3 py-2 text-xs font-medium text-zinc-200 transition-colors hover:border-zinc-500"
+              className="inline-flex items-center justify-center gap-1.5 rounded-md border border-navy-700 px-3 py-2 text-xs font-medium text-navy-100 transition-colors hover:border-navy-400"
             >
               {record.is_used ? (
                 <Circle className="h-3.5 w-3.5" />
@@ -157,8 +157,8 @@ export default function GalleryPreviewModal({
               aria-disabled={!isReady}
               className={`inline-flex items-center justify-center gap-1.5 rounded-md px-3 py-2 text-xs font-semibold transition-colors ${
                 isReady
-                  ? "bg-sky-600 text-white hover:bg-sky-500"
-                  : "cursor-not-allowed bg-zinc-800 text-zinc-500"
+                  ? "bg-accent-600 text-white hover:bg-accent-500"
+                  : "cursor-not-allowed bg-navy-800 text-navy-400"
               }`}
             >
               <Download className="h-3.5 w-3.5" />
@@ -182,9 +182,9 @@ export default function GalleryPreviewModal({
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex items-center justify-between gap-3 border-b border-zinc-800/70 pb-1.5">
-      <dt className="text-zinc-500">{label}</dt>
-      <dd className="font-medium text-zinc-200">{value}</dd>
+    <div className="flex items-center justify-between gap-3 border-b border-navy-800/70 pb-1.5">
+      <dt className="text-navy-400">{label}</dt>
+      <dd className="font-medium text-navy-100">{value}</dd>
     </div>
   );
 }

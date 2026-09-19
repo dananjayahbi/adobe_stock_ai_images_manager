@@ -58,13 +58,13 @@ export default function CsvPanel({ recordIds, onClose }: CsvPanelProps) {
   };
 
   return (
-    <section className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+    <section className="space-y-3 rounded-xl border border-navy-800 bg-navy-900/60 p-4">
       <header className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h3 className="text-sm font-semibold text-zinc-200">
+          <h3 className="text-sm font-semibold text-navy-100">
             Adobe Stock CSV
           </h3>
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-navy-400">
             Columns: Filename, Title, Keywords, Category, Releases. Upload it
             alongside the images; Adobe matches rows by filename.
           </p>
@@ -75,7 +75,7 @@ export default function CsvPanel({ recordIds, onClose }: CsvPanelProps) {
             type="button"
             onClick={() => void load()}
             disabled={isLoading}
-            className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-800/70 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-700 disabled:opacity-50"
+            className="inline-flex items-center gap-1.5 rounded-md border border-navy-700 bg-navy-800/70 px-3 py-1.5 text-xs font-medium text-navy-200 transition-colors hover:bg-navy-700 disabled:opacity-50"
           >
             {isLoading && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
             {preview ? "Refresh" : "Build preview"}
@@ -86,7 +86,7 @@ export default function CsvPanel({ recordIds, onClose }: CsvPanelProps) {
               <button
                 type="button"
                 onClick={() => void handleCopy()}
-                className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 bg-zinc-800/70 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-700"
+                className="inline-flex items-center gap-1.5 rounded-md border border-navy-700 bg-navy-800/70 px-3 py-1.5 text-xs font-medium text-navy-200 transition-colors hover:bg-navy-700"
               >
                 {copied ? (
                   <Check className="h-3.5 w-3.5 text-emerald-400" />
@@ -111,7 +111,7 @@ export default function CsvPanel({ recordIds, onClose }: CsvPanelProps) {
             type="button"
             onClick={onClose}
             aria-label="Close CSV panel"
-            className="rounded p-1 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+            className="rounded p-1 text-navy-400 transition-colors hover:bg-navy-800 hover:text-navy-200"
           >
             <X className="h-3.5 w-3.5" />
           </button>
@@ -136,7 +136,7 @@ export default function CsvPanel({ recordIds, onClose }: CsvPanelProps) {
             </li>
           ))}
           {preview.warnings.length > 5 && (
-            <li className="text-xs text-zinc-500">
+            <li className="text-xs text-navy-400">
               …and {preview.warnings.length - 5} more.
             </li>
           )}
@@ -145,19 +145,19 @@ export default function CsvPanel({ recordIds, onClose }: CsvPanelProps) {
 
       {preview && (
         <>
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-navy-400">
             {preview.row_count} data row(s)
             {preview.skipped.length > 0 &&
               ` · ${preview.skipped.length} skipped`}
           </p>
-          <pre className="max-h-72 overflow-auto rounded-lg border border-zinc-800 bg-zinc-950/70 p-3 text-[11px] leading-relaxed text-zinc-300">
+          <pre className="max-h-72 overflow-auto rounded-lg border border-navy-800 bg-navy-950/70 p-3 text-[11px] leading-relaxed text-navy-200">
             {preview.csv_text}
           </pre>
         </>
       )}
 
       {!preview && !isLoading && !error && (
-        <p className="rounded-lg border border-dashed border-zinc-800 px-4 py-6 text-center text-xs text-zinc-500">
+        <p className="rounded-lg border border-dashed border-navy-800 px-4 py-6 text-center text-xs text-navy-400">
           Build a preview to check the rows before uploading to Adobe.
         </p>
       )}

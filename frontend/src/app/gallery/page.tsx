@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
+import { Images } from "lucide-react";
 
 import GalleryView from "@/components/gallery/GalleryView";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { PageShell } from "@/components/shell/PageShell";
 
 export const metadata: Metadata = {
   title: "Gallery · Adobe Stock AI Image Studio",
@@ -9,18 +12,13 @@ export const metadata: Metadata = {
 
 export default function GalleryPage() {
   return (
-    <main className="min-h-screen px-6 py-8 text-zinc-100">
-      <div className="mx-auto max-w-7xl space-y-6">
-        <header>
-          <h1 className="text-2xl font-bold tracking-tight">Gallery</h1>
-          <p className="text-sm text-zinc-500">
-            Staged, upload-ready assets. Mark images as used, download them, or
-            build a copy/paste metadata table.
-          </p>
-        </header>
-
-        <GalleryView />
-      </div>
-    </main>
+    <PageShell>
+      <PageHeader
+        title="Gallery"
+        tagline="Staged, upload-ready assets. Mark images as used, download them, or build a copy/paste metadata table."
+        icon={<Images className="h-5 w-5" aria-hidden />}
+      />
+      <GalleryView />
+    </PageShell>
   );
 }

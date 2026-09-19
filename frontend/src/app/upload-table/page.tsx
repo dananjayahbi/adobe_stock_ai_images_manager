@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
+import { Table2 } from "lucide-react";
 
 import UploadTableView from "@/components/uploadTable/UploadTableView";
+import { PageHeader } from "@/components/ui/PageHeader";
+import { PageShell } from "@/components/shell/PageShell";
 
 export const metadata: Metadata = {
   title: "Upload Table · Adobe Stock AI Image Studio",
@@ -19,18 +22,13 @@ export default function UploadTablePage({ searchParams }: UploadTablePageProps) 
     .filter(Boolean);
 
   return (
-    <main className="min-h-screen px-6 py-8 text-zinc-100">
-      <div className="mx-auto max-w-6xl space-y-6">
-        <header>
-          <h1 className="text-2xl font-bold tracking-tight">Upload Table</h1>
-          <p className="text-sm text-zinc-500">
-            Copy each field straight into Adobe Stock. Titles, descriptions, and
-            keywords are shown in the exact order they were selected.
-          </p>
-        </header>
-
-        <UploadTableView token={token} idsFromQuery={idsFromQuery} />
-      </div>
-    </main>
+    <PageShell>
+      <PageHeader
+        title="Upload Table"
+        tagline="Copy each field straight into Adobe Stock. Titles, descriptions, and keywords are shown in the exact order they were selected."
+        icon={<Table2 className="h-5 w-5" aria-hidden />}
+      />
+      <UploadTableView token={token} idsFromQuery={idsFromQuery} />
+    </PageShell>
   );
 }

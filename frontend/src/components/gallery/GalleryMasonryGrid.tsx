@@ -30,7 +30,7 @@ export default function GalleryMasonryGrid({
 }: GalleryMasonryGridProps) {
   if (isLoading && records.length === 0) {
     return (
-      <div className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-800 py-16 text-zinc-500">
+      <div className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-navy-800 py-16 text-navy-400">
         <Loader2 className="h-5 w-5 animate-spin" />
         Loading gallery…
       </div>
@@ -39,8 +39,8 @@ export default function GalleryMasonryGrid({
 
   if (records.length === 0) {
     return (
-      <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-zinc-800 py-16 text-zinc-500">
-        <ImageOff className="h-7 w-7 text-zinc-700" />
+      <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-navy-800 py-16 text-navy-400">
+        <ImageOff className="h-7 w-7 text-navy-700" />
         <p className="text-sm">No staged images match the current filter.</p>
       </div>
     );

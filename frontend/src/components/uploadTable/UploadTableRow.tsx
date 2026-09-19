@@ -15,10 +15,10 @@ export default function UploadTableRow({ item, index }: UploadTableRowProps) {
   const keywordCount = item.keywords.length;
 
   return (
-    <article className="grid gap-4 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 md:grid-cols-[10rem_1fr]">
+    <article className="grid gap-4 rounded-xl border border-navy-800 bg-navy-900/50 p-4 md:grid-cols-[10rem_1fr]">
       {/* Preview + download */}
       <div className="flex flex-col gap-2">
-        <div className="overflow-hidden rounded-lg border border-zinc-800 bg-zinc-950">
+        <div className="overflow-hidden rounded-lg border border-navy-800 bg-navy-950">
           {item.thumbnail_url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -29,18 +29,18 @@ export default function UploadTableRow({ item, index }: UploadTableRowProps) {
             />
           ) : (
             <div className="flex h-32 w-full items-center justify-center">
-              <ImageOff className="h-6 w-6 text-zinc-700" />
+              <ImageOff className="h-6 w-6 text-navy-700" />
             </div>
           )}
         </div>
         <a
           href={item.download_url}
-          className="inline-flex items-center justify-center gap-1.5 rounded-md border border-sky-500/50 bg-sky-500/10 px-2.5 py-1.5 text-xs font-medium text-sky-300 transition-colors hover:border-sky-400 hover:text-sky-100"
+          className="inline-flex items-center justify-center gap-1.5 rounded-md border border-accent-500/50 bg-accent-500/10 px-2.5 py-1.5 text-xs font-medium text-accent-300 transition-colors hover:border-accent-400 hover:text-accent-100"
         >
           <Download className="h-3.5 w-3.5" />
           Download
         </a>
-        <p className="truncate text-center font-mono text-[10px] text-zinc-600" title={item.filename}>
+        <p className="truncate text-center font-mono text-[10px] text-navy-600" title={item.filename}>
           {item.filename}
         </p>
       </div>
@@ -86,19 +86,19 @@ function Field({
   return (
     <div>
       <div className="mb-1 flex items-center justify-between gap-2">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-zinc-500">
+        <span className="text-[11px] font-semibold uppercase tracking-wide text-navy-400">
           {index !== undefined ? `${index + 1}. ` : ""}
           {label}
-          {hint && <span className="ml-2 font-normal normal-case text-zinc-600">{hint}</span>}
+          {hint && <span className="ml-2 font-normal normal-case text-navy-600">{hint}</span>}
         </span>
         <CopyButton value={value} label={`Copy ${label.toLowerCase()}`} />
       </div>
       <p
-        className={`w-full rounded-md border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-xs leading-relaxed text-zinc-200 ${
+        className={`w-full rounded-md border border-navy-800 bg-navy-950/70 px-3 py-2 text-xs leading-relaxed text-navy-100 ${
           multiline ? "whitespace-pre-wrap" : ""
         }`}
       >
-        {value || <span className="text-zinc-600">(empty)</span>}
+        {value || <span className="text-navy-600">(empty)</span>}
       </p>
     </div>
   );

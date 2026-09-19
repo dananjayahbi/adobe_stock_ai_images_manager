@@ -115,22 +115,71 @@ export const FALLBACK_UPSCALE_OPTIONS: UpscaleOptions = {
 export interface GpuDevice {
   id: number;
   name: string;
-  dedicated: boolean;
+  kind: string;
+  kind_label: string;
+  recommended: boolean;
+  details?: Record<string, string>;
+}
+
+/** The device list plus the index the server would default to. */
+export interface GpuList {
+  devices: GpuDevice[];
+  default_gpu_id: number;
+  available: boolean;
 }
 
 /**
  * Known devices on this machine, probed from the CLI's verbose startup header.
  *
- * The CLI only prints this while upscaling, so it is mirrored here rather than
- * fetched. Ids are what `-g` expects; `0` is the discrete GPU by convention and
- * is the default.
+ * Only used when {@link fetchGpuDevices} cannot reach the server, so the picker
+ * is never empty. The live list comes from `GET /api/upscale/gpus`, which
+ * enumerates the real Vulkan adapters - this mirror exists purely as a fallback
+ * and is deliberately the common single-GPU-plus-integrated layout.
  */
-export const GPU_DEVICES: GpuDevice[] = [
-  { id: 0, name: "NVIDIA GeForce GTX 1660 Ti", dedicated: true },
-  { id: 1, name: "Intel(R) UHD Graphics", dedicated: false },
-  { id: 2, name: "Intel(R) UHD Graphics", dedicated: false },
-  { id: 3, name: "Intel(R) UHD Graphics", dedicated: false },
+export const FALLBACK_GPU_DEVICES: GpuDevice[] = [
+  {
+    id: 0,
+    name: "NVIDIA GeForce GTX 1660 Ti",
+    kind: "dedicated",
+    kind_label: "Dedicated",
+    recommended: true,
+  },
+  {
+    id: 1,
+    name: "Intel(R) UHD Graphics",
+    kind: "integrated",
+    kind_label: "Integrated",
+    recommended: false,
+  },
 ];
+
+/** A single-device fallback for a machine where enumeration found nothing. */
+export const SINGLE_GPU_FALLBACK: GpuList = {
+  devices: FALLBACK_GPU_DEVICES,
+  default_gpu_id: 0,
+  available: false,
+};
+
+/**
+ * Enumerate the Vulkan devices the upscaler can actually use.
+ *
+ * The device list is read from the backend rather than hard-coded, so a machine
+ * with only an integrated GPU is never offered a discrete device that does not
+ * exist, and a workstation with two discrete GPUs can use the second one.
+ */
+export async function fetchGpuDevices(refresh = false): Promise<GpuList> {
+  const { data } = await api.get<GpuList>("/api/upscale/gpus", {
+    params: refresh ? { refresh: true } : undefined,
+  });
+  return data;
+}
+
+/** The device to preselect, preferring the server's recommendation. */
+export function defaultGpuId(list: GpuList | null, fallback: number): number {
+  if (!list || list.devices.length === 0) return fallback;
+  if (list.devices.some((device) => device.id === fallback)) return fallback;
+  return list.default_gpu_id;
+}
 
 /** Predicted output geometry for a configuration, computed before running. */
 export interface UpscaleEstimate {

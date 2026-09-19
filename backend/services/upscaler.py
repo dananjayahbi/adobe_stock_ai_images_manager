@@ -12,6 +12,7 @@ The facade exists so callers keep a single, versioned surface:
 * :func:`upscale_image` - run one upscale, returning an
   :class:`~services.upscale.runner.UpscaleRunResult`.
 * :func:`catalog_payload` / :func:`estimate_output` - what the Stage 3 UI needs.
+* :func:`gpus_payload` - which Vulkan devices the machine actually exposes.
 
 A high-quality Lanczos resample remains as a fallback so Stage 3 is still
 functional if the binary is missing, and every result names the backend that
@@ -25,6 +26,7 @@ from typing import Callable
 
 from config import Settings, settings as default_settings
 from services.upscale import catalog as _catalog
+from services.upscale import gpus as _gpus
 from services.upscale import runner as _runner
 from services.upscale.options import (
     DEFAULT_TARGET_LONG_EDGE,
@@ -52,11 +54,14 @@ __all__ = [
     "UpscaleOptions",
     "UpscaleRunResult",
     "catalog_payload",
+    "default_gpu_id",
     "default_options",
     "estimate_output",
     "find_cli",
     "from_payload",
+    "gpus_payload",
     "is_neural_available",
+    "list_gpus",
     "measure",
     "upscale_image",
 ]
@@ -96,6 +101,26 @@ def catalog_payload(settings: Settings | None = None, *, refresh: bool = False) 
 def measure(file_path: str | Path) -> tuple[int, int] | None:
     """Source ``(width, height)``, or None when the file cannot be read."""
     return _runner.measure(file_path)
+
+
+def list_gpus(settings: Settings | None = None, *, refresh: bool = False):
+    """Every Vulkan device the upscaler can be pointed at."""
+    return _gpus.list_gpus(settings or default_settings, refresh=refresh)
+
+
+def default_gpu_id(settings: Settings | None = None) -> int:
+    """Device index to use when the operator has not chosen one."""
+    return _gpus.default_gpu_id(settings or default_settings)
+
+
+def gpus_payload(settings: Settings | None = None, *, refresh: bool = False) -> dict:
+    """Device list plus the default index, for the Stage 3 options panel.
+
+    ``refresh`` bypasses the probe cache, mirroring :func:`catalog_payload`.
+    """
+    if refresh:
+        _gpus.clear_cache()
+    return _gpus.gpus_payload(settings or default_settings)
 
 
 def upscale_image(

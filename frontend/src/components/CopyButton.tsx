@@ -47,7 +47,7 @@ export default function CopyButton({
       className={`inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors ${
         copied
           ? "border-emerald-500/50 bg-emerald-500/15 text-emerald-300"
-          : "border-zinc-700 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100"
+          : "border-navy-700 text-navy-200 hover:border-navy-400 hover:text-navy-50"
       } ${className}`}
     >
       {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}

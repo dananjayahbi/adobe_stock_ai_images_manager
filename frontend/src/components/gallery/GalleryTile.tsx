@@ -48,17 +48,17 @@ export default function GalleryTile({
 
   return (
     <article
-      className={`group relative overflow-hidden rounded-xl border bg-zinc-900/60 transition-colors ${
+      className={`group relative overflow-hidden rounded-xl border bg-navy-900/60 transition-colors ${
         isSelected
-          ? "border-sky-500 ring-1 ring-sky-500/40"
-          : "border-zinc-800 hover:border-zinc-600"
+          ? "border-accent-500 ring-1 ring-accent-500/40"
+          : "border-navy-800 hover:border-navy-600"
       }`}
     >
       {/* Image - fills the tile width, keeps aspect ratio */}
       <button
         type="button"
         onClick={() => onPreview(record)}
-        className="relative block w-full bg-zinc-950"
+        className="relative block w-full bg-navy-950"
         aria-label={`Preview ${record.filename}`}
       >
         {showImage ? (
@@ -72,16 +72,16 @@ export default function GalleryTile({
           />
         ) : (
           <div className="flex h-40 w-full items-center justify-center">
-            <ImageOff className="h-8 w-8 text-zinc-700" />
+            <ImageOff className="h-8 w-8 text-navy-700" />
           </div>
         )}
 
         {/* Hover overlay: metadata strip */}
         <span className="pointer-events-none absolute inset-x-0 bottom-0 flex translate-y-2 flex-col gap-0.5 bg-gradient-to-t from-black/90 via-black/60 to-transparent px-3 pb-3 pt-8 text-left opacity-0 transition-all duration-200 group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:translate-y-0 group-focus-within:opacity-100">
-          <span className="truncate text-xs font-medium text-zinc-100">
+          <span className="truncate text-xs font-medium text-navy-50">
             {record.generated_title || record.filename}
           </span>
-          <span className="text-[11px] text-zinc-400">
+          <span className="text-[11px] text-navy-300">
             {record.width && record.height
               ? `${record.width}×${record.height}`
               : "—"}
@@ -103,8 +103,8 @@ export default function GalleryTile({
         aria-label={isSelected ? "Deselect image" : "Select image"}
         className={`absolute left-2 top-2 grid h-7 w-7 place-items-center rounded-md border backdrop-blur transition-all ${
           isSelected
-            ? "border-sky-400 bg-sky-500/90 text-white"
-            : "border-zinc-600/80 bg-zinc-950/70 text-zinc-400 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 hover:text-white"
+            ? "border-accent-400 bg-accent-500/90 text-white"
+            : "border-navy-600/80 bg-navy-950/70 text-navy-300 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 hover:text-white"
         }`}
       >
         {isSelected ? (
@@ -121,7 +121,7 @@ export default function GalleryTile({
             Used
           </span>
         ) : (
-          <span className="rounded-full bg-zinc-800/90 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-zinc-300">
+          <span className="rounded-full bg-navy-800/90 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-navy-200">
             Unused
           </span>
         )}
@@ -193,7 +193,7 @@ function IconAction({
       className={`grid h-9 w-9 place-items-center rounded-lg border backdrop-blur transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
         danger
           ? "border-red-500/40 bg-red-950/80 text-red-300 hover:bg-red-900/90 hover:text-red-100"
-          : "border-zinc-600/70 bg-zinc-950/80 text-zinc-300 hover:bg-zinc-800 hover:text-white"
+          : "border-navy-600/70 bg-navy-950/80 text-navy-200 hover:bg-navy-800 hover:text-white"
       }`}
     >
       {icon}

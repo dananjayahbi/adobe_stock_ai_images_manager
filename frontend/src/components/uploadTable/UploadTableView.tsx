@@ -66,7 +66,7 @@ export default function UploadTableView({
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-800 py-16 text-zinc-500">
+      <div className="flex items-center justify-center gap-2 rounded-xl border border-dashed border-navy-800 py-16 text-navy-400">
         <Loader2 className="h-5 w-5 animate-spin" />
         Building upload table…
       </div>
@@ -122,14 +122,14 @@ export default function UploadTableView({
       )}
 
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="inline-flex items-center gap-1.5 text-sm text-zinc-400">
+        <p className="inline-flex items-center gap-1.5 text-sm text-navy-300">
           <Table className="h-4 w-4" />
           {items.length} row(s) ready to copy
         </p>
         <button
           type="button"
           onClick={() => void load()}
-          className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:border-zinc-500 hover:text-zinc-100"
+          className="inline-flex items-center gap-1.5 rounded-md border border-navy-700 px-3 py-1.5 text-xs font-medium text-navy-200 transition-colors hover:border-navy-400 hover:text-navy-50"
         >
           <RefreshCw className="h-3.5 w-3.5" />
           Refresh
@@ -143,15 +143,15 @@ export default function UploadTableView({
 
 function EmptyState({ title, message }: { title: string; message: string }) {
   return (
-    <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-zinc-800 py-16 text-center">
-      <Table className="h-7 w-7 text-zinc-700" />
+    <div className="flex flex-col items-center gap-3 rounded-xl border border-dashed border-navy-800 py-16 text-center">
+      <Table className="h-7 w-7 text-navy-700" />
       <div>
-        <p className="text-sm font-medium text-zinc-300">{title}</p>
-        <p className="mt-1 max-w-md text-xs text-zinc-500">{message}</p>
+        <p className="text-sm font-medium text-navy-200">{title}</p>
+        <p className="mt-1 max-w-md text-xs text-navy-400">{message}</p>
       </div>
       <Link
         href="/gallery"
-        className="rounded-md border border-sky-500/50 bg-sky-500/10 px-3.5 py-1.5 text-xs font-medium text-sky-300 transition-colors hover:border-sky-400"
+        className="rounded-md border border-accent-500/50 bg-accent-500/10 px-3.5 py-1.5 text-xs font-medium text-accent-300 transition-colors hover:border-accent-400"
       >
         Back to gallery
       </Link>

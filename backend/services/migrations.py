@@ -29,6 +29,7 @@ ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("image_records", "refine_passes", "INTEGER NOT NULL DEFAULT 0"),
     ("image_records", "stage_details", "JSON"),
     ("image_records", "category", "INTEGER"),
+    ("image_records", "queued_stage", "VARCHAR(20)"),
 ]
 
 # Rows that already reached READY under the old two-column model are already

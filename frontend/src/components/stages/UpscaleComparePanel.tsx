@@ -41,7 +41,7 @@ export default function UpscaleComparePanel({
   // would be misleading.
   if (!UPSCALED_OR_LATER.has(record.stage) || !detail) {
     return (
-      <p className="rounded-lg border border-dashed border-zinc-800 px-4 py-6 text-center text-sm text-zinc-500">
+      <p className="rounded-lg border border-dashed border-navy-800 px-4 py-6 text-center text-sm text-navy-400">
         No upscaled output yet. Run Stage 3 to create one.
       </p>
     );
@@ -71,20 +71,20 @@ export default function UpscaleComparePanel({
 
   return (
     <div className="space-y-3">
-      <div className="flex items-start gap-2 rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2">
+      <div className="flex items-start gap-2 rounded-lg border border-navy-800 bg-navy-950/50 px-3 py-2">
         <Sparkles
           className={`mt-0.5 h-3.5 w-3.5 shrink-0 ${
             isNeural ? "text-fuchsia-400" : "text-amber-400"
           }`}
         />
         <div className="min-w-0 text-xs">
-          <p className="text-zinc-300">
+          <p className="text-navy-200">
             {isNeural
               ? "Neural upscale"
               : "Resampled only - the upscayl binary was not used"}
           </p>
           {captionParts.length > 0 && (
-            <p className="mt-0.5 text-zinc-500">{captionParts.join(" · ")}</p>
+            <p className="mt-0.5 text-navy-400">{captionParts.join(" · ")}</p>
           )}
         </div>
       </div>

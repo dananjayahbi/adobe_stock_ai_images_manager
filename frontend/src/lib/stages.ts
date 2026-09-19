@@ -291,8 +291,8 @@ export const TERMINAL_STAGES: PipelineStage[] = [
 
 /** Per-stage accent colours, used for badges and progress rails. */
 export const STAGE_COLORS: Record<PipelineStage, string> = {
-  COLLECTED: "text-zinc-300 bg-zinc-500/15 border-zinc-500/40",
-  OCR_CLEAR: "text-sky-300 bg-sky-500/15 border-sky-500/40",
+  COLLECTED: "text-navy-200 bg-navy-500/15 border-navy-500/40",
+  OCR_CLEAR: "text-accent-300 bg-accent-500/15 border-accent-500/40",
   OCR_REJECTED: "text-red-300 bg-red-500/15 border-red-500/40",
   UPSCALED: "text-cyan-300 bg-cyan-500/15 border-cyan-500/40",
   REFINED: "text-violet-300 bg-violet-500/15 border-violet-500/40",

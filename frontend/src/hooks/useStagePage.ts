@@ -9,58 +9,53 @@ import {
   fetchJob,
   fetchRecords,
   fetchStageSummary,
+  pushToQueue,
+  removeFromQueue,
   runStage,
   type ImageRecord,
 } from "@/lib/api";
-import {
-  STAGE_ENTRY_STAGES,
-  isTerminalStage,
-  type PipelineStage,
-  type StageKey,
-  type StageJob,
-  type StageSummary,
-} from "@/lib/stages";
+import type { StageJob, StageSummary } from "@/lib/stages";
 import type { UpscaleOptions } from "@/lib/upscale";
+
+import { useRecordSelection } from "./useRecordSelection";
 
 const POLL_INTERVAL_MS = 4000;
 const PAGE_LIMIT = 500;
-
-/** How often to poll a running batch job. Batches are long, so this is relaxed. */
 const JOB_POLL_INTERVAL_MS = 1500;
 
 export interface RunStageArgs {
-  stageKey: StageKey;
+  stageKey: string;
   recordIds: string[];
   delaySeconds?: number;
   useSemantic?: boolean;
-  /** Stage 3 only: the operator's upscaler settings. */
   upscale?: Partial<UpscaleOptions>;
 }
 
 /**
- * Owns the stage workspace's data: the record list for the active stage, the
- * per-stage counts, and the lifecycle of a running batch job.
+ * Data + actions for a single stage page.
  *
- * The record list is deliberately scoped to *one* stage at a time. Every stage
- * action is a batch over the visible selection, so loading all 500 records and
- * filtering client-side would make the "select all" affordance ambiguous.
+ * One hook serves all seven pages so the behaviour (polling, job lifecycle,
+ * queue push, deletion) is identical everywhere. Page components only decide
+ * how to *render* the records they are given.
+ *
+ * Records are fetched once and partitioned client-side. The API filters by
+ * `status`, not `stage`, so partitioning here keeps the backend contract
+ * unchanged while letting a page show drafts and verdicts side by side.
  */
-export function useStageRecords() {
-  const [activeStage, setActiveStage] = useState<PipelineStage>("COLLECTED");
+export function useStagePage() {
   const [records, setRecords] = useState<ImageRecord[]>([]);
   const [summary, setSummary] = useState<StageSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isPushing, setIsPushing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [job, setJob] = useState<StageJob | null>(null);
   const [isBusy, setIsBusy] = useState(false);
 
-  // Monotonic request id: only the newest response is applied, so a stage
-  // switch during a poll is never silently discarded.
   const requestId = useRef(0);
-  const stageRef = useRef<PipelineStage>(activeStage);
-  stageRef.current = activeStage;
   const jobPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const selection = useRecordSelection();
 
   const load = useCallback(async (showSpinner = false) => {
     const id = ++requestId.current;
@@ -68,19 +63,16 @@ export function useStageRecords() {
 
     try {
       const [listing, stageSummary] = await Promise.all([
-        fetchRecords({ status: undefined, limit: PAGE_LIMIT }),
+        fetchRecords({ limit: PAGE_LIMIT }),
         fetchStageSummary(),
       ]);
       if (id !== requestId.current) return;
-
-      // The API filters by `status`, not `stage`, so the stage filter is
-      // applied here. This keeps the backend contract unchanged.
-      setRecords(listing.items.filter((r) => r.stage === stageRef.current));
+      setRecords(listing.items);
       setSummary(stageSummary);
       setError(null);
     } catch (err) {
       if (id !== requestId.current) return;
-      setError(err instanceof Error ? err.message : "Failed to load the pipeline.");
+      setError(err instanceof Error ? err.message : "Failed to load records.");
     } finally {
       if (id === requestId.current && showSpinner) setIsLoading(false);
     }
@@ -88,14 +80,13 @@ export function useStageRecords() {
 
   useEffect(() => {
     void load(true);
-  }, [load, activeStage]);
+  }, [load]);
 
   useEffect(() => {
     const interval = setInterval(() => void load(), POLL_INTERVAL_MS);
     return () => clearInterval(interval);
   }, [load]);
 
-  // Stop polling a job once it reaches a terminal state.
   const stopJobPolling = useCallback(() => {
     if (jobPollRef.current) {
       clearInterval(jobPollRef.current);
@@ -105,12 +96,6 @@ export function useStageRecords() {
 
   useEffect(() => stopJobPolling, [stopJobPolling]);
 
-  /**
-   * Poll a job until it finishes.
-   *
-   * The interval is owned by a ref rather than an effect dep so that starting a
-   * second batch cancels the first poller instead of leaking it.
-   */
   const pollJob = useCallback(
     (jobId: string) => {
       stopJobPolling();
@@ -131,8 +116,7 @@ export function useStageRecords() {
             setNotice(`${latest.kind} finished · ${parts.join(" · ")}`);
           }
         } catch (err) {
-          // A transient poll failure should not abort the batch; keep polling
-          // and surface the error without clearing the job view.
+          // A transient poll failure must not abort the batch.
           setError(err instanceof Error ? err.message : "Lost contact with the job.");
         }
       };
@@ -155,7 +139,7 @@ export function useStageRecords() {
       setNotice(null);
 
       try {
-        const started = await runStage(stageKey, recordIds, {
+        const started = await runStage(stageKey as never, recordIds, {
           delaySeconds,
           useSemantic,
           upscale,
@@ -168,23 +152,6 @@ export function useStageRecords() {
       }
     },
     [pollJob]
-  );
-
-  /**
-   * Permanently remove records, from any stage.
-   *
-   * The server drops the inbox original, the thumbnail, and every staged copy,
-   * so the caller only has to refresh. Deleting a running record is refused by
-   * the UI, not here - the batch may still hold the file open.
-   */
-  const removeRecords = useCallback(
-    async (ids: string[]) => {
-      if (ids.length === 0) return;
-      if (ids.length === 1) await deleteRecord(ids[0]);
-      else await deleteRecords(ids);
-      await load();
-    },
-    [load]
   );
 
   const stopJob = useCallback(async () => {
@@ -206,17 +173,63 @@ export function useStageRecords() {
 
   const clearNotice = useCallback(() => setNotice(null), []);
 
-  /** Records in this stage that the given stage key can act on. */
-  const eligibleFor = useCallback(
-    (stageKey: StageKey): ImageRecord[] => {
-      const entryStages = STAGE_ENTRY_STAGES[stageKey];
-      return records.filter((record) => entryStages.includes(record.stage));
+  /** Move records into another stage's queue — the "push" action. */
+  const push = useCallback(
+    async (stageKey: string, ids: string[]) => {
+      if (ids.length === 0) {
+        setError("Select at least one image to push.");
+        return;
+      }
+      setIsPushing(true);
+      setError(null);
+      setNotice(null);
+      try {
+        const result = await pushToQueue(stageKey as never, ids);
+        selection.clear();
+        await load();
+        setNotice(`Pushed ${result.updated} image(s) onward.`);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not push the selection.");
+      } finally {
+        setIsPushing(false);
+      }
     },
-    [records]
+    [load, selection]
+  );
+
+  /** Pull records back out of this stage's queue. */
+  const unpush = useCallback(
+    async (stageKey: string, ids: string[]) => {
+      if (ids.length === 0) return;
+      setIsPushing(true);
+      setError(null);
+      try {
+        await removeFromQueue(stageKey as never, ids);
+        selection.clear();
+        await load();
+        setNotice("Removed from the queue.");
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not update the queue.");
+      } finally {
+        setIsPushing(false);
+      }
+    },
+    [load, selection]
+  );
+
+  const removeRecords = useCallback(
+    async (ids: string[]) => {
+      if (ids.length === 0) return;
+      if (ids.length === 1) await deleteRecord(ids[0]);
+      else await deleteRecords(ids);
+      selection.clear();
+      await load();
+    },
+    [load, selection]
   );
 
   const counts = useMemo(() => {
-    const map: Partial<Record<PipelineStage, number>> = {};
+    const map: Partial<Record<string, number>> = {};
     for (const entry of summary?.counts ?? []) {
       map[entry.stage] = entry.count;
     }
@@ -224,24 +237,26 @@ export function useStageRecords() {
   }, [summary]);
 
   return {
-    activeStage,
-    setActiveStage,
     records,
-    counts,
     summary,
+    counts,
     isLoading,
     isBusy,
+    isPushing,
     error,
     notice,
     job,
+    selection,
     setError,
     clearNotice,
     clearJob,
     load,
     startStage,
     stopJob,
+    push,
+    unpush,
     removeRecords,
-    eligibleFor,
-    isTerminal: isTerminalStage(activeStage),
   };
 }
+
+export type StagePageController = ReturnType<typeof useStagePage>;

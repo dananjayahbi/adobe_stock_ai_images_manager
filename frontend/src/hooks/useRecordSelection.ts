@@ -3,27 +3,22 @@
 import { useCallback, useMemo, useState } from "react";
 
 /**
- * Multi-select state for a stage's image grid.
+ * Selection keyed by record id.
  *
- * Selection is keyed by record id so it survives the 4-second polling refresh:
- * a record that briefly disappears from the list keeps its selection, and only
- * an explicit `prune` (or `clear`) removes it.
+ * Keying by id (rather than by index or object identity) is what lets the
+ * selection survive the 4 s poll: the record objects are replaced on every
+ * refresh, but the ids are stable.
  */
-export function useStageSelection() {
+export function useRecordSelection() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
-  const isSelected = useCallback(
-    (id: string) => selectedSet.has(id),
-    [selectedSet]
-  );
+  const isSelected = useCallback((id: string) => selectedSet.has(id), [selectedSet]);
 
   const toggle = useCallback((id: string) => {
     setSelectedIds((current) =>
-      current.includes(id)
-        ? current.filter((value) => value !== id)
-        : [...current, id]
+      current.includes(id) ? current.filter((value) => value !== id) : [...current, id]
     );
   }, []);
 
@@ -33,10 +28,9 @@ export function useStageSelection() {
 
   const deselectMany = useCallback((ids: string[]) => {
     const remove = new Set(ids);
-    setSelectedIds((current) => current.filter((id) => !remove.has(id)));
+    setSelectedIds((current) => current.filter((value) => !remove.has(value)));
   }, []);
 
-  /** Replace the selection with exactly these ids. */
   const selectOnly = useCallback((ids: string[]) => {
     setSelectedIds(Array.from(new Set(ids)));
   }, []);
@@ -47,8 +41,7 @@ export function useStageSelection() {
   const prune = useCallback((availableIds: string[]) => {
     const available = new Set(availableIds);
     setSelectedIds((current) => {
-      const next = current.filter((id) => available.has(id));
-      // Preserve identity when nothing changed, so dependents do not re-render.
+      const next = current.filter((value) => available.has(value));
       return next.length === current.length ? current : next;
     });
   }, []);
@@ -65,3 +58,5 @@ export function useStageSelection() {
     prune,
   };
 }
+
+export type RecordSelection = ReturnType<typeof useRecordSelection>;

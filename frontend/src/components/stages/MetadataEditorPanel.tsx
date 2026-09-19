@@ -108,12 +108,12 @@ export default function MetadataEditorPanel({
   };
 
   return (
-    <div className="space-y-3 rounded-lg border border-zinc-800 bg-zinc-900/60 p-4">
+    <div className="space-y-3 rounded-lg border border-navy-800 bg-navy-900/60 p-4">
       <div className="flex items-center justify-between">
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+        <h3 className="text-xs font-semibold uppercase tracking-wide text-navy-400">
           Metadata
         </h3>
-        <span className="text-[11px] text-zinc-600">
+        <span className="text-[11px] text-navy-600">
           <span className={keywords.length > MAX_KEYWORDS ? "text-red-400" : undefined}>
             {keywords.length}/{MAX_KEYWORDS} keywords
           </span>
@@ -142,7 +142,7 @@ export default function MetadataEditorPanel({
           value={title}
           onChange={(event) => setTitle(event.target.value)}
           rows={2}
-          className="w-full resize-none rounded border border-zinc-700 bg-zinc-950/60 px-2.5 py-2 text-sm text-zinc-100 outline-none focus:border-sky-500"
+          className="w-full resize-none rounded border border-navy-700 bg-navy-950/60 px-2.5 py-2 text-sm text-navy-50 outline-none focus:border-accent-500"
         />
       </Field>
 
@@ -155,7 +155,7 @@ export default function MetadataEditorPanel({
           value={description}
           onChange={(event) => setDescription(event.target.value)}
           rows={3}
-          className="w-full resize-none rounded border border-zinc-700 bg-zinc-950/60 px-2.5 py-2 text-sm text-zinc-100 outline-none focus:border-sky-500"
+          className="w-full resize-none rounded border border-navy-700 bg-navy-950/60 px-2.5 py-2 text-sm text-navy-50 outline-none focus:border-accent-500"
         />
       </Field>
 
@@ -175,7 +175,7 @@ export default function MetadataEditorPanel({
             )
           }
           rows={4}
-          className="w-full resize-none rounded border border-zinc-700 bg-zinc-950/60 px-2.5 py-2 text-sm text-zinc-100 outline-none focus:border-sky-500"
+          className="w-full resize-none rounded border border-navy-700 bg-navy-950/60 px-2.5 py-2 text-sm text-navy-50 outline-none focus:border-accent-500"
         />
       </Field>
 
@@ -190,23 +190,23 @@ export default function MetadataEditorPanel({
             }
           }}
           placeholder="Add a keyword and press Enter"
-          className="flex-1 rounded border border-zinc-700 bg-zinc-950/60 px-2.5 py-1.5 text-xs text-zinc-100 outline-none focus:border-sky-500"
+          className="flex-1 rounded border border-navy-700 bg-navy-950/60 px-2.5 py-1.5 text-xs text-navy-50 outline-none focus:border-accent-500"
         />
         <button
           type="button"
           onClick={addKeyword}
-          className="rounded border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-800"
+          className="rounded border border-navy-700 px-3 py-1.5 text-xs font-medium text-navy-200 transition-colors hover:bg-navy-800"
         >
           Add
         </button>
       </div>
 
       <label className="flex items-center justify-between gap-3 text-xs">
-        <span className="text-zinc-500">Adobe category</span>
+        <span className="text-navy-400">Adobe category</span>
         <select
           value={category}
           onChange={(event) => setCategory(Number(event.target.value))}
-          className="rounded border border-zinc-700 bg-zinc-950/60 px-2 py-1.5 text-xs text-zinc-100 outline-none focus:border-sky-500"
+          className="rounded border border-navy-700 bg-navy-950/60 px-2 py-1.5 text-xs text-navy-50 outline-none focus:border-accent-500"
         >
           {categories.map((option) => (
             <option key={option.code} value={option.code}>
@@ -220,7 +220,7 @@ export default function MetadataEditorPanel({
         type="button"
         onClick={() => void handleSave()}
         disabled={isSaving || !isDirty}
-        className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-zinc-700 disabled:text-zinc-400"
+        className="inline-flex w-full items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-emerald-500 disabled:cursor-not-allowed disabled:bg-navy-700 disabled:text-navy-300"
       >
         {isSaving ? (
           <Loader2 className="h-4 w-4 animate-spin" />
@@ -247,12 +247,12 @@ function Field({
   return (
     <div>
       <div className="mb-1 flex items-center justify-between">
-        <span className="text-xs text-zinc-500">{label}</span>
+        <span className="text-xs text-navy-400">{label}</span>
         <button
           type="button"
           onClick={onCopy}
           aria-label={`Copy ${label}`}
-          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-300"
+          className="inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-navy-400 transition-colors hover:bg-navy-800 hover:text-navy-200"
         >
           {copied ? (
             <>

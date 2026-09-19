@@ -23,7 +23,7 @@ const TONE_STYLES: Record<ReturnType<typeof scoreTone>, string> = {
   good: "bg-emerald-500/20 text-emerald-200 border-emerald-500/40",
   warn: "bg-amber-500/20 text-amber-200 border-amber-500/40",
   bad: "bg-red-500/20 text-red-200 border-red-500/40",
-  none: "bg-zinc-700/50 text-zinc-400 border-zinc-600/50",
+  none: "bg-navy-700/50 text-navy-300 border-navy-600/50",
 };
 
 /**
@@ -62,8 +62,8 @@ export default function StageCard({
     <div
       className={`group relative overflow-hidden rounded-xl border transition-colors ${
         isSelected
-          ? "border-sky-500 bg-sky-500/10"
-          : "border-zinc-800 bg-zinc-900/50 hover:border-zinc-700"
+          ? "border-accent-500 bg-accent-500/10"
+          : "border-navy-800 bg-navy-900/50 hover:border-navy-700"
       }`}
     >
       <button
@@ -72,7 +72,7 @@ export default function StageCard({
         className="block w-full text-left"
         aria-label={`Inspect ${record.filename}`}
       >
-        <div className="relative aspect-[4/3] overflow-hidden bg-zinc-950">
+        <div className="relative aspect-[4/3] overflow-hidden bg-navy-950">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={getPreviewUrl(record.id, "working", record.updated_at)}
@@ -96,8 +96,8 @@ export default function StageCard({
           </span>
 
           {isRunning && (
-            <span className="absolute inset-0 grid place-items-center bg-zinc-950/70">
-              <Loader2 className="h-6 w-6 animate-spin text-sky-400" />
+            <span className="absolute inset-0 grid place-items-center bg-navy-950/70">
+              <Loader2 className="h-6 w-6 animate-spin text-accent-400" />
             </span>
           )}
         </div>
@@ -118,20 +118,20 @@ export default function StageCard({
             aria-label={isSelected ? "Deselect image" : "Select image"}
             className={`grid h-5 w-5 shrink-0 place-items-center rounded border transition-colors ${
               isSelected
-                ? "border-sky-400 bg-sky-500 text-white"
-                : "border-zinc-600 bg-zinc-800/80 text-transparent hover:border-zinc-500"
+                ? "border-accent-400 bg-accent-500 text-white"
+                : "border-navy-600 bg-navy-800/80 text-transparent hover:border-navy-400"
             }`}
           >
             <Check className="h-3 w-3" />
           </button>
         </div>
 
-        <p className="truncate text-xs font-medium text-zinc-300" title={record.filename}>
+        <p className="truncate text-xs font-medium text-navy-200" title={record.filename}>
           {record.filename}
         </p>
 
         {hint && (
-          <p className="line-clamp-2 text-[11px] leading-snug text-zinc-500" title={hint}>
+          <p className="line-clamp-2 text-[11px] leading-snug text-navy-400" title={hint}>
             {hint}
           </p>
         )}

@@ -2,20 +2,121 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Design tokens.
+ *
+ * Mirrored from `tailwind.config.ts` so plain CSS (scrollbars, selection,
+ * focus rings) can share the exact same values as the utility classes.
+ */
 :root {
-  --foreground-rgb: 255, 255, 255;
-  --background-start-rgb: 3, 7, 18;
-  --background-end-rgb: 3, 7, 18;
+  --bg-base: #08182a;
+  --bg-raised: #0b2035;
+  --bg-panel: #0f2a42;
+  --bg-panel-hover: #143350;
+
+  --border-subtle: rgba(36, 81, 118, 0.5);
+  --border-strong: rgba(47, 185, 214, 0.35);
+
+  --accent: #2fb9d6;
+  --accent-bright: #45cee8;
+
+  --text-primary: #f2f8fd;
+  --text-secondary: #aecbe2;
+  --text-muted: #7faecf;
+
+  /* Legacy aliases still referenced by older components. */
+  --foreground-rgb: 242, 248, 253;
+  --background-start-rgb: 8, 24, 42;
+  --background-end-rgb: 8, 24, 42;
 }
 
-body {
-  color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-      to bottom,
-      transparent,
-      rgb(var(--background-end-rgb))
-    )
-    rgb(var(--background-start-rgb));
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+
+  body {
+    color: var(--text-primary);
+    background-color: var(--bg-base);
+    /* Ambient focal wash from the reference compositions. */
+    background-image: radial-gradient(
+        1200px 620px at 12% -12%,
+        rgba(47, 185, 214, 0.16),
+        transparent 62%
+      ),
+      radial-gradient(900px 520px at 92% 4%, rgba(36, 81, 118, 0.22), transparent 60%);
+    background-attachment: fixed;
+    background-repeat: no-repeat;
+  }
+
+  ::selection {
+    background: rgba(47, 185, 214, 0.3);
+    color: var(--text-primary);
+  }
+
+  /* A single, consistent focus ring for keyboard users. */
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  /* Slim, navy-tinted scrollbars — the default grey breaks the palette. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: #245176 transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background-color: #1a3e5e;
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: #245176;
+  }
+}
+
+@layer utilities {
+  /* Thin hairline used to separate dense rows without a heavy border. */
+  .hairline {
+    border-color: var(--border-subtle);
+  }
+
+  /* Clamps long filenames / descriptions to a fixed number of lines. */
+  .line-clamp-2 {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  /* Horizontal scroll container with no visible scrollbar (chip rows, tabs). */
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 /*
@@ -46,6 +147,12 @@ body {
 @media (min-width: 1536px) {
   .masonry-grid {
     column-count: 4;
+  }
+}
+
+@media (min-width: 1920px) {
+  .masonry-grid {
+    column-count: 5;
   }
 }
 

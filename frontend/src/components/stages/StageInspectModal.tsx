@@ -91,7 +91,7 @@ export default function StageInspectModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-zinc-950/85 p-4 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-navy-950/85 p-4 backdrop-blur-sm"
       role="dialog"
       aria-modal="true"
       aria-label={`Inspect ${record.filename}`}
@@ -99,13 +99,13 @@ export default function StageInspectModal({
         if (event.target === event.currentTarget) onClose();
       }}
     >
-      <div className="my-6 w-full max-w-6xl rounded-xl border border-zinc-800 bg-zinc-900 shadow-2xl">
-        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-zinc-800 px-5 py-3.5">
+      <div className="my-6 w-full max-w-6xl rounded-xl border border-navy-800 bg-navy-900 shadow-2xl">
+        <header className="flex flex-wrap items-center justify-between gap-3 border-b border-navy-800 px-5 py-3.5">
           <div className="min-w-0">
-            <h2 className="truncate text-sm font-semibold text-zinc-100">
+            <h2 className="truncate text-sm font-semibold text-navy-50">
               {record.filename}
             </h2>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-zinc-500">
+            <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-navy-400">
               <span
                 className={`rounded border px-1.5 py-0.5 font-medium ${STAGE_COLORS[record.stage]}`}
               >
@@ -129,7 +129,7 @@ export default function StageInspectModal({
                   ? "Published assets cannot be reset."
                   : "Return this image to Stage 1 to reprocess it."
               }
-              className="inline-flex items-center gap-1.5 rounded-md border border-zinc-700 px-2.5 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-40"
+              className="inline-flex items-center gap-1.5 rounded-md border border-navy-700 px-2.5 py-1.5 text-xs font-medium text-navy-200 transition-colors hover:bg-navy-800 disabled:cursor-not-allowed disabled:opacity-40"
             >
               {isResetting ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -143,7 +143,7 @@ export default function StageInspectModal({
               type="button"
               onClick={onClose}
               aria-label="Close inspection"
-              className="rounded p-1.5 text-zinc-500 transition-colors hover:bg-zinc-800 hover:text-zinc-200"
+              className="rounded p-1.5 text-navy-400 transition-colors hover:bg-navy-800 hover:text-navy-100"
             >
               <X className="h-4 w-4" />
             </button>
@@ -154,7 +154,7 @@ export default function StageInspectModal({
           {/* Preview with variant switcher */}
           <div className="space-y-3">
             <div className="flex items-center gap-2">
-              <div className="flex flex-1 gap-1 rounded-lg border border-zinc-800 bg-zinc-950/50 p-1">
+              <div className="flex flex-1 gap-1 rounded-lg border border-navy-800 bg-navy-950/50 p-1">
                 {VARIANTS.map(([value, label]) => (
                   <button
                     key={value}
@@ -166,8 +166,8 @@ export default function StageInspectModal({
                     aria-pressed={!showCompare && variant === value}
                     className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
                       !showCompare && variant === value
-                        ? "bg-zinc-800 text-zinc-100"
-                        : "text-zinc-500 hover:text-zinc-300"
+                        ? "bg-navy-800 text-navy-50"
+                        : "text-navy-400 hover:text-navy-200"
                     }`}
                   >
                     {label}
@@ -182,8 +182,8 @@ export default function StageInspectModal({
                   aria-pressed={showCompare}
                   className={`shrink-0 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
                     showCompare
-                      ? "border-sky-500/50 bg-sky-500/15 text-sky-200"
-                      : "border-zinc-800 bg-zinc-950/50 text-zinc-400 hover:text-zinc-200"
+                      ? "border-accent-500/50 bg-accent-500/15 text-accent-200"
+                      : "border-navy-800 bg-navy-950/50 text-navy-300 hover:text-navy-100"
                   }`}
                 >
                   Compare
@@ -194,7 +194,7 @@ export default function StageInspectModal({
             {showCompare ? (
               <UpscaleComparePanel record={record} previewVersion={previewVersion} />
             ) : (
-              <div className="grid max-h-[70vh] place-items-center overflow-auto rounded-lg border border-zinc-800 bg-zinc-950 p-2">
+              <div className="grid max-h-[70vh] place-items-center overflow-auto rounded-lg border border-navy-800 bg-navy-950 p-2">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
                   key={`${variant}-${previewVersion ?? ""}`}
@@ -213,7 +213,7 @@ export default function StageInspectModal({
             {report ? (
               <AcceptanceReportPanel report={report} remediation={remediation} />
             ) : (
-              <p className="rounded-lg border border-dashed border-zinc-800 px-4 py-6 text-center text-sm text-zinc-500">
+              <p className="rounded-lg border border-dashed border-navy-800 px-4 py-6 text-center text-sm text-navy-400">
                 No acceptance report yet. Run Stage 4 or Stage 5 to score this
                 image.
               </p>

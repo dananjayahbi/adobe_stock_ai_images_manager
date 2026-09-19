@@ -14,7 +14,7 @@ import type {
 import type { UpscaleOptions } from "./upscale";
 
 export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8100";
 
 export type ImageStatus =
   | "PENDING"
@@ -49,6 +49,11 @@ export interface ImageRecord {
 
   // Stage pipeline
   stage: PipelineStage;
+  /**
+   * Stage key this record has been pushed into, awaiting a run.
+   * `null` means the record is not queued anywhere.
+   */
+  queued_stage: StageKey | null;
   working_path: string | null;
   stage_updated_at: string | null;
   acceptance_report: AcceptanceReport | null;
@@ -146,6 +151,8 @@ export async function uploadImages(
 export async function fetchRecords(params?: {
   status?: ImageStatus;
   used?: UsageFilter;
+  /** Stage key to filter by pending queue, or "none" for unqueued records. */
+  queued?: StageKey | "none";
   ids?: string[];
   limit?: number;
   offset?: number;
@@ -154,6 +161,46 @@ export async function fetchRecords(params?: {
   const { data } = await api.get<RecordListResponse>("/api/records", {
     params: { ...rest, ids: ids && ids.length > 0 ? ids.join(",") : undefined },
   });
+  return data;
+}
+
+/**
+ * Push records into a stage's queue without running it.
+ *
+ * The push records *intent*: the destination page lists these records in its
+ * draft bucket until the operator runs the stage there.
+ */
+export async function pushToQueue(
+  stageKey: StageKey,
+  recordIds: string[]
+): Promise<BulkActionResult> {
+  const { data } = await api.post<BulkActionResult>(
+    `/api/queues/${stageKey}/push`,
+    { record_ids: recordIds }
+  );
+  return data;
+}
+
+/** Clear the queue entry for records that should no longer be pushed. */
+export async function removeFromQueue(
+  stageKey: StageKey,
+  recordIds: string[]
+): Promise<BulkActionResult> {
+  const { data } = await api.post<BulkActionResult>(
+    `/api/queues/${stageKey}/remove`,
+    { record_ids: recordIds }
+  );
+  return data;
+}
+
+/** Pending queue depth per stage key. */
+export interface QueueSummary {
+  counts: Record<string, number>;
+  total: number;
+}
+
+export async function fetchQueueSummary(): Promise<QueueSummary> {
+  const { data } = await api.get<QueueSummary>("/api/queues/summary");
   return data;
 }
 

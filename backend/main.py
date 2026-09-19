@@ -33,10 +33,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS middleware - allow localhost:3000 for Next.js frontend
+# CORS middleware - the allowed origins come from settings so the frontend
+# port can change without editing code (see CORS_ORIGINS in config.py).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,6 +50,7 @@ from routers.approve import router as approve_router
 from routers.gallery import router as gallery_router
 from routers.similarity import router as similarity_router
 from routers.stages import router as stages_router
+from routers.queues import router as queues_router
 
 app.include_router(upload_router)
 app.include_router(records_router)
@@ -56,6 +58,7 @@ app.include_router(approve_router)
 app.include_router(gallery_router)
 app.include_router(similarity_router)
 app.include_router(stages_router)
+app.include_router(queues_router)
 
 # Serve generated thumbnails to the frontend grid.
 create_data_directories()

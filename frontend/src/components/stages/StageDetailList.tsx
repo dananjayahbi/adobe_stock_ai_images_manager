@@ -33,7 +33,7 @@ export default function StageDetailList({ record }: StageDetailListProps) {
         <Row label="Mean confidence" value={`${ocr.mean_confidence.toFixed(1)}%`} />
         {ocr.reason && <Note>{ocr.reason}</Note>}
         {ocr.text && (
-          <pre className="mt-1.5 max-h-24 overflow-auto whitespace-pre-wrap rounded bg-zinc-950/60 p-2 text-[11px] text-zinc-400">
+          <pre className="mt-1.5 max-h-24 overflow-auto whitespace-pre-wrap rounded bg-navy-950/60 p-2 text-[11px] text-navy-300">
             {ocr.text}
           </pre>
         )}
@@ -82,19 +82,19 @@ export default function StageDetailList({ record }: StageDetailListProps) {
             {refine.history.map((entry) => (
               <li
                 key={entry.pass}
-                className="rounded border border-zinc-800/70 bg-zinc-950/40 px-2 py-1.5 text-[11px]"
+                className="rounded border border-navy-800/70 bg-navy-950/40 px-2 py-1.5 text-[11px]"
               >
                 <div className="flex items-center justify-between">
-                  <span className="font-medium text-zinc-400">
+                  <span className="font-medium text-navy-300">
                     Pass {entry.pass}
                   </span>
-                  <span className="tabular-nums text-zinc-300">
+                  <span className="tabular-nums text-navy-200">
                     {(entry.score * 100).toFixed(1)}%
                   </span>
                 </div>
-                {entry.note && <p className="text-zinc-500">{entry.note}</p>}
+                {entry.note && <p className="text-navy-400">{entry.note}</p>}
                 {entry.operations?.map((operation, index) => (
-                  <p key={index} className="text-zinc-500">
+                  <p key={index} className="text-navy-400">
                     · {operation.operation} ({operation.strength.toFixed(2)})
                   </p>
                 ))}
@@ -129,7 +129,7 @@ export default function StageDetailList({ record }: StageDetailListProps) {
 
   if (sections.length === 0) {
     return (
-      <p className="rounded-lg border border-dashed border-zinc-800 px-4 py-4 text-center text-xs text-zinc-500">
+      <p className="rounded-lg border border-dashed border-navy-800 px-4 py-4 text-center text-xs text-navy-400">
         No stage findings recorded yet.
       </p>
     );
@@ -157,7 +157,7 @@ function Section({
 
   return (
     <section className={`rounded-lg border px-3 py-2.5 ${toneStyles}`}>
-      <h4 className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-zinc-400">
+      <h4 className="mb-1.5 flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-navy-300">
         {icon}
         {title}
       </h4>
@@ -169,8 +169,8 @@ function Section({
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-baseline justify-between gap-3">
-      <span className="text-zinc-500">{label}</span>
-      <span className="truncate font-medium text-zinc-300" title={value}>
+      <span className="text-navy-400">{label}</span>
+      <span className="truncate font-medium text-navy-200" title={value}>
         {value}
       </span>
     </div>
@@ -178,5 +178,5 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 function Note({ children }: { children: React.ReactNode }) {
-  return <p className="mt-1 text-zinc-400">{children}</p>;
+  return <p className="mt-1 text-navy-300">{children}</p>;
 }

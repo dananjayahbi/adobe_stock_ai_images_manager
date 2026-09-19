@@ -13,6 +13,8 @@ __pycache__/
 # Node
 frontend/node_modules/
 .next/
+# Machine-specific frontend config (ports differ per machine).
+.env.local
 
 # Crash dumps
 *.stackdump

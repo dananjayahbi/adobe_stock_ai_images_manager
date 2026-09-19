@@ -67,8 +67,8 @@ export default function GalleryToolbar({
               onClick={() => onUsageFilterChange(key)}
               className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors ${
                 isActive
-                  ? "border-sky-500 bg-sky-500/15 text-sky-300"
-                  : "border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
+                  ? "border-accent-500 bg-accent-500/15 text-accent-300"
+                  : "border-navy-700 text-navy-300 hover:border-navy-400 hover:text-navy-100"
               }`}
             >
               {label}
@@ -77,7 +77,7 @@ export default function GalleryToolbar({
           );
         })}
 
-        <span className="mx-1 h-5 w-px bg-zinc-800" aria-hidden />
+        <span className="mx-1 h-5 w-px bg-navy-800" aria-hidden />
 
         {SCOPES.map(({ key, label }) => {
           const isActive = statusScope === key;
@@ -89,7 +89,7 @@ export default function GalleryToolbar({
               className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors ${
                 isActive
                   ? "border-violet-500 bg-violet-500/15 text-violet-300"
-                  : "border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
+                  : "border-navy-700 text-navy-300 hover:border-navy-400 hover:text-navy-100"
               }`}
             >
               {label}
@@ -97,23 +97,23 @@ export default function GalleryToolbar({
           );
         })}
 
-        <span className="ml-auto text-xs text-zinc-500">
+        <span className="ml-auto text-xs text-navy-400">
           {visibleCount} shown
           {hasSelection ? ` · ${selectedCount} selected` : ""}
         </span>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-2">
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-navy-800 bg-navy-900/50 px-3 py-2">
         <button
           type="button"
           onClick={allSelected ? onClearSelection : onSelectAll}
           disabled={visibleCount === 0}
-          className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:border-zinc-500 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
+          className="rounded-md border border-navy-700 px-3 py-1.5 text-xs font-medium text-navy-200 transition-colors hover:border-navy-400 hover:text-navy-50 disabled:cursor-not-allowed disabled:opacity-40"
         >
           {allSelected ? "Clear selection" : "Select all"}
         </button>
 
-        <span className="h-5 w-px bg-zinc-800" aria-hidden />
+        <span className="h-5 w-px bg-navy-800" aria-hidden />
 
         <ToolbarAction
           label="Mark used"
@@ -170,8 +170,8 @@ function ToolbarAction({
   const tone = danger
     ? "border-red-500/40 bg-red-500/10 text-red-300 hover:border-red-400 hover:text-red-100"
     : emphasis
-      ? "border-sky-500/50 bg-sky-500/15 text-sky-300 hover:border-sky-400 hover:text-sky-100"
-      : "border-zinc-700 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100";
+      ? "border-accent-500/50 bg-accent-500/15 text-accent-300 hover:border-accent-400 hover:text-accent-100"
+      : "border-navy-700 text-navy-200 hover:border-navy-400 hover:text-navy-50";
 
   return (
     <button

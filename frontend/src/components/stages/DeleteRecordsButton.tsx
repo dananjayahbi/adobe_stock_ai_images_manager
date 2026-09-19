@@ -75,7 +75,7 @@ export default function DeleteRecordsButton({
         aria-label={label ?? (isSingle ? "Delete image" : `Delete ${count} images`)}
         className={
           variant === "icon"
-            ? "rounded-md p-1.5 text-zinc-500 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40"
+            ? "rounded-md p-1.5 text-navy-400 transition-colors hover:bg-red-500/10 hover:text-red-300 disabled:cursor-not-allowed disabled:opacity-40"
             : "inline-flex items-center gap-1.5 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-1.5 text-xs font-medium text-red-200 transition-colors hover:bg-red-500/20 disabled:cursor-not-allowed disabled:opacity-40"
         }
       >

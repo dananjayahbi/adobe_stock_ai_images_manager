@@ -36,6 +36,7 @@ class RecordResponse(BaseModel):
 
     # Stage pipeline
     stage: PipelineStage = PipelineStage.COLLECTED
+    queued_stage: Optional[str] = None
     working_path: Optional[str] = None
     stage_updated_at: Optional[datetime] = None
     acceptance_report: Optional[dict[str, Any]] = None
@@ -228,6 +229,28 @@ class UpscaleEstimateResponse(BaseModel):
     estimated_megapixels: float
     exceeds_megapixel_ceiling: bool
     warnings: list[str] = []
+
+
+class GpuDeviceResponse(BaseModel):
+    """One Vulkan device the upscaler can be pointed at with ``-g``."""
+    id: int
+    name: str
+    kind: str
+    kind_label: str
+    recommended: bool = False
+    details: dict[str, str] = {}
+
+
+class GpuListResponse(BaseModel):
+    """The devices this machine exposes, plus the index to default to.
+
+    ``available`` is False when no CLI is installed or enumeration produced
+    nothing, which tells the panel to fall back rather than render an empty
+    picker.
+    """
+    devices: list[GpuDeviceResponse]
+    default_gpu_id: int
+    available: bool
 
 
 class JobItemResponse(BaseModel):

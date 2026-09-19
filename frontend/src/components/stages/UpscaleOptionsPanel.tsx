@@ -28,10 +28,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   estimateUpscale,
+  fetchGpuDevices,
   fetchUpscaleCatalog,
   formatCapacity,
   formatMegapixels,
-  GPU_DEVICES,
+  SINGLE_GPU_FALLBACK,
+  type GpuList,
   type UpscaleCatalog,
   type UpscaleEstimate,
   type UpscaleModel,
@@ -75,6 +77,7 @@ export default function UpscaleOptionsPanel({
   disabled = false,
 }: UpscaleOptionsPanelProps) {
   const [catalog, setCatalog] = useState<UpscaleCatalog | null>(null);
+  const [gpus, setGpus] = useState<GpuList>(SINGLE_GPU_FALLBACK);
   const [error, setError] = useState<string | null>(null);
   const [estimate, setEstimate] = useState<UpscaleEstimate | null>(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -92,6 +95,29 @@ export default function UpscaleOptionsPanel({
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // The device list is enumerated server-side. A failure is not fatal: the
+  // fallback keeps a usable picker rather than an empty one, so the panel still
+  // works when the API is briefly unreachable.
+  useEffect(() => {
+    let cancelled = false;
+    fetchGpuDevices()
+      .then((data) => {
+        if (cancelled || data.devices.length === 0) return;
+        setGpus(data);
+        // A configured index can point at a device this machine does not have,
+        // which would make the CLI fail on every run. Snap it to a real one.
+        if (!data.devices.some((device) => device.id === value.gpu_id)) {
+          onChange({ ...value, gpu_id: data.default_gpu_id });
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+    // Intentionally runs once: the list is machine state, not user state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Re-estimate whenever the geometry-affecting inputs change. The request id
@@ -151,7 +177,9 @@ export default function UpscaleOptionsPanel({
   );
 
   const selectedModel = catalog?.models.find((m) => m.name === value.model);
-  const gpu = GPU_DEVICES.find((device) => device.id === value.gpu_id);
+  const devices = gpus.devices;
+  const gpu = devices.find((device) => device.id === value.gpu_id);
+  const isDiscrete = gpu?.kind === "dedicated";
   const warnings = estimate?.warnings ?? [];
 
   if (error) {
@@ -164,12 +192,12 @@ export default function UpscaleOptionsPanel({
 
   if (!catalog) {
     return (
-      <div className="h-24 animate-pulse rounded-xl border border-zinc-800 bg-zinc-900/40" />
+      <div className="h-24 animate-pulse rounded-xl border border-navy-800 bg-navy-900/40" />
     );
   }
 
   return (
-    <div className="space-y-4 rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">
+    <div className="space-y-4 rounded-xl border border-navy-800 bg-navy-900/60 p-4">
       {!catalog.neural_available && (
         <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
           <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -188,7 +216,7 @@ export default function UpscaleOptionsPanel({
         <div className="space-y-2">
           <label
             htmlFor="upscale-model"
-            className="flex items-center gap-1.5 text-xs font-medium text-zinc-400"
+            className="flex items-center gap-1.5 text-xs font-medium text-navy-300"
           >
             <Sparkles className="h-3.5 w-3.5" />
             Model
@@ -210,7 +238,7 @@ export default function UpscaleOptionsPanel({
                 model_scale: next?.scale ?? value.model_scale,
               });
             }}
-            className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2.5 py-2 text-sm text-zinc-200 outline-none focus:border-sky-500 disabled:opacity-50"
+            className="w-full rounded-md border border-navy-700 bg-navy-950 px-2.5 py-2 text-sm text-navy-100 outline-none focus:border-accent-500 disabled:opacity-50"
           >
             {groups.map((group) => (
               <optgroup key={group.source} label={group.label}>
@@ -225,7 +253,7 @@ export default function UpscaleOptionsPanel({
           </select>
 
           {selectedModel && (
-            <p className="text-xs leading-relaxed text-zinc-500">
+            <p className="text-xs leading-relaxed text-navy-400">
               {selectedModel.description}
             </p>
           )}
@@ -235,10 +263,10 @@ export default function UpscaleOptionsPanel({
         {/* Capacity                                                         */}
         {/* ---------------------------------------------------------------- */}
         <div className="space-y-2">
-          <span className="flex items-center gap-1.5 text-xs font-medium text-zinc-400">
+          <span className="flex items-center gap-1.5 text-xs font-medium text-navy-300">
             <Gauge className="h-3.5 w-3.5" />
             Upscale capacity
-            <span className="ml-auto text-[10px] font-normal text-zinc-500">
+            <span className="ml-auto text-[10px] font-normal text-navy-400">
               long edge
             </span>
           </span>
@@ -255,8 +283,8 @@ export default function UpscaleOptionsPanel({
                   aria-pressed={active}
                   className={`rounded-md border px-2.5 py-1.5 text-xs font-medium tabular-nums transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                     active
-                      ? "border-sky-500 bg-sky-500/15 text-sky-200"
-                      : "border-zinc-700 bg-zinc-800/60 text-zinc-400 hover:bg-zinc-700"
+                      ? "border-accent-500 bg-accent-500/15 text-accent-200"
+                      : "border-navy-700 bg-navy-800/60 text-navy-300 hover:bg-navy-700"
                   }`}
                 >
                   {formatCapacity(preset.long_edge)}
@@ -265,7 +293,7 @@ export default function UpscaleOptionsPanel({
             })}
           </div>
 
-          <div className="flex items-center gap-2 text-xs text-zinc-500">
+          <div className="flex items-center gap-2 text-xs text-navy-400">
             <input
               type="range"
               min={catalog.presets.min_target_long_edge}
@@ -277,20 +305,20 @@ export default function UpscaleOptionsPanel({
                 patch({ target_long_edge: Number(event.target.value) })
               }
               aria-label="Custom long edge in pixels"
-              className="h-1 flex-1 accent-sky-500"
+              className="h-1 flex-1 accent-accent-500"
             />
-            <span className="w-20 shrink-0 text-right tabular-nums text-zinc-400">
+            <span className="w-20 shrink-0 text-right tabular-nums text-navy-300">
               {value.target_long_edge} px
             </span>
           </div>
 
-          <label className="flex items-center gap-2 text-xs text-zinc-500">
+          <label className="flex items-center gap-2 text-xs text-navy-400">
             <input
               type="checkbox"
               checked={value.allow_downscale}
               disabled={disabled}
               onChange={(event) => patch({ allow_downscale: event.target.checked })}
-              className="h-3.5 w-3.5 accent-sky-500"
+              className="h-3.5 w-3.5 accent-accent-500"
             />
             Downscale sources that already exceed the target
           </label>
@@ -302,13 +330,18 @@ export default function UpscaleOptionsPanel({
         <div className="space-y-2">
           <label
             htmlFor="upscale-gpu"
-            className="flex items-center gap-1.5 text-xs font-medium text-zinc-400"
+            className="flex items-center gap-1.5 text-xs font-medium text-navy-300"
           >
             <Cpu className="h-3.5 w-3.5" />
             GPU acceleration
-            {gpu?.dedicated && (
+            {isDiscrete && (
               <span className="rounded bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-emerald-300">
                 Dedicated
+              </span>
+            )}
+            {!gpus.available && (
+              <span className="rounded bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300">
+                Unverified
               </span>
             )}
           </label>
@@ -318,19 +351,21 @@ export default function UpscaleOptionsPanel({
             value={value.gpu_id}
             disabled={disabled}
             onChange={(event) => patch({ gpu_id: Number(event.target.value) })}
-            className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2.5 py-2 text-sm text-zinc-200 outline-none focus:border-sky-500 disabled:opacity-50"
+            className="w-full rounded-md border border-navy-700 bg-navy-950 px-2.5 py-2 text-sm text-navy-100 outline-none focus:border-accent-500 disabled:opacity-50"
           >
-            {GPU_DEVICES.map((device) => (
+            {devices.map((device) => (
               <option key={device.id} value={device.id}>
-                [{device.id}] {device.name}
-                {device.dedicated ? " · dedicated" : " · integrated"}
+                [{device.id}] {device.name} · {device.kind_label.toLowerCase()}
               </option>
             ))}
           </select>
 
-          <p className="text-xs text-zinc-500">
-            Device 0 is the discrete GPU. Integrated devices are far slower and
-            are only worth selecting if the dedicated GPU is busy.
+          <p className="text-xs text-navy-400">
+            {!gpus.available
+              ? "The device list could not be read from the upscaler, so these are the expected defaults."
+              : isDiscrete
+                ? `${gpu?.name} is the discrete GPU. Integrated devices are far slower and are only worth selecting if it is busy.`
+                : "No discrete GPU was found. Integrated devices are much slower, so expect long runs."}
           </p>
         </div>
 
@@ -338,39 +373,39 @@ export default function UpscaleOptionsPanel({
         {/* Quality toggles                                                  */}
         {/* ---------------------------------------------------------------- */}
         <div className="space-y-2">
-          <span className="flex items-center gap-1.5 text-xs font-medium text-zinc-400">
+          <span className="flex items-center gap-1.5 text-xs font-medium text-navy-300">
             <Layers className="h-3.5 w-3.5" />
             Quality
           </span>
 
-          <label className="flex cursor-pointer items-start gap-2 rounded-md border border-zinc-800 bg-zinc-950/50 px-2.5 py-2">
+          <label className="flex cursor-pointer items-start gap-2 rounded-md border border-navy-800 bg-navy-950/50 px-2.5 py-2">
             <input
               type="checkbox"
               checked={value.tta}
               disabled={disabled}
               onChange={(event) => patch({ tta: event.target.checked })}
-              className="mt-0.5 h-3.5 w-3.5 accent-sky-500"
+              className="mt-0.5 h-3.5 w-3.5 accent-accent-500"
             />
             <span className="min-w-0">
-              <span className="flex items-center gap-1.5 text-xs font-medium text-zinc-300">
+              <span className="flex items-center gap-1.5 text-xs font-medium text-navy-200">
                 <Zap className="h-3 w-3 text-amber-400" />
                 TTA mode
               </span>
-              <span className="mt-0.5 block text-[11px] leading-relaxed text-zinc-500">
+              <span className="mt-0.5 block text-[11px] leading-relaxed text-navy-400">
                 Test-time augmentation. Slightly cleaner edges at roughly double
                 the runtime. Best kept off for large batches.
               </span>
             </span>
           </label>
 
-          <div className="flex items-center gap-2 rounded-md border border-zinc-800 bg-zinc-950/50 px-2.5 py-2">
-            <ImageIcon className="h-3.5 w-3.5 shrink-0 text-zinc-500" />
-            <span className="text-xs text-zinc-400">
+          <div className="flex items-center gap-2 rounded-md border border-navy-800 bg-navy-950/50 px-2.5 py-2">
+            <ImageIcon className="h-3.5 w-3.5 shrink-0 text-navy-400" />
+            <span className="text-xs text-navy-300">
               Output format
-              <span className="ml-2 rounded bg-zinc-800 px-1.5 py-0.5 font-mono text-[10px] uppercase text-zinc-300">
+              <span className="ml-2 rounded bg-navy-800 px-1.5 py-0.5 font-mono text-[10px] uppercase text-navy-200">
                 {catalog.presets.forced_format}
               </span>
-              <span className="ml-2 text-[11px] text-zinc-500">
+              <span className="ml-2 text-[11px] text-navy-400">
                 Adobe Stock accepts JPEG only.
               </span>
             </span>
@@ -382,22 +417,22 @@ export default function UpscaleOptionsPanel({
       {/* Live estimate                                                       */}
       {/* ------------------------------------------------------------------ */}
       {estimate && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-zinc-800 bg-zinc-950/50 px-3 py-2 text-xs">
-          <span className="text-zinc-500">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-navy-800 bg-navy-950/50 px-3 py-2 text-xs">
+          <span className="text-navy-400">
             {estimate.source_dimensions[0]}×{estimate.source_dimensions[1]}
-            <span className="mx-1.5 text-zinc-600">→</span>
-            <span className="font-medium text-zinc-300">
+            <span className="mx-1.5 text-navy-600">→</span>
+            <span className="font-medium text-navy-200">
               {estimate.target_dimensions[0]}×{estimate.target_dimensions[1]}
             </span>
           </span>
-          <span className="tabular-nums text-zinc-500">
+          <span className="tabular-nums text-navy-400">
             {estimate.scale.toFixed(2)}× ·{" "}
             {formatMegapixels(estimate.estimated_megapixels)}
           </span>
           {estimate.will_upscale ? (
             <span className="text-emerald-400">neural upscale</span>
           ) : (
-            <span className="text-zinc-500">kept at native size</span>
+            <span className="text-navy-400">kept at native size</span>
           )}
         </div>
       )}
@@ -419,12 +454,12 @@ export default function UpscaleOptionsPanel({
       {/* ------------------------------------------------------------------ */}
       {/* Advanced                                                            */}
       {/* ------------------------------------------------------------------ */}
-      <div className="border-t border-zinc-800 pt-3">
+      <div className="border-t border-navy-800 pt-3">
         <button
           type="button"
           onClick={() => setShowAdvanced((open) => !open)}
           aria-expanded={showAdvanced}
-          className="flex items-center gap-1.5 text-xs font-medium text-zinc-500 transition-colors hover:text-zinc-300"
+          className="flex items-center gap-1.5 text-xs font-medium text-navy-400 transition-colors hover:text-navy-200"
         >
           <ChevronDown
             className={`h-3.5 w-3.5 transition-transform ${showAdvanced ? "rotate-180" : ""}`}
@@ -437,7 +472,7 @@ export default function UpscaleOptionsPanel({
             <div className="space-y-1.5">
               <label
                 htmlFor="upscale-tile"
-                className="block text-xs font-medium text-zinc-400"
+                className="block text-xs font-medium text-navy-300"
               >
                 Tile size
               </label>
@@ -451,9 +486,9 @@ export default function UpscaleOptionsPanel({
                 onChange={(event) =>
                   patch({ tile_size: Number(event.target.value) })
                 }
-                className="w-full rounded-md border border-zinc-700 bg-zinc-950 px-2.5 py-1.5 text-sm text-zinc-200 outline-none focus:border-sky-500 disabled:opacity-50"
+                className="w-full rounded-md border border-navy-700 bg-navy-950 px-2.5 py-1.5 text-sm text-navy-100 outline-none focus:border-accent-500 disabled:opacity-50"
               />
-              <p className="text-[11px] text-zinc-500">
+              <p className="text-[11px] text-navy-400">
                 0 lets the CLI choose automatically. Lower values use less VRAM
                 but are slower; useful for very large outputs.
               </p>
@@ -462,10 +497,10 @@ export default function UpscaleOptionsPanel({
             <div className="space-y-1.5">
               <label
                 htmlFor="upscale-compression"
-                className="block text-xs font-medium text-zinc-400"
+                className="block text-xs font-medium text-navy-300"
               >
                 JPEG quality
-                <span className="ml-2 tabular-nums text-zinc-500">
+                <span className="ml-2 tabular-nums text-navy-400">
                   {value.compression}
                 </span>
               </label>
@@ -479,9 +514,9 @@ export default function UpscaleOptionsPanel({
                 onChange={(event) =>
                   patch({ compression: Number(event.target.value) })
                 }
-                className="h-1 w-full accent-sky-500"
+                className="h-1 w-full accent-accent-500"
               />
-              <p className="text-[11px] text-zinc-500">
+              <p className="text-[11px] text-navy-400">
                 90 is a good balance for stock photography. Adobe re-encodes on
                 upload, so very high values mostly inflate the file size.
               </p>
@@ -493,11 +528,11 @@ export default function UpscaleOptionsPanel({
                 checked={value.embed_srgb}
                 disabled={disabled}
                 onChange={(event) => patch({ embed_srgb: event.target.checked })}
-                className="mt-0.5 h-3.5 w-3.5 accent-sky-500"
+                className="mt-0.5 h-3.5 w-3.5 accent-accent-500"
               />
-              <span className="text-xs text-zinc-400">
+              <span className="text-xs text-navy-300">
                 Embed an sRGB colour profile
-                <span className="mt-0.5 block text-[11px] text-zinc-500">
+                <span className="mt-0.5 block text-[11px] text-navy-400">
                   Adobe Stock requires a colour profile on every JPEG. The
                   upscaler writes an untagged file, so this re-encodes it as
                   sRGB. Only disable it if you are embedding a profile yourself

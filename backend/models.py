@@ -105,6 +105,9 @@ class ImageRecord(Base):
     stage: Mapped[PipelineStage] = mapped_column(
         Enum(PipelineStage), default=PipelineStage.COLLECTED, nullable=False
     )
+    # Stage key this record has been explicitly pushed into, awaiting a run.
+    # NULL means "not queued". Cleared automatically on every stage advance.
+    queued_stage: Mapped[str | None] = mapped_column(String(20), nullable=True)
     #: Path of the current working file (original, upscaled, or refined copy).
     #: ``original_path`` always keeps pointing at the untouched inbox original.
     working_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)

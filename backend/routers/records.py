@@ -16,6 +16,9 @@ MAX_LIMIT = 500
 # Gallery usage filter values accepted by the `used` query parameter.
 USED_FILTERS = ("all", "used", "unused")
 
+#: ``queued`` sentinel that selects records with no pending stage queue entry.
+QUEUED_NONE_SENTINEL = "none"
+
 
 @router.get("/api/records", response_model=RecordListResponse)
 async def list_records(
@@ -27,6 +30,13 @@ async def list_records(
     ids: str | None = Query(
         default=None,
         description="Comma-separated record ids to fetch explicitly.",
+    ),
+    queued: str | None = Query(
+        default=None,
+        description=(
+            "Filter by pending stage queue: a stage key, or 'none' for "
+            "records that are not queued anywhere."
+        ),
     ),
     limit: int = Query(default=DEFAULT_LIMIT, description="Max records to return."),
     offset: int = Query(default=0, description="Records to skip for pagination."),
@@ -76,6 +86,14 @@ async def list_records(
     elif used_filter == "unused":
         base = base.where(ImageRecord.is_used.is_(False))
         count_stmt = count_stmt.where(ImageRecord.is_used.is_(False))
+
+    if queued:
+        if queued == QUEUED_NONE_SENTINEL:
+            base = base.where(ImageRecord.queued_stage.is_(None))
+            count_stmt = count_stmt.where(ImageRecord.queued_stage.is_(None))
+        else:
+            base = base.where(ImageRecord.queued_stage == queued)
+            count_stmt = count_stmt.where(ImageRecord.queued_stage == queued)
 
     if id_filter:
         base = base.where(ImageRecord.id.in_(id_filter))
