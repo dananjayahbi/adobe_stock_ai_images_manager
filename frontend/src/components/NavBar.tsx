@@ -1,6 +1,6 @@
 "use client";
 
-import { LayoutGrid, UploadCloud } from "lucide-react";
+import { LayoutGrid, ListOrdered, UploadCloud } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
@@ -11,6 +11,7 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
+  { href: "/stages", label: "Stages", icon: ListOrdered },
   { href: "/", label: "Pipeline", icon: UploadCloud },
   { href: "/gallery", label: "Gallery", icon: LayoutGrid },
 ];

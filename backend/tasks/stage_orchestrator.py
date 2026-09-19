@@ -1,0 +1,791 @@
+"""Stage orchestrator - drives records through the seven-stage pipeline.
+
+Each public ``run_*`` function is a batch operation over an explicit list of
+record ids. They share one contract:
+
+* They never raise for a per-record failure; a broken image is marked ``failed``
+  in the job report while the rest of the batch continues.
+* They persist their outcome on the record (``stage``, ``working_path``,
+  ``acceptance_report``, ``stage_details``) before returning.
+* They are safe to re-run: a record already past a stage is skipped, not
+  reprocessed.
+
+The functions are plain synchronous callables so FastAPI's ``BackgroundTasks``
+can dispatch them after the HTTP response is sent.
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from pathlib import Path
+from typing import Callable, Iterable
+
+from sqlalchemy.orm import Session
+
+from config import Settings, settings as default_settings
+from models import ImageRecord, ImageStatus, PipelineStage, utcnow
+from services import (
+    compatibility_checker,
+    csv_export,
+    gemini_auditor,
+    gemini_metadata,
+    ocr_scanner,
+    upscaler,
+)
+from services.acceptance.scorer import AcceptanceConfig
+from services.jobs import (
+    STATUS_CANCELLED,
+    STATUS_COMPLETED,
+    STATUS_FAILED,
+    Job,
+    JobItem,
+    registry,
+)
+from services.refine import refine_image
+from services.stage_registry import TERMINAL_STAGES
+
+logger = logging.getLogger(__name__)
+
+SessionFactory = Callable[[], Session]
+
+
+# --------------------------------------------------------------------------- #
+# Helpers
+# --------------------------------------------------------------------------- #
+
+def _current_path(record: ImageRecord) -> Path:
+    """The file the pipeline should operate on right now.
+
+    Falls back to the inbox original whenever no upscaled/refined copy exists,
+    so a record is never stranded by a missing intermediate file.
+    """
+    for candidate in (record.working_path, record.original_path):
+        if candidate and Path(candidate).exists():
+            return Path(candidate)
+    return Path(record.original_path or "")
+
+
+def _set_stage(
+    record: ImageRecord,
+    stage: PipelineStage,
+    *,
+    detail_key: str | None = None,
+    detail: dict | None = None,
+) -> None:
+    """Advance a record to ``stage``, recording an optional per-stage detail."""
+    record.stage = stage
+    record.stage_updated_at = utcnow()
+    if detail_key and detail is not None:
+        details = dict(record.stage_details or {})
+        details[detail_key] = detail
+        # Reassign so SQLAlchemy detects the JSON mutation.
+        record.stage_details = details
+
+
+def _load_records(db: Session, record_ids: Iterable[str]) -> tuple[list[ImageRecord], list[str]]:
+    """Fetch records in the caller's order, reporting ids that do not exist."""
+    ids = list(dict.fromkeys(record_ids))
+    if not ids:
+        return [], []
+    records = db.query(ImageRecord).filter(ImageRecord.id.in_(ids)).all()
+    by_id = {record.id: record for record in records}
+    ordered = [by_id[rid] for rid in ids if rid in by_id]
+    missing = [rid for rid in ids if rid not in by_id]
+    return ordered, missing
+
+
+def _make_items(records: list[ImageRecord]) -> list[JobItem]:
+    return [
+        JobItem(record_id=record.id, filename=record.filename) for record in records
+    ]
+
+
+def _start_job(
+    job_id: str | None, stage: str, kind: str, records: list[ImageRecord]
+) -> Job:
+    """Adopt a job created by the API layer, or create one for direct calls.
+
+    The router registers the job *before* dispatching the background task so it
+    can return a real job id in the HTTP response; direct callers (tests, CLI)
+    omit ``job_id`` and get a freshly created one.
+    """
+    if job_id:
+        existing = registry.get(job_id)
+        if existing is not None:
+            return existing
+
+    return registry.create(stage, kind, _make_items(records))
+
+
+def _should_stop(job: Job) -> bool:
+    return job.cancel_requested
+
+
+def _existing_metadata(record: ImageRecord) -> dict | None:
+    """Return a record's Stage 6 metadata in the approval pipeline's shape.
+
+    Returns None when no title exists, which tells the approval pipeline to
+    generate metadata itself instead of embedding an empty caption.
+    """
+    title = (record.generated_title or "").strip()
+    if not title:
+        return None
+
+    return {
+        "title": title,
+        "description": (record.generated_description or "").strip() or title,
+        "keywords": [str(keyword) for keyword in (record.generated_keywords or [])],
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Stage 2 - OCR sweep
+# --------------------------------------------------------------------------- #
+
+def run_ocr_stage(
+    db_session_factory: SessionFactory,
+    record_ids: list[str],
+    settings: Settings | None = None,
+    *,
+    job_id: str | None = None,
+) -> str:
+    """Scan records for embedded text (Stage 2).
+
+    Records are read from the *inbox original* rather than the working copy,
+    because OCR is the first inspection and the original is the authoritative
+    source. Images with blocking text land in ``OCR_REJECTED`` and are excluded
+    from every later stage.
+
+    Returns the job id.
+    """
+    cfg = settings or default_settings
+    db = db_session_factory()
+    job: Job | None = None
+
+    try:
+        records, missing = _load_records(db, record_ids)
+        job = _start_job(job_id, "ocr", "ocr-scan", records)
+
+        for record in records:
+            item = next(i for i in job.items if i.record_id == record.id)
+            if _should_stop(job):
+                item.status = "skipped"
+                item.message = "Cancelled."
+                continue
+
+            item.status = "running"
+            item.started_at = time.time()
+
+            # Re-running OCR on an already-scanned record is wasted work.
+            if record.stage in (PipelineStage.OCR_CLEAR, PipelineStage.OCR_REJECTED):
+                item.status = "skipped"
+                item.message = f"Already scanned ({record.stage.value})."
+                item.finished_at = time.time()
+                continue
+
+            try:
+                result = ocr_scanner.scan_text(_current_path(record))
+
+                record.ocr_text_detected = result.text_detected
+                record.ocr_text_content = (result.text or "")[:2000] or None
+
+                if result.blocked:
+                    _set_stage(
+                        record,
+                        PipelineStage.OCR_REJECTED,
+                        detail_key="ocr",
+                        detail=result.to_dict(),
+                    )
+                    # OCR rejection is terminal: keep it out of the PASSED queue.
+                    record.status = ImageStatus.FLAGGED
+                    record.semantic_flags = [result.reason or "Text detected"]
+                    item.status = "failed"
+                    item.message = result.reason or "Text detected."
+                else:
+                    _set_stage(
+                        record,
+                        PipelineStage.OCR_CLEAR,
+                        detail_key="ocr",
+                        detail=result.to_dict(),
+                    )
+                    item.status = "succeeded"
+                    item.message = (
+                        result.reason
+                        or f"No text detected ({result.classification})."
+                    )
+
+                item.finished_at = time.time()
+                db.commit()
+            except Exception as exc:  # noqa: BLE001 - one bad file must not stop the batch
+                logger.exception("OCR failed for record %s", record.id)
+                db.rollback()
+                item.status = "failed"
+                item.message = f"OCR error: {exc}"
+                item.finished_at = time.time()
+
+        if missing:
+            job.message = f"{len(missing)} record(s) not found."
+
+        status = STATUS_CANCELLED if job.cancel_requested else STATUS_COMPLETED
+        registry.finish(job, status)
+        return job.id
+    finally:
+        db.close()
+
+
+# --------------------------------------------------------------------------- #
+# Stage 3 - Upscale
+# --------------------------------------------------------------------------- #
+
+def run_upscale_stage(
+    db_session_factory: SessionFactory,
+    record_ids: list[str],
+    settings: Settings | None = None,
+    *,
+    job_id: str | None = None,
+) -> str:
+    """Upscale records that cleared OCR (Stage 3). Returns the job id."""
+    cfg = settings or default_settings
+    db = db_session_factory()
+    job: Job | None = None
+
+    try:
+        records, missing = _load_records(db, record_ids)
+        job = _start_job(job_id, "upscale", "upscale", records)
+
+        for record in records:
+            item = next(i for i in job.items if i.record_id == record.id)
+            if _should_stop(job):
+                item.status = "skipped"
+                item.message = "Cancelled."
+                continue
+
+            item.status = "running"
+            item.started_at = time.time()
+
+            if record.stage in TERMINAL_STAGES:
+                item.status = "skipped"
+                item.message = f"Terminal stage ({record.stage.value})."
+                item.finished_at = time.time()
+                continue
+
+            if record.stage in (
+                PipelineStage.UPSCALED,
+                PipelineStage.REFINED,
+                PipelineStage.COMPATIBLE,
+                PipelineStage.METADATA_READY,
+                PipelineStage.PUBLISHED,
+            ):
+                item.status = "skipped"
+                item.message = f"Already past Stage 3 ({record.stage.value})."
+                item.finished_at = time.time()
+                continue
+
+            try:
+                result = upscaler.upscale_image(
+                    _current_path(record),
+                    cfg.UPSCALED_DIR,
+                    record.id,
+                    settings=cfg,
+                )
+
+                if not result.success:
+                    # Upscaling is an enhancement, not a hard gate: keep the
+                    # record moving with its current file and record the reason.
+                    _set_stage(
+                        record,
+                        PipelineStage.UPSCALED,
+                        detail_key="upscale",
+                        detail=result.to_dict(),
+                    )
+                    item.status = "succeeded"
+                    item.message = f"Upscale unavailable: {result.reason}"
+                else:
+                    if result.output_path and result.backend != upscaler.BACKEND_SKIPPED:
+                        record.working_path = result.output_path
+                    _set_stage(
+                        record,
+                        PipelineStage.UPSCALED,
+                        detail_key="upscale",
+                        detail=result.to_dict(),
+                    )
+                    item.status = "succeeded"
+                    item.message = (
+                        f"{result.backend} · {result.source_megapixels:.1f} MP → "
+                        f"{result.output_megapixels:.1f} MP"
+                    )
+
+                item.finished_at = time.time()
+                db.commit()
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Upscale failed for record %s", record.id)
+                db.rollback()
+                item.status = "failed"
+                item.message = f"Upscale error: {exc}"
+                item.finished_at = time.time()
+
+        if missing:
+            job.message = f"{len(missing)} record(s) not found."
+
+        status = STATUS_CANCELLED if job.cancel_requested else STATUS_COMPLETED
+        registry.finish(job, status)
+        return job.id
+    finally:
+        db.close()
+
+
+# --------------------------------------------------------------------------- #
+# Stage 4 - Refine
+# --------------------------------------------------------------------------- #
+
+def run_refine_stage(
+    db_session_factory: SessionFactory,
+    record_ids: list[str],
+    settings: Settings | None = None,
+    *,
+    use_semantic: bool = True,
+    job_id: str | None = None,
+) -> str:
+    """Refine records until they reach the acceptance threshold (Stage 4).
+
+    The semantic audit runs first (when enabled) so its score is available to
+    every refinement pass; a correction that fixes a pixel metric but leaves the
+    model unconvinced should not be treated as progress.
+
+    Returns the job id.
+    """
+    cfg = settings or default_settings
+    acceptance = AcceptanceConfig.from_settings()
+    db = db_session_factory()
+    job: Job | None = None
+
+    try:
+        records, missing = _load_records(db, record_ids)
+        job = _start_job(job_id, "refine", "refine", records)
+
+        for record in records:
+            item = next(i for i in job.items if i.record_id == record.id)
+            if _should_stop(job):
+                item.status = "skipped"
+                item.message = "Cancelled."
+                continue
+
+            item.status = "running"
+            item.started_at = time.time()
+
+            if record.stage in TERMINAL_STAGES:
+                item.status = "skipped"
+                item.message = f"Terminal stage ({record.stage.value})."
+                item.finished_at = time.time()
+                continue
+
+            try:
+                source = _current_path(record)
+
+                semantic: dict | None = None
+                if use_semantic:
+                    semantic = gemini_auditor.audit_image(
+                        source, api_key=cfg.effective_llm_api_key
+                    )
+
+                result = refine_image(
+                    source,
+                    cfg.REFINED_DIR,
+                    record.id,
+                    semantic=semantic,
+                    settings=cfg,
+                    config=acceptance,
+                )
+
+                if result.output_path:
+                    record.working_path = result.output_path
+                record.refine_passes = result.passes
+                if result.report is not None:
+                    record.acceptance_report = result.report.to_dict()
+                    record.acceptance_score = result.report.score
+
+                _set_stage(
+                    record,
+                    PipelineStage.REFINED,
+                    detail_key="refine",
+                    detail=result.to_dict(),
+                )
+
+                item.score = result.final_score
+                item.status = "succeeded"
+                item.message = (
+                    f"{result.initial_score:.1%} → {result.final_score:.1%} "
+                    f"in {result.passes} pass(es)"
+                )
+                item.finished_at = time.time()
+                db.commit()
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Refine failed for record %s", record.id)
+                db.rollback()
+                item.status = "failed"
+                item.message = f"Refine error: {exc}"
+                item.finished_at = time.time()
+
+        if missing:
+            job.message = f"{len(missing)} record(s) not found."
+
+        status = STATUS_CANCELLED if job.cancel_requested else STATUS_COMPLETED
+        registry.finish(job, status)
+        return job.id
+    finally:
+        db.close()
+
+
+# --------------------------------------------------------------------------- #
+# Stage 5 - Compatibility gate
+# --------------------------------------------------------------------------- #
+
+def run_compatibility_stage(
+    db_session_factory: SessionFactory,
+    record_ids: list[str],
+    settings: Settings | None = None,
+    *,
+    use_semantic: bool = True,
+    job_id: str | None = None,
+) -> str:
+    """Run the full acceptance algorithm and gate records (Stage 5).
+
+    Passing records become ``COMPATIBLE`` with ``status=PASSED`` so they enter
+    the existing approval/download flow. Failing records become
+    ``INCOMPATIBLE`` with ``status=FLAGGED`` and carry remediation advice.
+
+    Returns the job id.
+    """
+    cfg = settings or default_settings
+    acceptance = AcceptanceConfig.from_settings()
+    db = db_session_factory()
+    job: Job | None = None
+
+    try:
+        records, missing = _load_records(db, record_ids)
+        job = _start_job(job_id, "compatibility", "compatibility-check", records)
+
+        for record in records:
+            item = next(i for i in job.items if i.record_id == record.id)
+            if _should_stop(job):
+                item.status = "skipped"
+                item.message = "Cancelled."
+                continue
+
+            item.status = "running"
+            item.started_at = time.time()
+
+            if record.stage in TERMINAL_STAGES:
+                item.status = "skipped"
+                item.message = f"Terminal stage ({record.stage.value})."
+                item.finished_at = time.time()
+                continue
+
+            try:
+                source = _current_path(record)
+
+                semantic: dict | None = None
+                if use_semantic:
+                    semantic = gemini_auditor.audit_image(
+                        source, api_key=cfg.effective_llm_api_key
+                    )
+
+                verdict = compatibility_checker.check_compatibility(
+                    source, semantic=semantic, config=acceptance
+                )
+
+                record.acceptance_report = verdict.report.to_dict()
+                record.acceptance_score = verdict.report.score
+                record.semantic_confidence_score = (
+                    semantic.get("confidence_score") if semantic else None
+                )
+                record.semantic_flags = (
+                    [str(flag) for flag in (semantic or {}).get("flags", [])]
+                    or [issue.detail for issue in verdict.report.issues]
+                )
+
+                if verdict.passed:
+                    _set_stage(
+                        record,
+                        PipelineStage.COMPATIBLE,
+                        detail_key="compatibility",
+                        detail=verdict.to_dict(),
+                    )
+                    record.status = ImageStatus.PASSED
+                    item.status = "succeeded"
+                    item.message = verdict.summary
+                else:
+                    _set_stage(
+                        record,
+                        PipelineStage.INCOMPATIBLE,
+                        detail_key="compatibility",
+                        detail=verdict.to_dict(),
+                    )
+                    record.status = ImageStatus.FLAGGED
+                    item.status = "failed"
+                    item.message = verdict.summary
+
+                item.score = verdict.report.score
+                item.finished_at = time.time()
+                db.commit()
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Compatibility check failed for record %s", record.id)
+                db.rollback()
+                item.status = "failed"
+                item.message = f"Compatibility error: {exc}"
+                item.finished_at = time.time()
+
+        if missing:
+            job.message = f"{len(missing)} record(s) not found."
+
+        status = STATUS_CANCELLED if job.cancel_requested else STATUS_COMPLETED
+        registry.finish(job, status)
+        return job.id
+    finally:
+        db.close()
+
+
+# --------------------------------------------------------------------------- #
+# Stage 6 - Metadata generation
+# --------------------------------------------------------------------------- #
+
+def run_metadata_stage(
+    db_session_factory: SessionFactory,
+    record_ids: list[str],
+    settings: Settings | None = None,
+    *,
+    delay_seconds: float | None = None,
+    job_id: str | None = None,
+) -> str:
+    """Generate title/description/keywords/category one record at a time.
+
+    Calls are deliberately serialized with a configurable pause: the gateway
+    routes to free upstream models that rate-limit aggressively, and a burst of
+    parallel requests is the fastest way to get throttled.
+
+    Returns the job id.
+    """
+    cfg = settings or default_settings
+    pause = (
+        float(delay_seconds)
+        if delay_seconds is not None
+        else float(getattr(cfg, "METADATA_CALL_DELAY_SECONDS", 2.0))
+    )
+    db = db_session_factory()
+    job: Job | None = None
+
+    try:
+        records, missing = _load_records(db, record_ids)
+        job = _start_job(job_id, "metadata", "metadata-generate", records)
+
+        for index, record in enumerate(records):
+            item = next(i for i in job.items if i.record_id == record.id)
+            if _should_stop(job):
+                item.status = "skipped"
+                item.message = "Cancelled."
+                continue
+
+            item.status = "running"
+            item.started_at = time.time()
+
+            if record.stage in TERMINAL_STAGES:
+                item.status = "skipped"
+                item.message = f"Terminal stage ({record.stage.value})."
+                item.finished_at = time.time()
+                continue
+
+            try:
+                metadata = gemini_metadata.generate_metadata(
+                    _current_path(record), api_key=cfg.effective_llm_api_key
+                )
+
+                if not metadata:
+                    item.status = "failed"
+                    item.message = "The metadata model returned nothing usable."
+                    item.finished_at = time.time()
+                    continue
+
+                record.generated_title = (metadata.get("title") or "")[:500] or None
+                record.generated_description = metadata.get("description") or None
+                record.generated_keywords = metadata.get("keywords") or []
+                record.category = metadata.get("category")
+
+                _set_stage(
+                    record,
+                    PipelineStage.METADATA_READY,
+                    detail_key="metadata",
+                    detail={
+                        "keyword_count": len(record.generated_keywords or []),
+                        "category": record.category,
+                        "generated_at": utcnow().isoformat(),
+                    },
+                )
+
+                item.status = "succeeded"
+                item.message = (
+                    f"{len(record.generated_keywords or [])} keywords · "
+                    f"category {record.category}"
+                )
+                item.finished_at = time.time()
+                db.commit()
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Metadata generation failed for record %s", record.id)
+                db.rollback()
+                item.status = "failed"
+                item.message = f"Metadata error: {exc}"
+                item.finished_at = time.time()
+
+            # Pause between calls to stay under the upstream rate limit. Skip
+            # the wait after the final record so the job finishes promptly.
+            is_last = index == len(records) - 1
+            if pause > 0 and not is_last and not _should_stop(job):
+                time.sleep(pause)
+
+        if missing:
+            job.message = f"{len(missing)} record(s) not found."
+
+        status = STATUS_CANCELLED if job.cancel_requested else STATUS_COMPLETED
+        registry.finish(job, status)
+        return job.id
+    finally:
+        db.close()
+
+
+# --------------------------------------------------------------------------- #
+# Stage 7 - Publish to the gallery
+# --------------------------------------------------------------------------- #
+
+def publish_records(
+    db_session_factory: SessionFactory,
+    record_ids: list[str],
+    settings: Settings | None = None,
+    *,
+    job_id: str | None = None,
+) -> str:
+    """Stage records for upload and move them to the gallery (Stage 7).
+
+    Reuses the existing approval pipeline (metadata generation if missing, copy
+    into ``ready_to_upload``, ExifTool embedding) so there is exactly one code
+    path that produces a downloadable asset.
+
+    Returns the job id.
+    """
+    from tasks.audit_orchestrator import process_approval
+
+    cfg = settings or default_settings
+    db = db_session_factory()
+    job: Job | None = None
+
+    try:
+        records, missing = _load_records(db, record_ids)
+        job = _start_job(job_id, "gallery", "publish", records)
+
+        for record in records:
+            item = next(i for i in job.items if i.record_id == record.id)
+            if _should_stop(job):
+                item.status = "skipped"
+                item.message = "Cancelled."
+                continue
+
+            item.status = "running"
+            item.started_at = time.time()
+
+            if record.stage == PipelineStage.PUBLISHED:
+                item.status = "skipped"
+                item.message = "Already published."
+                item.finished_at = time.time()
+                continue
+
+            if record.stage != PipelineStage.METADATA_READY:
+                item.status = "failed"
+                item.message = (
+                    f"Stage 6 (metadata) must complete first; record is at {record.stage.value}."
+                )
+                item.finished_at = time.time()
+                continue
+
+            try:
+                # Reuse the metadata already generated in Stage 6 rather than
+                # paying for a second LLM call, but only when it is complete
+                # enough to embed.
+                override = None
+                if refreshed_metadata := _existing_metadata(record):
+                    override = refreshed_metadata
+
+                success = process_approval(
+                    db_session_factory=db_session_factory,
+                    record_id=record.id,
+                    settings=cfg,
+                    override_metadata=override,
+                )
+                db.expire_all()
+                refreshed = db.query(ImageRecord).filter(
+                    ImageRecord.id == record.id
+                ).first()
+
+                if success and refreshed is not None:
+                    _set_stage(
+                        refreshed,
+                        PipelineStage.PUBLISHED,
+                        detail_key="publish",
+                        detail={"published_at": utcnow().isoformat()},
+                    )
+                    refreshed.status = ImageStatus.READY
+                    db.commit()
+                    item.status = "succeeded"
+                    item.message = "Staged in ready_to_upload."
+                else:
+                    item.status = "failed"
+                    item.message = "Approval pipeline failed (copy or metadata embedding)."
+                item.finished_at = time.time()
+            except Exception as exc:  # noqa: BLE001
+                logger.exception("Publish failed for record %s", record.id)
+                db.rollback()
+                item.status = "failed"
+                item.message = f"Publish error: {exc}"
+                item.finished_at = time.time()
+
+        if missing:
+            job.message = f"{len(missing)} record(s) not found."
+
+        status = STATUS_CANCELLED if job.cancel_requested else STATUS_COMPLETED
+        registry.finish(job, status)
+        return job.id
+    finally:
+        db.close()
+
+
+# --------------------------------------------------------------------------- #
+# Stage 6 - CSV export
+# --------------------------------------------------------------------------- #
+
+def build_metadata_csv(
+    db_session_factory: SessionFactory,
+    record_ids: list[str] | None = None,
+    *,
+    only_ready: bool = True,
+) -> csv_export.CsvBuildResult:
+    """Build the Adobe Stock CSV for the given records.
+
+    When ``record_ids`` is omitted every eligible record is included, which is
+    what the "download the whole batch" action needs.
+    """
+    db = db_session_factory()
+    try:
+        query = db.query(ImageRecord)
+        if record_ids:
+            query = query.filter(ImageRecord.id.in_(list(dict.fromkeys(record_ids))))
+        if only_ready:
+            # Only assets that can actually be uploaded belong in the CSV, since
+            # Adobe matches rows to files by name.
+            query = query.filter(
+                ImageRecord.stage.in_(
+                    [PipelineStage.METADATA_READY, PipelineStage.PUBLISHED]
+                )
+            )
+
+        records = query.order_by(ImageRecord.created_at.asc()).all()
+        return csv_export.build_csv(records)
+    finally:
+        db.close()

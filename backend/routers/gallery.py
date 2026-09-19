@@ -170,7 +170,7 @@ async def download_record(record_id: str, db: Session = Depends(get_db)):
     return FileResponse(
         path=str(path),
         media_type="image/jpeg",
-        filename=build_download_name(record),
+        filename=build_download_name(record, path, disambiguator=record.id),
     )
 
 
@@ -208,9 +208,13 @@ async def download_records_zip(request: DeleteRequest, db: Session = Depends(get
                 if path is None:
                     logger.warning("Skipping unstaged record %s in ZIP", record.id)
                     continue
-                name = build_download_name(record)
+                # The disambiguator keeps two long, similarly-titled assets from
+                # collapsing to the same 30-character name. The set below is a
+                # belt-and-braces guard in case two ids ever slugify identically.
+                name = build_download_name(record, path, disambiguator=record.id)
                 if name in used_names:
-                    name = f"{path.stem}-{record.id[:8]}{path.suffix.lower()}"
+                    stem_budget = max(len(name) - len(path.suffix) - 9, 1)
+                    name = f"{name[:stem_budget]}-{record.id[:8]}{path.suffix.lower()}"
                 used_names.add(name)
                 archive.write(path, arcname=name)
     except Exception:
@@ -265,7 +269,7 @@ async def build_upload_table(
 
     base_url = str(http_request.base_url).rstrip("/")
     items = [
-        build_upload_row(by_id[rid], base_url)
+        build_upload_row(by_id[rid], base_url, disambiguator=rid)
         for rid in request.record_ids
         if rid in by_id
     ]

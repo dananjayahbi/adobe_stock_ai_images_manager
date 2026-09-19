@@ -245,9 +245,14 @@ def test_generate_metadata_cleans_and_caps_keywords(
     meta = gemini_metadata.generate_metadata(sample_image)
 
     assert meta["title"] == "A Title"
-    assert len(meta["keywords"]) == 35
+    # 43 keywords are supplied and 3 are banned, so 40 survive - and the list
+    # must stay within Adobe's 49-keyword ceiling.
+    assert len(meta["keywords"]) == 40
+    assert len(meta["keywords"]) <= 49
     for banned in ("ai", "generative", "stock"):
         assert banned not in [k.lower() for k in meta["keywords"]]
+    # The category must always resolve to a valid Adobe code.
+    assert 1 <= meta["category"] <= 21
 
 
 def test_generate_metadata_returns_none_on_gateway_error(sample_image, monkeypatch):

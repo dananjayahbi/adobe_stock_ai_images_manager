@@ -57,18 +57,19 @@ def client(db_session_factory, monkeypatch, tmp_path):
     inbox = tmp_path / "inbox"
     thumbnails = tmp_path / "thumbnails"
     ready = tmp_path / "ready"
-    for directory in (inbox, thumbnails, ready):
+    refined = tmp_path / "refined"
+    upscaled = tmp_path / "upscaled"
+    for directory in (inbox, thumbnails, ready, refined, upscaled):
         directory.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(settings, "INBOX_DIR", inbox)
     monkeypatch.setattr(settings, "THUMBNAILS_DIR", thumbnails)
     monkeypatch.setattr(settings, "READY_DIR", ready)
+    monkeypatch.setattr(settings, "REFINED_DIR", refined)
+    monkeypatch.setattr(settings, "UPSCALED_DIR", upscaled)
 
-    # Prevent background QC/AI pipeline from running during API tests.
-    import routers.upload as upload_router
-
-    monkeypatch.setattr(
-        upload_router, "process_pending_records", lambda *args, **kwargs: None
-    )
+    # Upload is Stage 1 only and schedules no background work, so no audit
+    # stubbing is needed here. Stage operations are dispatched explicitly by
+    # the caller and are tested through the orchestrator directly.
 
     with TestClient(app) as test_client:
         yield test_client

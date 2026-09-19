@@ -1,6 +1,17 @@
 import axios from "axios";
 
-// ...existing code...
+import type {
+  AcceptanceReport,
+  AdobeCategory,
+  CsvPreview,
+  PipelineStage,
+  StageDefinition,
+  StageDetails,
+  StageJob,
+  StageKey,
+  StageSummary,
+} from "./stages";
+
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
 
@@ -34,6 +45,16 @@ export interface ImageRecord {
   used_at: string | null;
   created_at: string;
   updated_at: string;
+
+  // Stage pipeline
+  stage: PipelineStage;
+  working_path: string | null;
+  stage_updated_at: string | null;
+  acceptance_report: AcceptanceReport | null;
+  acceptance_score: number | null;
+  refine_passes: number;
+  stage_details: StageDetails | null;
+  category: number | null;
 }
 
 export interface RecordListResponse {
@@ -230,6 +251,135 @@ export function getThumbnailUrl(record: ImageRecord): string | null {
   const filename = record.thumbnail_path.split(/[\\/]/).pop();
   if (!filename) return null;
   return `${API_BASE_URL}/thumbnails/${filename}`;
+}
+
+/**
+ * URL for the image the pipeline is currently working on.
+ *
+ * `variant` selects the untouched original, the refined copy, or (default) the
+ * current working file, which is what the stage workspace previews.
+ */
+export function getPreviewUrl(
+  recordId: string,
+  variant: "working" | "original" | "refined" = "working",
+  /** Cache-buster; pass a changing value after a stage run to force a refetch. */
+  version?: number | string
+): string {
+  const base = `${API_BASE_URL}/api/records/${recordId}/preview?variant=${variant}`;
+  return version === undefined ? base : `${base}&v=${version}`;
+}
+
+// --------------------------------------------------------------------------- //
+// Stage pipeline
+// --------------------------------------------------------------------------- //
+
+export async function fetchStages(): Promise<StageDefinition[]> {
+  const { data } = await api.get<StageDefinition[]>("/api/stages");
+  return data;
+}
+
+export async function fetchStageSummary(): Promise<StageSummary> {
+  const { data } = await api.get<StageSummary>("/api/stages/summary");
+  return data;
+}
+
+export async function fetchCategories(): Promise<AdobeCategory[]> {
+  const { data } = await api.get<AdobeCategory[]>("/api/categories");
+  return data;
+}
+
+export interface RunStageOptions {
+  /** Stage 6 only: seconds to wait between LLM calls. */
+  delaySeconds?: number;
+  /** Stage 4/5 only: include the LLM semantic audit in scoring. */
+  useSemantic?: boolean;
+}
+
+/**
+ * Start a batch stage operation.
+ *
+ * Returns immediately with a job handle; poll {@link fetchJob} for progress.
+ * The batch runs server-side, so a large selection does not hold the request open.
+ */
+export async function runStage(
+  stageKey: StageKey,
+  recordIds: string[],
+  options: RunStageOptions = {}
+): Promise<StageJob> {
+  const { data } = await api.post<StageJob>(`/api/stages/${stageKey}/run`, {
+    record_ids: recordIds,
+    delay_seconds: options.delaySeconds,
+    use_semantic: options.useSemantic ?? true,
+  });
+  return data;
+}
+
+export async function fetchJob(jobId: string): Promise<StageJob> {
+  const { data } = await api.get<StageJob>(`/api/jobs/${jobId}`);
+  return data;
+}
+
+export async function fetchRecentJobs(limit = 10): Promise<StageJob[]> {
+  const { data } = await api.get<StageJob[]>("/api/jobs", { params: { limit } });
+  return data;
+}
+
+export async function cancelJob(jobId: string): Promise<StageJob> {
+  const { data } = await api.post<StageJob>(`/api/jobs/${jobId}/cancel`);
+  return data;
+}
+
+export interface MetadataUpdate {
+  title?: string;
+  description?: string;
+  keywords?: string[];
+  category?: number;
+}
+
+/** Apply a manual metadata edit. Only the supplied fields change. */
+export async function updateMetadata(
+  recordId: string,
+  update: MetadataUpdate
+): Promise<ImageRecord> {
+  const { data } = await api.patch<ImageRecord>(
+    `/api/records/${recordId}/metadata`,
+    update
+  );
+  return data;
+}
+
+/** Return a record to Stage 1 so it can be reprocessed. */
+export async function resetStage(recordId: string): Promise<ImageRecord> {
+  const { data } = await api.post<ImageRecord>(
+    `/api/records/${recordId}/reset-stage`
+  );
+  return data;
+}
+
+/** Preview the Adobe Stock CSV without downloading it. */
+export async function previewCsv(recordIds?: string[]): Promise<CsvPreview> {
+  const { data } = await api.post<CsvPreview>("/api/metadata/csv/preview", {
+    record_ids: recordIds ?? null,
+  });
+  return data;
+}
+
+/** Download the Adobe Stock CSV for the given records (or all exportable rows). */
+export async function downloadCsv(recordIds?: string[]): Promise<void> {
+  const response = await api.post(
+    "/api/metadata/csv",
+    { record_ids: recordIds ?? null },
+    { responseType: "blob" }
+  );
+
+  const blobUrl = URL.createObjectURL(response.data as Blob);
+  const anchor = document.createElement("a");
+  anchor.href = blobUrl;
+  anchor.download = "adobe-stock-metadata.csv";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(blobUrl);
 }
 
 export function formatFileSize(bytes: number): string {

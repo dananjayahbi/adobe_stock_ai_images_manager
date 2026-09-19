@@ -21,6 +21,60 @@ class ImageStatus(str, enum.Enum):
     READY = "READY"
 
 
+class PipelineStage(str, enum.Enum):
+    """Workflow position of a record across the seven production stages.
+
+    ``ImageStatus`` remains the QC verdict and the download gate; ``stage`` is
+    the orthogonal workflow coordinate that drives the stage workspace UI.
+
+    1. COLLECTED       - ingested, awaiting an OCR sweep
+    2. OCR_CLEAR       - scanned, no blocking text found
+       OCR_REJECTED    - scanned, embedded/gibberish text found (terminal)
+    3. UPSCALED        - upscaled (or upscale skipped/unavailable)
+    4. REFINED         - corrective adjustments applied
+    5. COMPATIBLE      - passed the acceptance gate
+       INCOMPATIBLE    - could not reach the acceptance gate (terminal)
+    6. METADATA_READY  - title/description/keywords generated
+    7. PUBLISHED       - staged for Adobe Stock upload
+    """
+    COLLECTED = "COLLECTED"
+    OCR_CLEAR = "OCR_CLEAR"
+    OCR_REJECTED = "OCR_REJECTED"
+    UPSCALED = "UPSCALED"
+    REFINED = "REFINED"
+    COMPATIBLE = "COMPATIBLE"
+    INCOMPATIBLE = "INCOMPATIBLE"
+    METADATA_READY = "METADATA_READY"
+    PUBLISHED = "PUBLISHED"
+
+
+#: Stage -> the stage number it belongs to (1-7).
+STAGE_NUMBERS: dict["PipelineStage", int] = {
+    PipelineStage.COLLECTED: 1,
+    PipelineStage.OCR_CLEAR: 2,
+    PipelineStage.OCR_REJECTED: 2,
+    PipelineStage.UPSCALED: 3,
+    PipelineStage.REFINED: 4,
+    PipelineStage.COMPATIBLE: 5,
+    PipelineStage.INCOMPATIBLE: 5,
+    PipelineStage.METADATA_READY: 6,
+    PipelineStage.PUBLISHED: 7,
+}
+
+#: Human-readable stage names for the UI.
+STAGE_LABELS: dict["PipelineStage", str] = {
+    PipelineStage.COLLECTED: "Collector",
+    PipelineStage.OCR_CLEAR: "OCR Clear",
+    PipelineStage.OCR_REJECTED: "OCR Rejected",
+    PipelineStage.UPSCALED: "Upscaled",
+    PipelineStage.REFINED: "Refined",
+    PipelineStage.COMPATIBLE: "Compatible",
+    PipelineStage.INCOMPATIBLE: "Incompatible",
+    PipelineStage.METADATA_READY: "Metadata Ready",
+    PipelineStage.PUBLISHED: "Published",
+}
+
+
 def generate_uuid() -> str:
     return str(uuid.uuid4())
 
@@ -44,6 +98,30 @@ class ImageRecord(Base):
     status: Mapped[ImageStatus] = mapped_column(
         Enum(ImageStatus), default=ImageStatus.PENDING, nullable=False
     )
+
+    # ------------------------------------------------------------------ #
+    # Stage pipeline tracking
+    # ------------------------------------------------------------------ #
+    stage: Mapped[PipelineStage] = mapped_column(
+        Enum(PipelineStage), default=PipelineStage.COLLECTED, nullable=False
+    )
+    #: Path of the current working file (original, upscaled, or refined copy).
+    #: ``original_path`` always keeps pointing at the untouched inbox original.
+    working_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    #: Timestamp of the last stage transition, for the workspace timeline.
+    stage_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: Latest acceptance report (score, sub-scores, issues) as JSON.
+    acceptance_report: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    #: Cached 0..1 acceptance score for cheap sorting/filtering.
+    acceptance_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    #: Number of automatic refinement passes already applied.
+    refine_passes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    #: Free-form per-stage detail, e.g. {"upscale": {...}, "ocr": {...}}.
+    stage_details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    #: Adobe Stock category code (1-21) for the CSV export.
+    category: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Image properties
     width: Mapped[int | None] = mapped_column(Integer, nullable=True)

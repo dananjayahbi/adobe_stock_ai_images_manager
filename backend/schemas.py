@@ -1,11 +1,11 @@
 """Pydantic schemas for API request/response validation."""
 
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from models import ImageStatus
+from models import ImageStatus, PipelineStage
 
 
 class RecordResponse(BaseModel):
@@ -33,6 +33,16 @@ class RecordResponse(BaseModel):
     used_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
+
+    # Stage pipeline
+    stage: PipelineStage = PipelineStage.COLLECTED
+    working_path: Optional[str] = None
+    stage_updated_at: Optional[datetime] = None
+    acceptance_report: Optional[dict[str, Any]] = None
+    acceptance_score: Optional[float] = None
+    refine_passes: int = 0
+    stage_details: Optional[dict[str, Any]] = None
+    category: Optional[int] = None
 
 
 class RecordListResponse(BaseModel):
@@ -104,3 +114,92 @@ class UploadTableResponse(BaseModel):
     """Ordered rows for the generated upload table."""
     items: list[UploadTableItem]
     missing: list[str] = []
+
+
+# --------------------------------------------------------------------------- #
+# Stage pipeline
+# --------------------------------------------------------------------------- #
+
+class StageDefinitionResponse(BaseModel):
+    """Static description of one production stage."""
+    number: int
+    key: str
+    name: str
+    description: str
+    stages: list[str]
+    terminal: bool
+
+
+class StageRunRequest(BaseModel):
+    """Request body for kicking off a batch stage operation."""
+    record_ids: list[str]
+    #: Stage 6 only - pause between LLM calls, overriding the configured default.
+    delay_seconds: Optional[float] = None
+    #: Whether to include the LLM semantic audit in Stage 4/5 scoring.
+    use_semantic: bool = True
+
+
+class JobItemResponse(BaseModel):
+    """Per-record progress inside a batch job."""
+    record_id: str
+    filename: str
+    status: str
+    message: str = ""
+    score: Optional[float] = None
+    duration_seconds: Optional[float] = None
+
+
+class JobResponse(BaseModel):
+    """State of a batch stage job."""
+    id: str
+    stage: str
+    kind: str
+    status: str
+    message: str = ""
+    total: int
+    processed: int
+    succeeded: int
+    failed: int
+    skipped: int
+    progress: float
+    created_at: float
+    finished_at: Optional[float] = None
+    duration_seconds: float
+    items: list[JobItemResponse] = []
+
+
+class StageCountResponse(BaseModel):
+    """Record counts grouped by pipeline stage."""
+    stage: PipelineStage
+    number: int
+    name: str
+    count: int
+
+
+class StageSummaryResponse(BaseModel):
+    """Aggregate pipeline state for the workspace header."""
+    counts: list[StageCountResponse]
+    total: int
+    ready: int
+    rejected: int
+    incompatible: int
+    average_score: Optional[float] = None
+
+
+class MetadataUpdateRequest(BaseModel):
+    """Manual metadata edit for a single record (Stage 6)."""
+    title: Optional[str] = None
+    description: Optional[str] = None
+    keywords: Optional[list[str]] = None
+    category: Optional[int] = None
+
+
+class CsvExportRequest(BaseModel):
+    """Request body for the Adobe Stock CSV export."""
+    record_ids: Optional[list[str]] = None
+
+
+class CategoryResponse(BaseModel):
+    """One Adobe Stock category option."""
+    code: int
+    name: str

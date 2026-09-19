@@ -28,16 +28,28 @@ class Settings(BaseSettings):
     INBOX_DIR: Path = STORAGE_ROOT / "inbox"
     THUMBNAILS_DIR: Path = STORAGE_ROOT / "thumbnails"
     READY_DIR: Path = STORAGE_ROOT / "ready_to_upload"
+    #: Where the refiner writes corrected copies (originals are never mutated).
+    REFINED_DIR: Path = STORAGE_ROOT / "refined"
+    #: Where the upscaler writes upscaled copies.
+    UPSCALED_DIR: Path = STORAGE_ROOT / "upscaled"
 
     # Database
     DB_PATH: Path = STORAGE_ROOT / "adobe_stock.db"
 
     # QC Thresholds - Adobe Stock baselines
     MIN_MEGAPIXELS: float = 4.0
+    MAX_MEGAPIXELS: float = 100.0
     TARGET_MIN_MP: float = 15.0
     TARGET_MAX_MP: float = 25.0
     MIN_LAPLACIAN_VARIANCE: float = 120.0
     MIN_SEMANTIC_CONFIDENCE: float = 0.75
+
+    # Stage 4/5 acceptance gate. An image must reach this score to advance.
+    ACCEPTANCE_THRESHOLD: float = 0.80
+    #: Maximum auto-refinement passes before the image is marked INCOMPATIBLE.
+    MAX_REFINE_PASSES: int = 4
+    #: JPEG quality used when re-encoding refined/upscaled images (4:4:4 chroma).
+    EXPORT_JPEG_QUALITY: int = 95
 
     # File size constraints (in MB)
     MIN_FILE_SIZE_MB: int = 5
@@ -47,11 +59,60 @@ class Settings(BaseSettings):
     # Allowed file extensions
     ALLOWED_EXTENSIONS: set[str] = {".jpg", ".jpeg"}
 
-    # Color space requirement
+    # Colour space requirement
     REQUIRED_COLOR_SPACE: str = "sRGB"
 
     # Queue limit for batch packaging
     READY_QUEUE_LIMIT: int = 50
+
+    # ------------------------------------------------------------------ #
+    # Adobe Stock published limits (verified against helpx, 2026-09)
+    # Source: technical-legal-requirements-photo-submission.html,
+    #         csv-requirements-content.html, tips-effective-titles-keywords.html
+    # ------------------------------------------------------------------ #
+
+    #: Photos: JPEG only, 4-100 MP, max 45 MB, sRGB profile required.
+    ADOBE_MIN_MEGAPIXELS: float = 4.0
+    ADOBE_MAX_MEGAPIXELS: float = 100.0
+    ADOBE_MAX_FILE_SIZE_MB: float = 45.0
+
+    #: CSV export limits. Exceeding any of these makes Adobe reject the file
+    #: outright, so the exporter truncates and reports rather than emitting it.
+    CSV_MAX_ROWS: int = 5_000
+    CSV_MAX_FILE_SIZE_BYTES: int = 1_000_000  # 1 MB
+    #: Filename and Title are hard-truncated to Adobe's published lengths.
+    CSV_MAX_FILENAME_LENGTH: int = 30
+    CSV_MAX_TITLE_LENGTH: int = 70
+    #: Keywords: the CSV page says 50, the titles/keywords page and the portal
+    #: dialog say 49. The lower, more specific figure is the safe one.
+    CSV_MAX_KEYWORDS: int = 49
+    #: The first 10 keywords carry the most search weight, so the generator is
+    #: told to front-load the most relevant terms.
+    KEYWORDS_HIGH_IMPACT: int = 10
+
+    #: Detach the refined/upscaled export from any source ICC profile and embed
+    #: sRGB explicitly. Adobe requires "JPEG with sRGB color profile", and a
+    #: colour-space mismatch is a documented refusal reason.
+    EMBED_SRGB_PROFILE: bool = True
+
+    # ------------------------------------------------------------------ #
+    # Stage pipeline
+    # ------------------------------------------------------------------ #
+
+    #: Stage 3 - Upscayl CLI. Left unset the upscaler reports "not configured"
+    #: instead of failing, so the stage can ship before the binary is wired up.
+    UPSCAYL_EXE: Path = REPO_ROOT / "backend" / "upscayl-2.15.0" / "Upscayl.exe"
+    UPSCAYL_MODEL: str = "upscayl-standard-4x"
+    UPSCAYL_SCALE: int = 4
+    UPSCAYL_TIMEOUT_SECONDS: int = 600
+
+    #: Stage 6 - pause between LLM metadata calls, in seconds, to dodge rate limits.
+    METADATA_CALL_DELAY_SECONDS: float = 2.0
+    #: Default number of keywords requested from the metadata model.
+    METADATA_KEYWORD_TARGET: int = 30
+
+    #: Adobe Stock category assigned when the model's suggestion is unusable.
+    DEFAULT_ADOBE_CATEGORY: int = 8
 
     model_config = {
         # Accept .env at the repo root or beside the backend code; backend/ wins.

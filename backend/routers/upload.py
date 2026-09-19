@@ -3,16 +3,15 @@
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from PIL import Image
 from sqlalchemy.orm import Session
 
 from config import settings
-from database import SessionLocal, get_db
-from models import ImageRecord, ImageStatus
+from database import get_db
+from models import ImageRecord, ImageStatus, PipelineStage, utcnow
 from schemas import UploadResponse
 from services.storage import generate_thumbnail, save_uploaded_file
-from tasks.audit_orchestrator import process_pending_records
 
 logger = logging.getLogger(__name__)
 
@@ -23,14 +22,14 @@ MAX_BATCH_SIZE = 50
 
 @router.post("/upload", response_model=UploadResponse)
 async def upload_images(
-    background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(...),
     db: Session = Depends(get_db),
 ) -> UploadResponse:
-    """Accept a batch of image uploads, persist them, and dispatch background auditing.
+    """Accept a batch of image uploads and register them at Stage 1.
 
     Steps: validate batch + extensions -> save to inbox -> generate thumbnails ->
-    create PENDING records in a single transaction -> schedule audit task.
+    create COLLECTED records in a single transaction. No auditing runs here; the
+    operator drives Stages 2-7 from the pipeline workspace.
     """
     if not files:
         raise HTTPException(status_code=400, detail="No files provided.")
@@ -85,6 +84,10 @@ async def upload_images(
                 original_path=str(full_path),
                 thumbnail_path=thumb_path or None,
                 status=ImageStatus.PENDING,
+                # New uploads enter the stage workspace at Stage 1 (Collector).
+                stage=PipelineStage.COLLECTED,
+                working_path=str(full_path),
+                stage_updated_at=utcnow(),
                 width=width,
                 height=height,
                 megapixels=megapixels,
@@ -107,8 +110,8 @@ async def upload_images(
     for record in created_records:
         db.refresh(record)
 
-    # Schedule the automated audit pipeline outside the request/response cycle.
-    background_tasks.add_task(process_pending_records, SessionLocal, settings)
+    # Stage 1 is collection only. The operator explicitly triggers OCR (Stage 2)
+    # and every later stage from the workspace, so no audit runs on upload.
 
     return UploadResponse(
         record_ids=[record.id for record in created_records],
