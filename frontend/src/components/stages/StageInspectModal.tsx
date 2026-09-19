@@ -8,6 +8,7 @@ import { STAGE_COLORS, formatScore, stageLabel } from "@/lib/stages";
 
 import AcceptanceReportPanel from "./AcceptanceReportPanel";
 import StageDetailList from "./StageDetailList";
+import UpscaleComparePanel from "./UpscaleComparePanel";
 
 interface StageInspectModalProps {
   record: ImageRecord | null;
@@ -19,7 +20,17 @@ interface StageInspectModalProps {
   previewVersion?: string | number;
 }
 
-type PreviewVariant = "working" | "original" | "refined";
+type PreviewVariant = "working" | "original" | "refined" | "upscaled";
+
+/** Stages at or after Stage 3, where an upscaled file can exist. */
+const HAS_UPSCALED_OUTPUT = new Set([
+  "UPSCALED",
+  "REFINED",
+  "COMPATIBLE",
+  "INCOMPATIBLE",
+  "METADATA_READY",
+  "PUBLISHED",
+]);
 
 /**
  * Full-size inspection of one record.
@@ -38,10 +49,12 @@ export default function StageInspectModal({
 }: StageInspectModalProps) {
   const [variant, setVariant] = useState<PreviewVariant>("working");
   const [isResetting, setIsResetting] = useState(false);
+  const [showCompare, setShowCompare] = useState(false);
 
   // Reset the variant when a different record opens.
   useEffect(() => {
     setVariant("working");
+    setShowCompare(false);
   }, [record?.id]);
 
   useEffect(() => {
@@ -57,6 +70,14 @@ export default function StageInspectModal({
 
   const report = record.acceptance_report;
   const remediation = record.stage_details?.compatibility?.remediation;
+  const hasUpscaled = HAS_UPSCALED_OUTPUT.has(record.stage);
+
+  const VARIANTS: [PreviewVariant, string][] = [
+    ["original", "Original"],
+    ["working", "Current"],
+    ["refined", "Refined"],
+    ...(hasUpscaled ? ([['upscaled', 'Upscaled']] as [PreviewVariant, string][]) : []),
+  ];
 
   const handleReset = async () => {
     setIsResetting(true);
@@ -132,39 +153,57 @@ export default function StageInspectModal({
         <div className="grid gap-5 p-5 lg:grid-cols-[minmax(0,1.35fr)_minmax(0,1fr)]">
           {/* Preview with variant switcher */}
           <div className="space-y-3">
-            <div className="flex gap-1 rounded-lg border border-zinc-800 bg-zinc-950/50 p-1">
-              {(
-                [
-                  ["original", "Original"],
-                  ["working", "Current"],
-                  ["refined", "Refined"],
-                ] as [PreviewVariant, string][]
-              ).map(([value, label]) => (
+            <div className="flex items-center gap-2">
+              <div className="flex flex-1 gap-1 rounded-lg border border-zinc-800 bg-zinc-950/50 p-1">
+                {VARIANTS.map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => {
+                      setVariant(value);
+                      setShowCompare(false);
+                    }}
+                    aria-pressed={!showCompare && variant === value}
+                    className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                      !showCompare && variant === value
+                        ? "bg-zinc-800 text-zinc-100"
+                        : "text-zinc-500 hover:text-zinc-300"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+
+              {hasUpscaled && (
                 <button
-                  key={value}
                   type="button"
-                  onClick={() => setVariant(value)}
-                  aria-pressed={variant === value}
-                  className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                    variant === value
-                      ? "bg-zinc-800 text-zinc-100"
-                      : "text-zinc-500 hover:text-zinc-300"
+                  onClick={() => setShowCompare(true)}
+                  aria-pressed={showCompare}
+                  className={`shrink-0 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
+                    showCompare
+                      ? "border-sky-500/50 bg-sky-500/15 text-sky-200"
+                      : "border-zinc-800 bg-zinc-950/50 text-zinc-400 hover:text-zinc-200"
                   }`}
                 >
-                  {label}
+                  Compare
                 </button>
-              ))}
+              )}
             </div>
 
-            <div className="grid max-h-[70vh] place-items-center overflow-auto rounded-lg border border-zinc-800 bg-zinc-950 p-2">
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                key={`${variant}-${previewVersion ?? ""}`}
-                src={getPreviewUrl(record.id, variant, previewVersion)}
-                alt={`${record.filename} (${variant})`}
-                className="max-h-[66vh] w-auto max-w-full object-contain"
-              />
-            </div>
+            {showCompare ? (
+              <UpscaleComparePanel record={record} previewVersion={previewVersion} />
+            ) : (
+              <div className="grid max-h-[70vh] place-items-center overflow-auto rounded-lg border border-zinc-800 bg-zinc-950 p-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  key={`${variant}-${previewVersion ?? ""}`}
+                  src={getPreviewUrl(record.id, variant, previewVersion)}
+                  alt={`${record.filename} (${variant})`}
+                  className="max-h-[66vh] w-auto max-w-full object-contain"
+                />
+              </div>
+            )}
           </div>
 
           {/* Analysis */}

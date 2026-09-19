@@ -99,12 +99,37 @@ class Settings(BaseSettings):
     # Stage pipeline
     # ------------------------------------------------------------------ #
 
-    #: Stage 3 - Upscayl CLI. Left unset the upscaler reports "not configured"
-    #: instead of failing, so the stage can ship before the binary is wired up.
-    UPSCAYL_EXE: Path = REPO_ROOT / "backend" / "upscayl-2.15.0" / "Upscayl.exe"
-    UPSCAYL_MODEL: str = "upscayl-standard-4x"
+    #: Stage 3 - Upscayl CLI. This is the headless ncnn binary that ships inside
+    #: the app, not ``Upscayl.exe`` (that is the Electron GUI, which ignores CLI
+    #: flags). Override to point at another build; ``find_cli`` also accepts the
+    #: app folder and probes ``resources/bin`` itself.
+    UPSCAYL_EXE: Path = (
+        REPO_ROOT
+        / "backend"
+        / "upscayl-2.15.0"
+        / "resources"
+        / "bin"
+        / "upscayl-bin.exe"
+    )
+    #: Preferred model. 4xNomos8kSC is the strongest general photographic model
+    #: in the outsourced set; if it is absent the catalog falls back through a
+    #: documented order so a checkout without Outsourced_models still works.
+    UPSCAYL_MODEL: str = "4xNomos8kSC"
     UPSCAYL_SCALE: int = 4
     UPSCAYL_TIMEOUT_SECONDS: int = 600
+    #: Folder that holds the bundled app. The headless binary is discovered at
+    #: ``resources/bin/upscayl-bin.exe`` and the models in ``resources/models``
+    #: plus ``Outsourced_models/models``.
+    UPSCAYL_APP_DIR: Path = REPO_ROOT / "backend" / "upscayl-2.15.0"
+    #: Extra model folders to scan, on top of the two bundled locations.
+    UPSCAYL_MODEL_DIRS: list[Path] = []
+    #: Vulkan device id. 0 is the dedicated GPU on this machine; the integrated
+    #: Intel devices enumerate as 1-3.
+    UPSCAYL_GPU_ID: int = 0
+    #: Default long edge for the Stage 3 capacity picker (4K).
+    UPSCAYL_TARGET_LONG_EDGE: int = 3840
+    #: Test-time augmentation. Better edges, markedly slower - off by default.
+    UPSCAYL_TTA: bool = False
 
     #: Stage 6 - pause between LLM metadata calls, in seconds, to dodge rate limits.
     METADATA_CALL_DELAY_SECONDS: float = 2.0

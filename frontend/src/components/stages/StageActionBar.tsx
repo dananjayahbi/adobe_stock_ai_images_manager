@@ -20,6 +20,13 @@ interface StageActionBarProps {
   /** Stage 6 only: preview/download the CSV. */
   onPreviewCsv?: () => void;
   onDownloadCsv?: () => void;
+  /**
+   * Stage-specific controls rendered under the bar. Used by Stage 3 for the
+   * upscale options, which are far too large to live in the bar itself.
+   */
+  optionsSlot?: React.ReactNode;
+  /** Delete control. Rendered in every branch so terminal stages can purge. */
+  deleteSlot?: React.ReactNode;
 }
 
 /** The stage key whose action this stage's bar triggers. */
@@ -63,19 +70,25 @@ export default function StageActionBar({
   onClearSelection,
   onPreviewCsv,
   onDownloadCsv,
+  optionsSlot,
+  deleteSlot,
 }: StageActionBarProps) {
   const [showAdvanced, setShowAdvanced] = useState(false);
   const actionKey = STAGE_ACTION[stage];
 
-  // Terminal stages have no forward action; the operator can only review.
+  // Terminal stages have no forward action, but deletion must stay reachable -
+  // clearing rejected images is the whole point of visiting them.
   if (!actionKey) {
     return (
-      <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-3">
-        <p className="text-sm text-zinc-400">
-          {stage === "OCR_REJECTED"
-            ? "These images contain embedded text and are excluded from the pipeline. Inspect one to confirm, then delete it."
-            : "These images could not reach the 80% acceptance threshold. Inspect one for the specific remediation steps."}
-        </p>
+      <div className="space-y-3 rounded-xl border border-zinc-800 bg-zinc-900/50 px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-zinc-400">
+            {stage === "OCR_REJECTED"
+              ? "These images contain embedded text and are excluded from the pipeline. Inspect one to confirm, then delete it."
+              : "These images could not reach the 80% acceptance threshold. Inspect one for the specific remediation steps."}
+          </p>
+          {deleteSlot && <div className="flex shrink-0 items-center gap-2">{deleteSlot}</div>}
+        </div>
       </div>
     );
   }
@@ -128,6 +141,8 @@ export default function StageActionBar({
         </div>
 
         <div className="flex items-center gap-2">
+          {deleteSlot}
+
           {isMetadataStage && (
             <button
               type="button"
@@ -182,6 +197,8 @@ export default function StageActionBar({
           </span>
         </label>
       )}
+
+      {optionsSlot && <div className="border-t border-zinc-800 pt-3">{optionsSlot}</div>}
     </div>
   );
 }

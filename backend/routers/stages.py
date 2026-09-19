@@ -35,8 +35,11 @@ from schemas import (
     StageDefinitionResponse,
     StageRunRequest,
     StageSummaryResponse,
+    UpscaleCatalogResponse,
+    UpscaleEstimateRequest,
+    UpscaleEstimateResponse,
 )
-from services import csv_export
+from services import csv_export, upscaler
 from services.adobe_categories import all_categories, resolve_category
 from services.jobs import STATUS_RUNNING, JobItem, registry
 from services.stage_registry import (
@@ -66,6 +69,8 @@ STAGE_RUNNERS = {
 }
 
 #: Stages whose runners accept the optional semantic/delay keyword arguments.
+#: ``upscale`` is handled separately below because its runner takes a validated
+#: ``options`` object instead, built from the Stage 3 panel's configuration.
 STAGES_WITH_OPTIONS = {"refine", "compatibility", "metadata"}
 
 
@@ -205,6 +210,12 @@ async def run_stage(
         kwargs["use_semantic"] = request.use_semantic
     if stage_key == "metadata":
         kwargs["delay_seconds"] = request.delay_seconds
+    if stage_key == "upscale":
+        # Validated and clamped server-side; an unusable model name degrades to
+        # the default rather than failing the whole batch.
+        kwargs["options"] = (
+            request.upscale.model_dump(exclude_none=True) if request.upscale else None
+        )
 
     background_tasks.add_task(
         runner, SessionLocal, [record.id for record in ordered], settings, **kwargs
@@ -290,7 +301,10 @@ async def preview_working_image(
     record_id: str,
     variant: str = Query(
         default="working",
-        description="'working' (current pipeline file), 'original', or 'refined'.",
+        description=(
+            "'working' (current pipeline file), 'original', 'refined', or "
+            "'upscaled' (the Stage 3 output, for before/after comparison)."
+        ),
     ),
     db: Session = Depends(get_db),
 ):
@@ -305,6 +319,8 @@ async def preview_working_image(
         candidate = Path(record.original_path) if record.original_path else None
     elif variant == "refined":
         candidate = settings.REFINED_DIR / f"{record.id}-refined.jpg"
+    elif variant == "upscaled":
+        candidate = settings.UPSCALED_DIR / f"{record.id}-upscaled.jpg"
     else:
         candidate = Path(record.working_path or record.original_path or "")
 
@@ -320,6 +336,63 @@ async def preview_working_image(
         path=str(candidate),
         media_type="image/jpeg",
         headers={"Cache-Control": "private, max-age=5"},
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Stage 3 - Upscale configuration
+# --------------------------------------------------------------------------- #
+
+@router.get("/api/upscale/catalog", response_model=UpscaleCatalogResponse)
+async def upscale_catalog(refresh: bool = Query(default=False)):
+    """Every installed model, capacity preset, and the configured defaults.
+
+    The catalog is read from disk rather than hard-coded, so dropping a new
+    ``.bin``/``.param`` pair into a model folder makes it selectable without a
+    code change.
+    """
+    return UpscaleCatalogResponse(**upscaler.catalog_payload(refresh=refresh))
+
+
+@router.get("/api/upscale/options")
+async def upscale_default_options() -> dict:
+    """The Stage 3 options panel's opening state."""
+    return upscaler.default_options().to_dict()
+
+
+@router.post("/api/upscale/estimate", response_model=UpscaleEstimateResponse)
+async def upscale_estimate(
+    request: UpscaleEstimateRequest,
+    db: Session = Depends(get_db),
+) -> UpscaleEstimateResponse:
+    """Predict the output geometry before spending GPU time on it.
+
+    Accepts either a ``record_id`` (the source is measured from disk) or an
+    explicit ``width``/``height`` pair, so the panel can show a live preview of
+    the chosen capacity as the operator changes it.
+    """
+    payload = request.upscale.model_dump(exclude_none=True) if request.upscale else {}
+    options = upscaler.from_payload(payload)
+
+    width, height = request.width, request.height
+    if request.record_id:
+        record = _get_record_or_404(db, request.record_id)
+        source = Path(record.working_path or record.original_path or "")
+        measured = upscaler.measure(source)
+        if measured is None:
+            raise HTTPException(
+                status_code=422,
+                detail="The source image could not be read for estimation.",
+            )
+        width, height = measured
+    elif not width or not height:
+        raise HTTPException(
+            status_code=400,
+            detail="Provide either record_id or both width and height.",
+        )
+
+    return UpscaleEstimateResponse(
+        **upscaler.estimate_output(width, height, options)
     )
 
 

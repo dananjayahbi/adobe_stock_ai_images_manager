@@ -4,6 +4,11 @@ import { Loader2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
 import { downloadCsv, fetchCategories, fetchStages, type ImageRecord } from "@/lib/api";
+import {
+  FALLBACK_UPSCALE_OPTIONS,
+  fetchUpscaleDefaults,
+  type UpscaleOptions,
+} from "@/lib/upscale";
 import { useStageRecords } from "@/hooks/useStageRecords";
 import { useStageSelection } from "@/hooks/useStageSelection";
 import {
@@ -17,6 +22,7 @@ import {
 } from "@/lib/stages";
 
 import CsvPanel from "./CsvPanel";
+import DeleteRecordsButton from "./DeleteRecordsButton";
 import MetadataEditorPanel from "./MetadataEditorPanel";
 import StageActionBar from "./StageActionBar";
 import StageBanner from "./StageBanner";
@@ -25,6 +31,7 @@ import StageInspectModal from "./StageInspectModal";
 import StageJobPanel from "./StageJobPanel";
 import StageRail from "./StageRail";
 import StageSummaryCards from "./StageSummaryCards";
+import UpscaleOptionsPanel from "./UpscaleOptionsPanel";
 
 /**
  * Which stage key's action the bar triggers for a given stage.
@@ -49,6 +56,11 @@ export default function StageWorkspaceView() {
   const [categories, setCategories] = useState<AdobeCategory[]>([]);
   const [inspectRecord, setInspectRecord] = useState<ImageRecord | null>(null);
   const [delaySeconds, setDelaySeconds] = useState(2);
+  // Seeded with the client-side mirror of the server defaults so the Stage 3
+  // controls are live on first paint, then replaced by the real values.
+  const [upscaleOptions, setUpscaleOptions] = useState<UpscaleOptions>(
+    FALLBACK_UPSCALE_OPTIONS
+  );
   const [showCsvPanel, setShowCsvPanel] = useState(false);
   const [editingMetadata, setEditingMetadata] = useState<ImageRecord | null>(null);
 
@@ -60,6 +72,16 @@ export default function StageWorkspaceView() {
         /* The local STAGE_DEFINITIONS fallback is already rendered. */
       });
     void fetchCategories().then(setCategories).catch(() => setCategories([]));
+  }, []);
+
+  // Seed the Stage 3 controls from the server so the panel and the batch agree
+  // on defaults even if the panel is never opened.
+  useEffect(() => {
+    void fetchUpscaleDefaults()
+      .then(setUpscaleOptions)
+      .catch(() => {
+        /* UpscaleOptionsPanel fetches the catalog itself and will report this. */
+      });
   }, []);
 
   // Keep the selection honest as records move between stages.
@@ -109,8 +131,33 @@ export default function StageWorkspaceView() {
       stageKey,
       recordIds: ids,
       delaySeconds: stageKey === "metadata" ? delaySeconds : undefined,
+      upscale: stageKey === "upscale" ? upscaleOptions : undefined,
     });
-  }, [stageKey, selection.selectedIds, selection.count, eligible, pipeline, delaySeconds]);
+  }, [
+    stageKey,
+    selection.selectedIds,
+    selection.count,
+    eligible,
+    pipeline,
+    delaySeconds,
+    upscaleOptions,
+  ]);
+
+  // Delete targets whatever the operator picked; with no selection the whole
+  // stage is not implicitly purged, so the button disables instead.
+  const deleteTargets = selection.selectedIds;
+  const deleteFilenames = useMemo(
+    () =>
+      pipeline.records
+        .filter((record) => deleteTargets.includes(record.id))
+        .map((record) => record.filename),
+    [pipeline.records, deleteTargets]
+  );
+
+  const handleDeleted = useCallback(() => {
+    selection.clear();
+    setInspectRecord(null);
+  }, [selection]);
 
   const handleDownloadCsv = useCallback(() => {
     void downloadCsv(
@@ -202,6 +249,25 @@ export default function StageWorkspaceView() {
             onClearSelection={selection.clear}
             onPreviewCsv={() => setShowCsvPanel(true)}
             onDownloadCsv={handleDownloadCsv}
+            deleteSlot={
+              <DeleteRecordsButton
+                recordIds={deleteTargets}
+                filenames={deleteFilenames}
+                disabled={pipeline.isBusy}
+                onDelete={pipeline.removeRecords}
+                onDeleted={handleDeleted}
+              />
+            }
+            optionsSlot={
+              stageKey === "upscale" ? (
+                <UpscaleOptionsPanel
+                  value={upscaleOptions}
+                  onChange={setUpscaleOptions}
+                  sampleRecordId={pipeline.records[0]?.id}
+                  disabled={pipeline.isBusy}
+                />
+              ) : null
+            }
           />
 
           {pipeline.job && (

@@ -39,6 +39,9 @@ export default function StageJobPanel({
 }: StageJobPanelProps) {
   const isRunning = job.status === "running";
   const percent = Math.round(job.progress * 100);
+  const runningItem = job.items.find(
+    (item) => item.record_id === job.current_record_id
+  );
 
   return (
     <section
@@ -100,6 +103,10 @@ export default function StageJobPanel({
         />
       </div>
 
+      {job.progress_label && (
+        <p className="mb-2 text-xs text-zinc-500">{job.progress_label}</p>
+      )}
+
       <div className="mb-3 flex flex-wrap gap-3 text-xs">
         <span className="text-emerald-400">{job.succeeded} succeeded</span>
         {job.failed > 0 && <span className="text-red-400">{job.failed} failed</span>}
@@ -107,11 +114,54 @@ export default function StageJobPanel({
         {job.message && <span className="text-amber-400">{job.message}</span>}
       </div>
 
+      {/* Upscaling takes minutes per image, so the batch bar alone looks stuck.
+          This second bar tracks the record in flight. */}
+      {isRunning && runningItem && (
+        <div className="mb-3 rounded-lg border border-sky-500/25 bg-sky-500/5 px-3 py-2">
+          <div className="mb-1.5 flex items-baseline justify-between gap-2 text-xs">
+            <span className="min-w-0 truncate text-sky-200">
+              {runningItem.filename || runningItem.record_id.slice(0, 8)}
+            </span>
+            <span className="shrink-0 tabular-nums text-sky-300">
+              {runningItem.progress !== null
+                ? `${Math.round(runningItem.progress)}%`
+                : "working…"}
+            </span>
+          </div>
+          <div className="h-1 overflow-hidden rounded-full bg-zinc-800">
+            <div
+              className={`h-full rounded-full transition-[width] duration-300 ${
+                runningItem.progress === null
+                  ? "w-1/3 animate-pulse bg-sky-500/60"
+                  : "bg-sky-400"
+              }`}
+              style={
+                runningItem.progress === null
+                  ? undefined
+                  : { width: `${runningItem.progress}%` }
+              }
+              role="progressbar"
+              aria-label="Current image progress"
+              aria-valuenow={runningItem.progress ?? undefined}
+              aria-valuemin={0}
+              aria-valuemax={100}
+            />
+          </div>
+          {runningItem.detail && (
+            <p className="mt-1 text-[11px] text-sky-300/70">{runningItem.detail}</p>
+          )}
+        </div>
+      )}
+
       <ul className="max-h-56 space-y-1 overflow-y-auto pr-1">
         {job.items.map((item) => (
           <li
             key={item.record_id}
-            className="flex items-start gap-2 rounded border border-zinc-800/60 bg-zinc-950/40 px-2 py-1.5 text-xs"
+            className={`flex items-start gap-2 rounded border px-2 py-1.5 text-xs ${
+              item.record_id === job.current_record_id
+                ? "border-sky-500/40 bg-sky-500/5"
+                : "border-zinc-800/60 bg-zinc-950/40"
+            }`}
           >
             {STATUS_ICONS[item.status] ?? STATUS_ICONS.pending}
             <span className="min-w-0 flex-1">
@@ -121,10 +171,23 @@ export default function StageJobPanel({
               {item.message && (
                 <span className="block text-zinc-500">{item.message}</span>
               )}
+              {item.status === "running" && item.detail && (
+                <span className="block text-sky-400/80">{item.detail}</span>
+              )}
             </span>
+            {item.status === "running" && item.progress !== null && (
+              <span className="shrink-0 tabular-nums text-sky-300">
+                {Math.round(item.progress)}%
+              </span>
+            )}
             {item.score !== null && (
               <span className="shrink-0 tabular-nums text-zinc-400">
                 {formatScore(item.score)}
+              </span>
+            )}
+            {item.duration_seconds !== null && item.status !== "running" && (
+              <span className="shrink-0 tabular-nums text-zinc-600">
+                {item.duration_seconds.toFixed(1)}s
               </span>
             )}
           </li>

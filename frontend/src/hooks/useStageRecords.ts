@@ -4,6 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   cancelJob,
+  deleteRecord,
+  deleteRecords,
   fetchJob,
   fetchRecords,
   fetchStageSummary,
@@ -18,6 +20,7 @@ import {
   type StageJob,
   type StageSummary,
 } from "@/lib/stages";
+import type { UpscaleOptions } from "@/lib/upscale";
 
 const POLL_INTERVAL_MS = 4000;
 const PAGE_LIMIT = 500;
@@ -30,6 +33,8 @@ export interface RunStageArgs {
   recordIds: string[];
   delaySeconds?: number;
   useSemantic?: boolean;
+  /** Stage 3 only: the operator's upscaler settings. */
+  upscale?: Partial<UpscaleOptions>;
 }
 
 /**
@@ -139,7 +144,7 @@ export function useStageRecords() {
   );
 
   const startStage = useCallback(
-    async ({ stageKey, recordIds, delaySeconds, useSemantic }: RunStageArgs) => {
+    async ({ stageKey, recordIds, delaySeconds, useSemantic, upscale }: RunStageArgs) => {
       if (recordIds.length === 0) {
         setError("Select at least one image first.");
         return;
@@ -153,6 +158,7 @@ export function useStageRecords() {
         const started = await runStage(stageKey, recordIds, {
           delaySeconds,
           useSemantic,
+          upscale,
         });
         setJob(started);
         pollJob(started.id);
@@ -162,6 +168,23 @@ export function useStageRecords() {
       }
     },
     [pollJob]
+  );
+
+  /**
+   * Permanently remove records, from any stage.
+   *
+   * The server drops the inbox original, the thumbnail, and every staged copy,
+   * so the caller only has to refresh. Deleting a running record is refused by
+   * the UI, not here - the batch may still hold the file open.
+   */
+  const removeRecords = useCallback(
+    async (ids: string[]) => {
+      if (ids.length === 0) return;
+      if (ids.length === 1) await deleteRecord(ids[0]);
+      else await deleteRecords(ids);
+      await load();
+    },
+    [load]
   );
 
   const stopJob = useCallback(async () => {
@@ -217,6 +240,7 @@ export function useStageRecords() {
     load,
     startStage,
     stopJob,
+    removeRecords,
     eligibleFor,
     isTerminal: isTerminalStage(activeStage),
   };

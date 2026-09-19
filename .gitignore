@@ -17,6 +17,10 @@ frontend/node_modules/
 # Crash dumps
 *.stackdump
 
+# Local run logs and incremental build caches
+*.log
+*.tsbuildinfo
+
 # IDE
 .vscode/
 .idea/

@@ -137,6 +137,97 @@ class StageRunRequest(BaseModel):
     delay_seconds: Optional[float] = None
     #: Whether to include the LLM semantic audit in Stage 4/5 scoring.
     use_semantic: bool = True
+    #: Stage 3 only - the full upscale configuration. Omitted or partial bodies
+    #: fall back to the configured defaults for every field.
+    upscale: Optional["UpscaleSettingsPayload"] = None
+
+
+class UpscaleSettingsPayload(BaseModel):
+    """Stage 3 upscale options as sent by the UI.
+
+    Every field is optional so the client can send only what the operator
+    changed; the server validates and clamps the result.
+    """
+    model: Optional[str] = None
+    model_scale: Optional[int] = None
+    target_long_edge: Optional[int] = None
+    gpu_id: Optional[int] = None
+    tta: Optional[bool] = None
+    tile_size: Optional[int] = None
+    threads: Optional[list[int]] = None
+    compression: Optional[int] = None
+    embed_srgb: Optional[bool] = None
+    allow_downscale: Optional[bool] = None
+
+
+class UpscaleModelResponse(BaseModel):
+    """One selectable ncnn model."""
+    name: str
+    label: str
+    scale: int
+    source: str
+    description: str
+    recommended: bool = False
+
+
+class UpscaleDirectoryResponse(BaseModel):
+    """Status of one model folder, so a missing path is visible in the UI."""
+    source: str
+    path: str
+    exists: bool
+
+
+class UpscaleCatalogResponse(BaseModel):
+    """Everything the Stage 3 options panel needs to render itself."""
+    models: list[UpscaleModelResponse]
+    default_model: str
+    sources: dict[str, str]
+    directories: list[UpscaleDirectoryResponse]
+    resolutions: list["UpscaleResolutionResponse"]
+    defaults: "UpscaleDefaultsResponse"
+    neural_available: bool
+    executable: Optional[str] = None
+    presets: dict
+
+
+class UpscaleResolutionResponse(BaseModel):
+    """A capacity preset offered in the picker."""
+    long_edge: int
+    label: str
+    default: bool = False
+
+
+class UpscaleDefaultsResponse(BaseModel):
+    """The values the panel should open with."""
+    target_long_edge: int
+    gpu_id: int
+    model_scale: int
+    tta: bool
+    tile_size: int
+    compression: int
+    embed_srgb: bool
+    allow_downscale: bool
+
+
+class UpscaleEstimateRequest(BaseModel):
+    """Ask what an upscale would produce before committing GPU time."""
+    record_id: Optional[str] = None
+    width: Optional[int] = None
+    height: Optional[int] = None
+    upscale: Optional[UpscaleSettingsPayload] = None
+
+
+class UpscaleEstimateResponse(BaseModel):
+    """Predicted geometry plus any warnings for the chosen configuration."""
+    source_dimensions: list[int]
+    target_dimensions: list[int]
+    scale: float
+    model_scale: int
+    will_upscale: bool
+    will_downscale: bool
+    estimated_megapixels: float
+    exceeds_megapixel_ceiling: bool
+    warnings: list[str] = []
 
 
 class JobItemResponse(BaseModel):
@@ -146,6 +237,9 @@ class JobItemResponse(BaseModel):
     status: str
     message: str = ""
     score: Optional[float] = None
+    #: 0-100 progress within this record, when the stage can report it.
+    progress: Optional[float] = None
+    detail: str = ""
     duration_seconds: Optional[float] = None
 
 
@@ -156,6 +250,7 @@ class JobResponse(BaseModel):
     kind: str
     status: str
     message: str = ""
+    progress_label: str = ""
     total: int
     processed: int
     succeeded: int
@@ -165,7 +260,14 @@ class JobResponse(BaseModel):
     created_at: float
     finished_at: Optional[float] = None
     duration_seconds: float
+    current_record_id: Optional[str] = None
     items: list[JobItemResponse] = []
+
+
+# Resolve the forward references introduced by the upscale schemas, which are
+# declared after StageRunRequest for readability.
+StageRunRequest.model_rebuild()
+UpscaleCatalogResponse.model_rebuild()
 
 
 class StageCountResponse(BaseModel):

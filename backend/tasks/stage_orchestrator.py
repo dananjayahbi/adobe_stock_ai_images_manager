@@ -44,6 +44,7 @@ from services.jobs import (
 )
 from services.refine import refine_image
 from services.stage_registry import TERMINAL_STAGES
+from services.upscale.options import UpscaleOptions, capacity_label
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,31 @@ def _set_stage(
         details[detail_key] = detail
         # Reassign so SQLAlchemy detects the JSON mutation.
         record.stage_details = details
+
+
+def _upscale_source_path(record: ImageRecord, cfg: Settings) -> Path:
+    """The file Stage 3 should read: the best copy that is not its own output.
+
+    Re-running Stage 3 must not feed a previous upscale back into the model.
+    Chaining passes would inflate the file for no added detail, and it would
+    make the before/after view compare an image against itself. So a prior
+    upscaled output is skipped in favour of the refined or original copy.
+    """
+    previous_output = Path(cfg.UPSCALED_DIR) / f"{record.id}-upscaled.jpg"
+    candidates = (
+        record.working_path,
+        Path(cfg.REFINED_DIR) / f"{record.id}-refined.jpg",
+        record.original_path,
+    )
+    for candidate in candidates:
+        if not candidate:
+            continue
+        path = Path(candidate)
+        if path == previous_output:
+            continue
+        if path.exists():
+            return path
+    return Path(record.original_path or "")
 
 
 def _load_records(db: Session, record_ids: Iterable[str]) -> tuple[list[ImageRecord], list[str]]:
@@ -238,14 +264,35 @@ def run_ocr_stage(
 # Stage 3 - Upscale
 # --------------------------------------------------------------------------- #
 
+def _upscale_label(options: UpscaleOptions, cfg: Settings) -> str:
+    """One-line summary of the Stage 3 configuration, shown above the bar."""
+    bits = [
+        f"Upscaling to {capacity_label(options.target_long_edge)}",
+        f"model {options.model} ({options.model_scale}x)",
+        f"GPU {options.gpu_id}",
+    ]
+    if options.tta:
+        bits.append("TTA")
+    if options.tile_size:
+        bits.append(f"tile {options.tile_size}")
+    return " · ".join(bits)
+
+
 def run_upscale_stage(
     db_session_factory: SessionFactory,
     record_ids: list[str],
     settings: Settings | None = None,
     *,
     job_id: str | None = None,
+    options: UpscaleOptions | dict | None = None,
 ) -> str:
-    """Upscale records that cleared OCR (Stage 3). Returns the job id."""
+    """Upscale records that cleared OCR (Stage 3). Returns the job id.
+
+    Args:
+        options: A validated :class:`UpscaleOptions`, a raw request dict, or
+            None for the configured defaults. Applied to the whole batch, since
+            the Stage 3 panel configures one run rather than per-image settings.
+    """
     cfg = settings or default_settings
     db = db_session_factory()
     job: Job | None = None
@@ -253,6 +300,11 @@ def run_upscale_stage(
     try:
         records, missing = _load_records(db, record_ids)
         job = _start_job(job_id, "upscale", "upscale", records)
+
+        resolved = upscaler.from_payload(options, cfg) if isinstance(options, dict) else options
+        if resolved is None:
+            resolved = upscaler.default_options(cfg)
+        job.progress_label = _upscale_label(resolved, cfg)
 
         for record in records:
             item = next(i for i in job.items if i.record_id == record.id)
@@ -283,11 +335,18 @@ def run_upscale_stage(
                 continue
 
             try:
+                # The CLI streams a percentage per image, so forward it into the
+                # job report instead of leaving the UI on a static spinner.
+                def _on_progress(percent: float, label: str, _id: str = record.id) -> None:
+                    job.report_progress(_id, percent, label)
+
                 result = upscaler.upscale_image(
-                    _current_path(record),
+                    _upscale_source_path(record, cfg),
                     cfg.UPSCALED_DIR,
                     record.id,
+                    options=resolved,
                     settings=cfg,
+                    on_progress=_on_progress,
                 )
 
                 if not result.success:
@@ -311,11 +370,14 @@ def run_upscale_stage(
                         detail=result.to_dict(),
                     )
                     item.status = "succeeded"
+                    model_note = f" · {result.model}" if result.model else ""
                     item.message = (
-                        f"{result.backend} · {result.source_megapixels:.1f} MP → "
+                        f"{result.backend}{model_note} · "
+                        f"{result.source_megapixels:.1f} MP → "
                         f"{result.output_megapixels:.1f} MP"
                     )
 
+                item.progress = 100.0
                 item.finished_at = time.time()
                 db.commit()
             except Exception as exc:  # noqa: BLE001

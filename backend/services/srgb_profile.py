@@ -45,17 +45,23 @@ def srgb_profile_bytes() -> bytes | None:
 
     Cached because building a profile allocates a fair amount of state and the
     bytes never change.
+
+    ``ImageCmsProfile.tobytes()`` is the serialisation entry point. An earlier
+    version called ``ImageCmsProfile.save()``, which does not exist on
+    ``ImageCmsProfile`` - the resulting ``AttributeError`` was caught by the
+    broad handler below and turned into a permanent ``None``, so every export
+    was silently written untagged. The profile is re-opened after building to
+    prove the bytes are a usable ICC profile rather than returning garbage.
     """
     try:
-        profile = ImageCms.createProfile(
-            "sRGB",
-            colorTemp=6500,
-        )
-        buffer = io.BytesIO()
-        ImageCms.ImageCmsProfile(profile).save(buffer)
-        return buffer.getvalue()
+        profile = ImageCms.createProfile("sRGB", colorTemp=6500)
+        data = ImageCms.ImageCmsProfile(profile).tobytes()
+        # Round-trip so a malformed payload is caught here rather than producing
+        # a JPEG that Adobe cannot interpret.
+        ImageCms.getOpenProfile(io.BytesIO(data))
+        return data
     except Exception:  # noqa: BLE001 - a missing profile must not break export
-        logger.warning("Could not build an sRGB ICC profile; exports will be untagged")
+        logger.exception("Could not build an sRGB ICC profile; exports will be untagged")
         return None
 
 
@@ -122,7 +128,14 @@ def write_srgb_jpeg(
 
 
 def has_srgb_profile(path: Path | str) -> bool:
-    """True when the file carries an sRGB ICC profile."""
+    """True when the file carries an sRGB ICC profile.
+
+    The profile is *parsed* rather than byte-searched. An earlier version
+    lowercased the raw ICC bytes and looked for ``b"srgb"``, which never
+    matches: the description lives in a ``desc`` tag whose text is UTF-16BE
+    encoded, so ``"sRGB built-in"`` is not present as ASCII anywhere in the
+    stream. That made the check report False for a correctly tagged file.
+    """
     try:
         with Image.open(str(path)) as image:
             icc = image.info.get("icc_profile")
@@ -132,5 +145,16 @@ def has_srgb_profile(path: Path | str) -> bool:
     if not icc:
         return False
 
-    lowered = icc.lower()
-    return b"srgb" in lowered or b"iec61966" in lowered
+    # A profile we generated ourselves is sRGB by construction; an exact match
+    # avoids depending on how the description happens to be tagged.
+    if icc == srgb_profile_bytes():
+        return True
+
+    try:
+        profile = ImageCms.getOpenProfile(io.BytesIO(icc))
+        description = ImageCms.getProfileDescription(profile).lower()
+    except Exception:  # noqa: BLE001 - an unparseable profile is not sRGB
+        # Some encoders store the description as plain ASCII instead.
+        return b"srgb" in icc.lower() or b"iec61966" in icc.lower()
+
+    return "srgb" in description or "iec61966" in description

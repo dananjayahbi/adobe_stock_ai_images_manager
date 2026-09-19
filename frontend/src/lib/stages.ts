@@ -64,6 +64,10 @@ export interface JobItem {
   status: JobItemStatus;
   message: string;
   score: number | null;
+  /** 0-100 progress within this record. Only slow stages (upscale) report it. */
+  progress: number | null;
+  /** Short phase label, e.g. "Upscaling · pass 1/2 · 40%". */
+  detail: string;
   duration_seconds: number | null;
 }
 
@@ -75,6 +79,8 @@ export interface StageJob {
   kind: string;
   status: JobStatus;
   message: string;
+  /** What the batch is doing right now, shown beside the progress bar. */
+  progress_label: string;
   total: number;
   processed: number;
   succeeded: number;
@@ -84,6 +90,8 @@ export interface StageJob {
   created_at: number;
   finished_at: number | null;
   duration_seconds: number;
+  /** The record currently being worked on, for highlighting its row. */
+  current_record_id: string | null;
   items: JobItem[];
 }
 
@@ -150,6 +158,21 @@ export interface UpscaleDetail {
   source_megapixels: number;
   output_megapixels: number;
   reason: string;
+  /** [width, height] of the file that went in. */
+  source_dimensions?: [number, number];
+  /** [width, height] of the file that came out. */
+  output_dimensions?: [number, number];
+  // Recorded so the Stage 3 panel can show exactly what produced the file.
+  model?: string | null;
+  model_scale?: number;
+  gpu_id?: number;
+  tta?: boolean;
+  tile_size?: number;
+  passes?: number;
+  target_long_edge?: number;
+  duration_seconds?: number;
+  srgb_embedded?: boolean;
+  warnings?: string[];
 }
 
 export interface RefineDetail {

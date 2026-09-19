@@ -11,6 +11,7 @@ import type {
   StageKey,
   StageSummary,
 } from "./stages";
+import type { UpscaleOptions } from "./upscale";
 
 export const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
@@ -256,12 +257,13 @@ export function getThumbnailUrl(record: ImageRecord): string | null {
 /**
  * URL for the image the pipeline is currently working on.
  *
- * `variant` selects the untouched original, the refined copy, or (default) the
- * current working file, which is what the stage workspace previews.
+ * `variant` selects the untouched original, the refined copy, the Stage 3
+ * upscaled output, or (default) the current working file, which is what the
+ * stage workspace previews.
  */
 export function getPreviewUrl(
   recordId: string,
-  variant: "working" | "original" | "refined" = "working",
+  variant: "working" | "original" | "refined" | "upscaled" = "working",
   /** Cache-buster; pass a changing value after a stage run to force a refetch. */
   version?: number | string
 ): string {
@@ -293,6 +295,8 @@ export interface RunStageOptions {
   delaySeconds?: number;
   /** Stage 4/5 only: include the LLM semantic audit in scoring. */
   useSemantic?: boolean;
+  /** Stage 3 only: the full upscale configuration. */
+  upscale?: Partial<UpscaleOptions>;
 }
 
 /**
@@ -310,6 +314,7 @@ export async function runStage(
     record_ids: recordIds,
     delay_seconds: options.delaySeconds,
     use_semantic: options.useSemantic ?? true,
+    upscale: options.upscale,
   });
   return data;
 }

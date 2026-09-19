@@ -40,6 +40,13 @@ class JobItem:
     score: float | None = None
     started_at: float | None = None
     finished_at: float | None = None
+    #: 0-100 progress *within this record*, for stages slow enough to report it.
+    #: Upscaling is the main consumer: the CLI streams a percentage per image,
+    #: so the UI can show a real bar instead of a spinner. None means the stage
+    #: cannot report intra-record progress.
+    progress: float | None = None
+    #: Short human-readable phase label, e.g. "Upscaling · pass 1/2 · 40%".
+    detail: str = ""
 
     def to_dict(self) -> dict:
         return {
@@ -48,6 +55,8 @@ class JobItem:
             "status": self.status,
             "message": self.message,
             "score": self.score,
+            "progress": round(self.progress, 1) if self.progress is not None else None,
+            "detail": self.detail,
             "duration_seconds": (
                 round(self.finished_at - self.started_at, 2)
                 if self.started_at and self.finished_at
@@ -71,12 +80,39 @@ class Job:
     finished_at: float | None = None
     #: Cooperative cancellation flag, checked between records.
     cancel_requested: bool = False
+    #: Free-text description of what the batch is doing right now, shown beside
+    #: the progress bar (e.g. "Upscaling 4K with 4xNomos8kSC on GPU 0").
+    progress_label: str = ""
 
     @property
     def processed(self) -> int:
         return sum(
             1 for item in self.items if item.status in ("succeeded", "failed", "skipped")
         )
+
+    @property
+    def current(self) -> JobItem | None:
+        """The item currently running, if any."""
+        for item in self.items:
+            if item.status == "running":
+                return item
+        return None
+
+    def report_progress(
+        self, record_id: str, percent: float, label: str = ""
+    ) -> None:
+        """Update one item's intra-record progress.
+
+        Called from the worker thread, so it is deliberately limited to plain
+        attribute assignment: this is a single-user local tool, and the poller
+        reading a slightly stale number is harmless.
+        """
+        for item in self.items:
+            if item.record_id == record_id:
+                item.progress = max(0.0, min(100.0, float(percent)))
+                if label:
+                    item.detail = label
+                return
 
     @property
     def succeeded(self) -> int:
@@ -92,9 +128,21 @@ class Job:
 
     @property
     def progress(self) -> float:
+        """Overall completion in 0-1, including the running record's own progress.
+
+        Counting only finished records makes the bar sit still for minutes
+        during a single large upscale, which reads as a hang. Weighting the
+        running record by its reported percentage keeps the bar honest.
+        """
         if self.total <= 0:
             return 1.0 if self.status != STATUS_RUNNING else 0.0
-        return round(self.processed / self.total, 4)
+
+        partial = sum(
+            (item.progress or 0.0) / 100.0
+            for item in self.items
+            if item.status == "running"
+        )
+        return round(min(1.0, (self.processed + partial) / self.total), 4)
 
     def to_dict(self, include_items: bool = True) -> dict:
         payload = {
@@ -103,6 +151,7 @@ class Job:
             "kind": self.kind,
             "status": self.status,
             "message": self.message,
+            "progress_label": self.progress_label,
             "total": self.total,
             "processed": self.processed,
             "succeeded": self.succeeded,
@@ -115,6 +164,8 @@ class Job:
                 round((self.finished_at or time.time()) - self.created_at, 2)
             ),
         }
+        current = self.current
+        payload["current_record_id"] = current.record_id if current else None
         if include_items:
             payload["items"] = [item.to_dict() for item in self.items]
         return payload
