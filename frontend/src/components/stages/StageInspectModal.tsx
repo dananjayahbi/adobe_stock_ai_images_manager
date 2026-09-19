@@ -1,12 +1,14 @@
 "use client";
 
 import { Loader2, RotateCcw, X } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { getPreviewUrl, resetStage, type ImageRecord } from "@/lib/api";
+import { getPreviewUrl, resetStage, type AutoFixResult, type ImageRecord } from "@/lib/api";
+import { autoFixableCodesIn } from "@/lib/acceptanceIssues";
 import { STAGE_COLORS, formatScore, stageLabel } from "@/lib/stages";
 
 import AcceptanceReportPanel from "./AcceptanceReportPanel";
+import AutoFixPanel from "./AutoFixPanel";
 import StageDetailList from "./StageDetailList";
 import UpscaleComparePanel from "./UpscaleComparePanel";
 
@@ -16,6 +18,8 @@ interface StageInspectModalProps {
   isBusy: boolean;
   onClose: () => void;
   onReset: (record: ImageRecord) => void;
+  /** Called after an auto-fix so the page can refresh the record list. */
+  onFixed?: () => void;
   /** Bumped after a stage run so previews bypass the browser cache. */
   previewVersion?: string | number;
 }
@@ -45,16 +49,22 @@ export default function StageInspectModal({
   isBusy,
   onClose,
   onReset,
+  onFixed,
   previewVersion,
 }: StageInspectModalProps) {
   const [variant, setVariant] = useState<PreviewVariant>("working");
   const [isResetting, setIsResetting] = useState(false);
   const [showCompare, setShowCompare] = useState(false);
+  // Bumped after an auto-fix so the <img> bypasses the browser's cache for a
+  // file that was rewritten at the same path.
+  const [localPreviewVersion, setLocalPreviewVersion] = useState(0);
+  const [fixSummary, setFixSummary] = useState<AutoFixResult | null>(null);
 
   // Reset the variant when a different record opens.
   useEffect(() => {
     setVariant("working");
     setShowCompare(false);
+    setFixSummary(null);
   }, [record?.id]);
 
   useEffect(() => {
@@ -66,11 +76,23 @@ export default function StageInspectModal({
     return () => window.removeEventListener("keydown", handleKey);
   }, [isOpen, onClose]);
 
+  // Every hook must run on every render, so this sits above the early return
+  // below. Deriving from a serialized primitive also avoids a new array
+  // identity each render, which would defeat the memo entirely.
+  const issueCodesKey = (record?.acceptance_report?.issues ?? [])
+    .map((issue) => issue.code)
+    .join(",");
+  const fixableCodes = useMemo(
+    () => autoFixableCodesIn(issueCodesKey.split(",").filter(Boolean).map((code) => ({ code }))),
+    [issueCodesKey]
+  );
+
   if (!isOpen || !record) return null;
 
   const report = record.acceptance_report;
   const remediation = record.stage_details?.compatibility?.remediation;
   const hasUpscaled = HAS_UPSCALED_OUTPUT.has(record.stage);
+  const effectivePreviewVersion = localPreviewVersion || previewVersion;
 
   const VARIANTS: [PreviewVariant, string][] = [
     ["original", "Original"],
@@ -197,8 +219,8 @@ export default function StageInspectModal({
               <div className="grid max-h-[70vh] place-items-center overflow-auto rounded-lg border border-navy-800 bg-navy-950 p-2">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
                 <img
-                  key={`${variant}-${previewVersion ?? ""}`}
-                  src={getPreviewUrl(record.id, variant, previewVersion)}
+                  key={`${variant}-${effectivePreviewVersion ?? ""}`}
+                  src={getPreviewUrl(record.id, variant, effectivePreviewVersion)}
                   alt={`${record.filename} (${variant})`}
                   className="max-h-[66vh] w-auto max-w-full object-contain"
                 />
@@ -211,7 +233,26 @@ export default function StageInspectModal({
             <StageDetailList record={record} />
 
             {report ? (
-              <AcceptanceReportPanel report={report} remediation={remediation} />
+              <>
+                <AcceptanceReportPanel report={report} remediation={remediation} />
+
+                {/*
+                 * Only offered when there is genuinely something to fix. A
+                 * disabled button on every image would just be noise, and the
+                 * report above already explains the blocking issues.
+                 */}
+                {fixableCodes.length > 0 || fixSummary ? (
+                  <AutoFixPanel
+                    record={record}
+                    fixableCodes={fixableCodes}
+                    onFixed={(outcome) => {
+                      setFixSummary(outcome);
+                      setLocalPreviewVersion(Date.now());
+                      onFixed?.();
+                    }}
+                  />
+                ) : null}
+              </>
             ) : (
               <p className="rounded-lg border border-dashed border-navy-800 px-4 py-6 text-center text-sm text-navy-400">
                 No acceptance report yet. Run Stage 4 or Stage 5 to score this

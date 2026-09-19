@@ -91,6 +91,33 @@ class DeleteRequest(BaseModel):
     record_ids: list[str]
 
 
+class AutoFixResponse(BaseModel):
+    """Outcome of an automatic correction attempt on one record.
+
+    ``success`` on the endpoint means a corrected file was written - not that
+    the image now passes. ``manual`` lists the issue codes that need a human
+    decision and were deliberately left alone.
+    """
+    record_id: str
+    fixed: list[str] = []
+    remaining_fixable: list[str] = []
+    manual: list[str] = []
+    passes: int = 0
+    initial_score: float = 0.0
+    final_score: float = 0.0
+    improved: bool = False
+    #: Threshold verdicts, so the UI can distinguish "improved but still below"
+    #: from "now passes" without re-deriving it from the score.
+    initial_passed: bool = False
+    final_passed: bool = False
+    #: True when the written file verifiably carries an sRGB profile.
+    srgb_embedded: bool = False
+    history: list[dict[str, Any]] = []
+    summary: str = ""
+    #: The refreshed record, so the caller can update its list without refetching.
+    record: RecordResponse
+
+
 class BulkActionResult(BaseModel):
     """Outcome of a bulk mutation, reporting per-record failures."""
     updated: int = 0

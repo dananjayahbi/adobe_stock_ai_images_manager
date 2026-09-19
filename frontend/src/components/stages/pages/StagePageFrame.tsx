@@ -252,6 +252,7 @@ export function StagePageFrame({
         isBusy={isBusy}
         onClose={() => setInspectRecord(null)}
         onReset={handleReset}
+        onFixed={() => void load()}
         previewVersion={previewVersion}
       />
     </PageShell>

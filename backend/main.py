@@ -51,6 +51,7 @@ from routers.gallery import router as gallery_router
 from routers.similarity import router as similarity_router
 from routers.stages import router as stages_router
 from routers.queues import router as queues_router
+from routers.autofix import router as autofix_router
 
 app.include_router(upload_router)
 app.include_router(records_router)
@@ -59,6 +60,7 @@ app.include_router(gallery_router)
 app.include_router(similarity_router)
 app.include_router(stages_router)
 app.include_router(queues_router)
+app.include_router(autofix_router)
 
 # Serve generated thumbnails to the frontend grid.
 create_data_directories()

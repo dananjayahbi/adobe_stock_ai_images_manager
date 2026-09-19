@@ -7,6 +7,7 @@ import {
   scoreTone,
   type AcceptanceReport,
 } from "@/lib/stages";
+import { isAutoFixable } from "@/lib/acceptanceIssues";
 
 interface AcceptanceReportPanelProps {
   report: AcceptanceReport;
@@ -139,8 +140,17 @@ export default function AcceptanceReportPanel({
                   <span className="font-mono text-[10px] opacity-70">
                     {issue.code}
                   </span>
-                  {issue.refinable && (
-                    <span className="ml-auto rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] text-violet-200">
+                  {/*
+                   * Derived from the code, not from the report's cached
+                   * `refinable` flag: a report persisted before the engine
+                   * gained a capability would otherwise hide the badge for an
+                   * issue the pipeline can now fix.
+                   */}
+                  {isAutoFixable(issue.code) && (
+                    <span
+                      title="The Auto-fix button below can correct this automatically."
+                      className="ml-auto rounded bg-violet-500/20 px-1.5 py-0.5 text-[10px] text-violet-200"
+                    >
                       auto-fixable
                     </span>
                   )}

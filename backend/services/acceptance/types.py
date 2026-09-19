@@ -80,11 +80,21 @@ REFINABLE_CODES: frozenset[str] = frozenset(
     }
 )
 
+#: Issue codes fixed at the *container* level rather than by editing pixels.
+#:
+#: The colour profile is a property of the encoding, not of the pixel values, so
+#: the pixel recipe cannot address it - but it is still fully automatic (see
+#: :mod:`services.autofix.colour`). Keeping it in ``MANUAL_ONLY_CODES`` was wrong:
+#: it told the operator to fix by hand something the pipeline can do itself.
+CONTAINER_FIXABLE_CODES: frozenset[str] = frozenset({NOT_SRGB})
+
+#: Everything the auto-fix engine can correct without human input.
+AUTOFIXABLE_CODES: frozenset[str] = REFINABLE_CODES | CONTAINER_FIXABLE_CODES
+
 #: Issue codes that require a human decision and can never be auto-fixed.
 MANUAL_ONLY_CODES: frozenset[str] = frozenset(
     {
         WRONG_FORMAT,
-        NOT_SRGB,
         LOW_RESOLUTION,
         EXCESSIVE_RESOLUTION,
         FILE_TOO_LARGE,
@@ -109,6 +119,17 @@ class Issue:
 
     @property
     def refinable(self) -> bool:
+        """True when this issue can be corrected without human input.
+
+        Reports the *engine's* capability, which is what the UI's "auto-fixable"
+        badge promises - it therefore includes container-level fixes such as the
+        sRGB profile, not just pixel-recipe corrections.
+        """
+        return self.code in AUTOFIXABLE_CODES
+
+    @property
+    def pixel_refinable(self) -> bool:
+        """True only when the Stage 4 pixel recipe has a branch for this code."""
         return self.code in REFINABLE_CODES
 
     def to_dict(self) -> dict:
@@ -166,10 +187,17 @@ class AcceptanceReport:
 
     @property
     def refinable_issues(self) -> list[Issue]:
-        return [issue for issue in self.issues if issue.refinable]
+        """Issues the Stage 4 pixel recipe has a branch for.
+
+        Deliberately narrower than :attr:`Issue.refinable`: the recipe cannot
+        act on the colour profile, so offering it those issues would make
+        ``apply_recipe`` report them as unaddressable and stall the pass loop.
+        """
+        return [issue for issue in self.issues if issue.pixel_refinable]
 
     @property
     def blocking_issues(self) -> list[Issue]:
+        """Issues the pipeline cannot resolve without a human decision."""
         return [issue for issue in self.issues if not issue.refinable]
 
     @property

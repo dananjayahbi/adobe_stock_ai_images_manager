@@ -242,6 +242,48 @@ export async function deleteRecords(ids: string[]): Promise<BulkActionResult> {
   return data;
 }
 
+/** Outcome of an automatic correction attempt (see `POST /api/records/{id}/autofix`). */
+export interface AutoFixResult {
+  record_id: string;
+  /** Issue codes the engine successfully addressed. */
+  fixed: string[];
+  /** Codes still auto-fixable - a retry may help. */
+  remaining_fixable: string[];
+  /** Codes needing a human decision; deliberately not attempted. */
+  manual: string[];
+  passes: number;
+  initial_score: number;
+  final_score: number;
+  improved: boolean;
+  /** Threshold verdicts, so the UI need not re-derive them from the score. */
+  initial_passed: boolean;
+  final_passed: boolean;
+  /** True when the written file verifiably carries an sRGB profile. */
+  srgb_embedded: boolean;
+  history: Record<string, unknown>[];
+  summary: string;
+  /** The refreshed record, so callers need not refetch the list. */
+  record: ImageRecord;
+}
+
+/**
+ * Apply every automatically fixable correction to a record and re-score it.
+ *
+ * The backend writes the corrected file as the record's working copy, so the
+ * preview must be refetched afterwards.
+ */
+export async function autoFixRecord(
+  id: string,
+  variant: "working" | "refined" | "upscaled" = "working"
+): Promise<AutoFixResult> {
+  const { data } = await api.post<AutoFixResult>(
+    `/api/records/${id}/autofix`,
+    null,
+    { params: { variant } }
+  );
+  return data;
+}
+
 export async function fetchUploadTable(
   ids: string[]
 ): Promise<UploadTableResponse> {

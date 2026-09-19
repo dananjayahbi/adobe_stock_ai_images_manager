@@ -81,19 +81,35 @@ export function isDraftFor(record: ImageRecord, key: StageKey): boolean {
   return record.queued_stage === key;
 }
 
+/** Pipeline position of a stage key, or -1 when the value is not a stage key. */
+export function stageOrder(key: string | null | undefined): number {
+  if (!key) return -1;
+  return RUNNABLE_STAGE_KEYS.indexOf(key as StageKey);
+}
+
 /**
  * The records a stage page should display.
  *
  * A record belongs to a stage while it is either queued there (its *draft*) or
- * sitting on one of the stage's own verdict values. Everything that has already
- * advanced past the stage is excluded, so no record appears on two stage pages
- * at once and no bucket is ever permanently empty.
+ * sitting on one of the stage's own verdict values.
+ *
+ * Crucially, a record pushed *onward* leaves the stage it came from. The push
+ * only sets `queued_stage`; it cannot rewrite `stage`, because the record has
+ * genuinely been processed and that verdict is still its history. Without the
+ * explicit exclusion below, the record would satisfy both rules at once and
+ * appear in two stages simultaneously — the operator would "move" an image and
+ * still see it sitting in the stage they moved it out of.
  */
 export function poolFor(records: ImageRecord[], key: StageKey): ImageRecord[] {
   const values = STAGE_VALUES[key];
-  return records.filter(
-    (record) => isDraftFor(record, key) || values.includes(record.stage)
-  );
+  const here = stageOrder(key);
+
+  return records.filter((record) => {
+    if (isDraftFor(record, key)) return true;
+    // Queued for a later stage: it has left this one.
+    if (stageOrder(record.queued_stage) > here) return false;
+    return values.includes(record.stage);
+  });
 }
 
 function draftBucket(key: StageKey, label: string, hint: string): BucketSpec {

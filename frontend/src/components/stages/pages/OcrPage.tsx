@@ -1,8 +1,9 @@
 "use client";
 
-import { ArrowRight, ScanText, Trash2, Undo2 } from "lucide-react";
+import { ArrowRight, ScanText, Undo2 } from "lucide-react";
 import { useMemo } from "react";
 
+import StageDeleteButton from "@/components/stages/StageDeleteButton";
 import StagePageFrame, { type StageStat } from "@/components/stages/pages/StagePageFrame";
 import { Button } from "@/components/ui/Button";
 import { useStagePage } from "@/hooks/useStagePage";
@@ -113,15 +114,12 @@ export default function OcrPage() {
               </Button>
             ) : null}
 
-            <Button
-              size="sm"
-              variant="danger"
+            <StageDeleteButton
+              recordIds={ids}
+              filenames={selectedRecords.map((record) => record.filename)}
               disabled={isBusy}
-              onClick={() => void removeRecords(ids)}
-              icon={<Trash2 className="h-3.5 w-3.5" aria-hidden />}
-            >
-              Delete
-            </Button>
+              onDelete={removeRecords}
+            />
           </>
         );
       }}

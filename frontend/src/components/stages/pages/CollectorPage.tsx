@@ -3,6 +3,7 @@
 import { ArrowRight, Database, Undo2 } from "lucide-react";
 import { useMemo } from "react";
 
+import StageDeleteButton from "@/components/stages/StageDeleteButton";
 import StagePageFrame, { type StageStat } from "@/components/stages/pages/StagePageFrame";
 import StageUploader from "@/components/stages/pages/StageUploader";
 import { Button } from "@/components/ui/Button";
@@ -96,14 +97,12 @@ export default function CollectorPage() {
               </Button>
             ) : null}
 
-            <Button
-              size="sm"
-              variant="danger"
+            <StageDeleteButton
+              recordIds={selectedHere}
+              filenames={selectedRecords.map((record) => record.filename)}
               disabled={busy}
-              onClick={() => void removeRecords(selectedHere)}
-            >
-              Delete
-            </Button>
+              onDelete={removeRecords}
+            />
           </>
         );
       }}

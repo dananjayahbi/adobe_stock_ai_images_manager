@@ -8,12 +8,15 @@ of raising.
 
 from __future__ import annotations
 
+import io
 import logging
 from pathlib import Path
 
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageCms
+
+from services.srgb_profile import srgb_profile_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -292,9 +295,36 @@ def _container_stats(path: str | Path) -> dict[str, float]:
 
 
 def _icc_is_srgb(icc_bytes: bytes) -> bool:
-    """Best-effort sRGB detection: look for the profile description string."""
-    lowered = icc_bytes.lower()
-    return b"srgb" in lowered or b"iec61966" in lowered
+    """True when ``icc_bytes`` describes an sRGB colour space.
+
+    The profile is *parsed* rather than byte-searched. A byte search for
+    ``b"srgb"`` misses the very profiles this pipeline writes: the description
+    lives in a ``mluc`` tag stored as UTF-16BE, so ``"sRGB built-in"`` never
+    appears as ASCII in the stream. The old check therefore reported
+    ``is_srgb = 0.0`` for a correctly tagged file, which raised a spurious
+    "not in the sRGB colour space" issue on every image the refiner exported.
+
+    :func:`services.srgb_profile.has_srgb_profile` owns the authoritative
+    implementation; this wrapper exists only so the scorer can test raw bytes
+    before they have been written to disk.
+    """
+    if not icc_bytes:
+        return False
+
+    # An exact match against our own generated profile avoids depending on how
+    # the description happens to be tagged.
+    if icc_bytes == srgb_profile_bytes():
+        return True
+
+    try:
+        profile = ImageCms.getOpenProfile(io.BytesIO(icc_bytes))
+        description = ImageCms.getProfileDescription(profile).lower()
+    except Exception:  # noqa: BLE001 - an unparseable profile is not sRGB
+        # Some encoders store the description as plain ASCII instead.
+        lowered = icc_bytes.lower()
+        return b"srgb" in lowered or b"iec61966" in lowered
+
+    return "srgb" in description or "iec61966" in description
 
 
 def measure(path: str | Path) -> tuple[dict[str, float], np.ndarray | None]:
