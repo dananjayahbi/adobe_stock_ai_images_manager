@@ -1,0 +1,187 @@
+"use client";
+
+import { CheckCircle2, Circle, Download, Table, Trash2 } from "lucide-react";
+
+import type { UsageFilter } from "@/lib/api";
+import type { StatusScope } from "./useGalleryRecords";
+
+interface GalleryToolbarProps {
+  usageFilter: UsageFilter;
+  onUsageFilterChange: (value: UsageFilter) => void;
+  statusScope: StatusScope;
+  onStatusScopeChange: (value: StatusScope) => void;
+  counts: Record<UsageFilter, number>;
+  selectedCount: number;
+  visibleCount: number;
+  isBusy: boolean;
+  onSelectAll: () => void;
+  onClearSelection: () => void;
+  onMarkUsed: () => void;
+  onMarkUnused: () => void;
+  onDownloadZip: () => void;
+  onGenerateTable: () => void;
+  onBulkDelete: () => void;
+}
+
+const USAGE_FILTERS: { key: UsageFilter; label: string }[] = [
+  { key: "unused", label: "Unused" },
+  { key: "used", label: "Used" },
+  { key: "all", label: "All" },
+];
+
+const SCOPES: { key: StatusScope; label: string }[] = [
+  { key: "ready", label: "Upload-ready" },
+  { key: "all", label: "All states" },
+];
+
+/** Filter chips plus the bulk-action bar for the gallery. */
+export default function GalleryToolbar({
+  usageFilter,
+  onUsageFilterChange,
+  statusScope,
+  onStatusScopeChange,
+  counts,
+  selectedCount,
+  visibleCount,
+  isBusy,
+  onSelectAll,
+  onClearSelection,
+  onMarkUsed,
+  onMarkUnused,
+  onDownloadZip,
+  onGenerateTable,
+  onBulkDelete,
+}: GalleryToolbarProps) {
+  const hasSelection = selectedCount > 0;
+  const allSelected = visibleCount > 0 && selectedCount >= visibleCount;
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {USAGE_FILTERS.map(({ key, label }) => {
+          const isActive = usageFilter === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => onUsageFilterChange(key)}
+              className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors ${
+                isActive
+                  ? "border-sky-500 bg-sky-500/15 text-sky-300"
+                  : "border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
+              }`}
+            >
+              {label}
+              <span className="ml-1.5 opacity-70">{counts[key]}</span>
+            </button>
+          );
+        })}
+
+        <span className="mx-1 h-5 w-px bg-zinc-800" aria-hidden />
+
+        {SCOPES.map(({ key, label }) => {
+          const isActive = statusScope === key;
+          return (
+            <button
+              key={key}
+              type="button"
+              onClick={() => onStatusScopeChange(key)}
+              className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors ${
+                isActive
+                  ? "border-violet-500 bg-violet-500/15 text-violet-300"
+                  : "border-zinc-700 text-zinc-400 hover:border-zinc-500 hover:text-zinc-200"
+              }`}
+            >
+              {label}
+            </button>
+          );
+        })}
+
+        <span className="ml-auto text-xs text-zinc-500">
+          {visibleCount} shown
+          {hasSelection ? ` · ${selectedCount} selected` : ""}
+        </span>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-zinc-800 bg-zinc-900/50 px-3 py-2">
+        <button
+          type="button"
+          onClick={allSelected ? onClearSelection : onSelectAll}
+          disabled={visibleCount === 0}
+          className="rounded-md border border-zinc-700 px-3 py-1.5 text-xs font-medium text-zinc-300 transition-colors hover:border-zinc-500 hover:text-zinc-100 disabled:cursor-not-allowed disabled:opacity-40"
+        >
+          {allSelected ? "Clear selection" : "Select all"}
+        </button>
+
+        <span className="h-5 w-px bg-zinc-800" aria-hidden />
+
+        <ToolbarAction
+          label="Mark used"
+          icon={<CheckCircle2 className="h-3.5 w-3.5" />}
+          disabled={!hasSelection || isBusy}
+          onClick={onMarkUsed}
+        />
+        <ToolbarAction
+          label="Mark unused"
+          icon={<Circle className="h-3.5 w-3.5" />}
+          disabled={!hasSelection || isBusy}
+          onClick={onMarkUnused}
+        />
+        <ToolbarAction
+          label="Download ZIP"
+          icon={<Download className="h-3.5 w-3.5" />}
+          disabled={!hasSelection || isBusy}
+          onClick={onDownloadZip}
+        />
+        <ToolbarAction
+          label="Generate upload table"
+          icon={<Table className="h-3.5 w-3.5" />}
+          disabled={!hasSelection || isBusy}
+          onClick={onGenerateTable}
+          emphasis
+        />
+        <ToolbarAction
+          label="Delete"
+          icon={<Trash2 className="h-3.5 w-3.5" />}
+          disabled={!hasSelection || isBusy}
+          onClick={onBulkDelete}
+          danger
+        />
+      </div>
+    </div>
+  );
+}
+
+function ToolbarAction({
+  label,
+  icon,
+  onClick,
+  disabled = false,
+  danger = false,
+  emphasis = false,
+}: {
+  label: string;
+  icon: React.ReactNode;
+  onClick: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+  emphasis?: boolean;
+}) {
+  const tone = danger
+    ? "border-red-500/40 bg-red-500/10 text-red-300 hover:border-red-400 hover:text-red-100"
+    : emphasis
+      ? "border-sky-500/50 bg-sky-500/15 text-sky-300 hover:border-sky-400 hover:text-sky-100"
+      : "border-zinc-700 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${tone}`}
+    >
+      {icon}
+      {label}
+    </button>
+  );
+}

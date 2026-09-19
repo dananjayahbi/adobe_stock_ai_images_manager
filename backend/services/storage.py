@@ -71,3 +71,46 @@ def copy_to_ready(source_path: Path | str, ready_dir: Path | str, file_uuid: str
     dest = Path(ready_dir) / f"{file_uuid}{source.suffix.lower()}"
     shutil.copy2(str(source), str(dest))
     return str(dest)
+
+
+def resolve_ready_path(record, ready_dir: Path | str | None = None) -> Path | None:
+    """Return the staged ready-to-upload file for a record, if it exists.
+
+    The staged filename is derived from the record id plus the original
+    extension, so it can be reconstructed without an extra DB column.
+    """
+    if record is None:
+        return None
+
+    ready_root = Path(ready_dir or settings.READY_DIR)
+    suffix = Path(record.original_path or "").suffix.lower() or ".jpg"
+    candidate = ready_root / f"{record.id}{suffix}"
+    return candidate if candidate.is_file() else None
+
+
+def delete_record_files(record, cfg=None) -> list[str]:
+    """Remove every on-disk artifact owned by a record.
+
+    Deletes the inbox original, the generated thumbnail, and the staged
+    ready-to-upload copy when present. Missing files are ignored.
+
+    Returns the list of paths that were successfully removed.
+    """
+    removed: list[str] = []
+    candidates: list[Path | None] = [
+        Path(record.original_path) if record.original_path else None,
+        Path(record.thumbnail_path) if record.thumbnail_path else None,
+        resolve_ready_path(record, getattr(cfg, "READY_DIR", None)),
+    ]
+
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        try:
+            if candidate.is_file():
+                candidate.unlink()
+                removed.append(str(candidate))
+        except OSError:
+            logger.warning("Failed to delete file %s", candidate)
+
+    return removed

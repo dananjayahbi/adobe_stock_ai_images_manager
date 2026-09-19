@@ -17,3 +17,51 @@ body {
     )
     rgb(var(--background-start-rgb));
 }
+
+/*
+ * Masonry layout for the gallery grid.
+ *
+ * CSS columns are used instead of a JS masonry library: tiles keep their
+ * natural aspect ratio (so images "fit" their tiles rather than being
+ * cropped), and browsers pack the columns natively. `break-inside: avoid`
+ * prevents a tile from being split across two columns.
+ */
+.masonry-grid {
+  column-gap: 1rem;
+  column-count: 1;
+}
+
+@media (min-width: 640px) {
+  .masonry-grid {
+    column-count: 2;
+  }
+}
+
+@media (min-width: 1024px) {
+  .masonry-grid {
+    column-count: 3;
+  }
+}
+
+@media (min-width: 1536px) {
+  .masonry-grid {
+    column-count: 4;
+  }
+}
+
+.masonry-item {
+  break-inside: avoid;
+  margin-bottom: 1rem;
+  /* Avoids a Chromium repaint glitch on the last item of each column. */
+  transform: translateZ(0);
+}
+
+/* Honour reduced-motion preferences for hover transitions. */
+@media (prefers-reduced-motion: reduce) {
+  .masonry-item *,
+  .masonry-item *::before,
+  .masonry-item *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+  }
+}

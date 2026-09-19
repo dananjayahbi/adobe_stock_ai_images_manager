@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import settings
 from database import Base, engine
+from services.migrations import run_additive_migrations
 from services.storage import create_data_directories
 
 
@@ -18,6 +19,8 @@ async def lifespan(app: FastAPI):
     import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    # Patch pre-existing databases with columns added after their creation.
+    run_additive_migrations(engine)
     create_data_directories()
     yield
     # Shutdown cleanup if needed
@@ -43,10 +46,12 @@ app.add_middleware(
 from routers.upload import router as upload_router
 from routers.records import router as records_router
 from routers.approve import router as approve_router
+from routers.gallery import router as gallery_router
 
 app.include_router(upload_router)
 app.include_router(records_router)
 app.include_router(approve_router)
+app.include_router(gallery_router)
 
 # Serve generated thumbnails to the frontend grid.
 create_data_directories()

@@ -83,10 +83,26 @@ cd backend
 | Method | Path | Description |
 | --- | --- | --- |
 | `POST` | `/upload` | Upload a batch of JPEGs (multipart field `files`, max 50). |
-| `GET` | `/api/records` | List records, newest first. Filters: `status`, `limit` (≤500), `offset`. |
+| `GET` | `/api/records` | List records, newest first. Filters: `status`, `used` (`all`/`used`/`unused`), `ids` (comma-separated), `limit` (≤500), `offset`. |
+| `GET` | `/api/records/{id}` | Fetch a single record. |
 | `POST` | `/api/records/{id}/approve` | Approve a record, optionally overriding title/description/keywords. |
+| `PATCH` | `/api/records/{id}/used` | Mark one record as used/unused (`{"is_used": true}`). |
+| `PATCH` | `/api/records/used` | Mark many records as used/unused (`{"record_ids": [...], "is_used": true}`). |
+| `DELETE` | `/api/records/{id}` | Delete a record and all of its on-disk artifacts. |
+| `POST` | `/api/records/bulk-delete` | Delete many records (`{"record_ids": [...]}`). |
+| `GET` | `/api/records/{id}/download` | Download the staged, metadata-tagged file (READY only). |
+| `POST` | `/api/records/download-zip` | ZIP archive of staged files (max 50 per request). |
+| `POST` | `/api/upload-table` | Build copy/paste metadata rows for the selected records. |
 | `GET` | `/thumbnails/{filename}` | Static thumbnail images. |
 | `GET` | `/health` | Liveness probe. |
+
+## Pages
+
+| Route | Purpose |
+| --- | --- |
+| `/` | Pipeline dashboard: upload, live QC status, batch approve. |
+| `/gallery` | Masonry gallery of staged assets — usage filters, multi-select, ZIP download, bulk delete, and "Generate upload table". |
+| `/upload-table` | Copy/paste-ready title/description/keyword rows with image previews, opened in a new tab from the gallery. |
 
 ## Pipeline
 
@@ -123,13 +139,19 @@ copies the file into the ready-to-upload directory.
 | `backend/database.py` | SQLAlchemy engine, session factory, WAL pragmas. |
 | `backend/models.py` | `ImageRecord` ORM model and `ImageStatus` enum. |
 | `backend/schemas.py` | Pydantic request/response models. |
-| `backend/routers/` | `upload`, `records`, `approve` API endpoints. |
-| `backend/services/` | `qc_engine`, `llm_client`, `gemini_auditor`, `gemini_metadata`, `exiftool_embedder`, `storage`. |
+| `backend/routers/` | `upload`, `records`, `approve`, `gallery` API endpoints. |
+| `backend/services/` | `qc_engine`, `llm_client`, `gemini_auditor`, `gemini_metadata`, `exiftool_embedder`, `storage`, `upload_table`, `migrations`. |
 | `backend/tasks/` | `audit_orchestrator` background pipeline. |
 | `backend/tests/` | Pytest suite (QC engine + API integration). |
 | `frontend/src/lib/api.ts` | Typed API client. |
-| `frontend/src/components/` | `Dropzone`, `StatsBar`, `ImageGrid`, `InspectionModal`. |
+| `frontend/src/lib/clipboard.ts` | Clipboard helper with a non-secure-context fallback. |
+| `frontend/src/lib/uploadTableStore.ts` | Cross-tab hand-off of the gallery selection. |
+| `frontend/src/components/` | Shared UI: `NavBar`, `Dropzone`, `StatsBar`, `ImageGrid`, `InspectionModal`, `ConfirmDialog`, `CopyButton`. |
+| `frontend/src/components/gallery/` | Gallery view, masonry grid, tile, toolbar, preview modal, hooks. |
+| `frontend/src/components/uploadTable/` | Upload-table view, table, and row components. |
 | `frontend/src/app/page.tsx` | Live polling dashboard. |
+| `frontend/src/app/gallery/page.tsx` | Gallery route. |
+| `frontend/src/app/upload-table/page.tsx` | Upload-table route. |
 | `plan-document-series/` | Design and planning documents. |
 | `storage/` | Runtime data: `inbox/`, `thumbnails/`, `ready_to_upload/`, SQLite DB. |
 

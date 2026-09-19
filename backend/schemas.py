@@ -29,6 +29,8 @@ class RecordResponse(BaseModel):
     generated_title: Optional[str] = None
     generated_description: Optional[str] = None
     generated_keywords: Optional[list[str]] = None
+    is_used: bool = False
+    used_at: Optional[datetime] = None
     created_at: datetime
     updated_at: datetime
 
@@ -60,3 +62,45 @@ class ApproveResponse(BaseModel):
     status: ImageStatus
     title: Optional[str] = None
     keywords_count: int = 0
+
+
+class UsedRequest(BaseModel):
+    """Request body for marking one or more records as used/unused."""
+    is_used: bool = True
+
+
+class BulkUsedRequest(BaseModel):
+    """Request body for marking many records as used/unused at once."""
+    record_ids: list[str]
+    is_used: bool = True
+
+
+class DeleteRequest(BaseModel):
+    """Request body for deleting many records at once."""
+    record_ids: list[str]
+
+
+class BulkActionResult(BaseModel):
+    """Outcome of a bulk mutation, reporting per-record failures."""
+    updated: int = 0
+    deleted: int = 0
+    missing: list[str] = []
+    failed: list[str] = []
+
+
+class UploadTableItem(BaseModel):
+    """One row of the copy/paste upload table for Adobe Stock submissions."""
+    record_id: str
+    filename: str
+    title: str
+    description: str
+    keywords: list[str]
+    keywords_csv: str
+    thumbnail_url: Optional[str] = None
+    download_url: str
+
+
+class UploadTableResponse(BaseModel):
+    """Ordered rows for the generated upload table."""
+    items: list[UploadTableItem]
+    missing: list[str] = []

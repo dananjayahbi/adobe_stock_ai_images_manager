@@ -64,6 +64,10 @@ class ImageRecord(Base):
     generated_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     generated_keywords: Mapped[list | None] = mapped_column(JSON, nullable=True)
 
+    # Gallery usage tracking - set once the asset has been consumed/published.
+    is_used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False

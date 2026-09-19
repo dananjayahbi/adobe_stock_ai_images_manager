@@ -30,6 +30,8 @@ export interface ImageRecord {
   generated_title: string | null;
   generated_description: string | null;
   generated_keywords: string[] | null;
+  is_used: boolean;
+  used_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -57,6 +59,31 @@ export interface ApproveOverrides {
   override_title?: string;
   override_description?: string;
   override_keywords?: string[];
+}
+
+export type UsageFilter = "all" | "unused" | "used";
+
+export interface BulkActionResult {
+  updated: number;
+  deleted: number;
+  missing: string[];
+  failed: string[];
+}
+
+export interface UploadTableItem {
+  record_id: string;
+  filename: string;
+  title: string;
+  description: string;
+  keywords: string[];
+  keywords_csv: string;
+  thumbnail_url: string | null;
+  download_url: string;
+}
+
+export interface UploadTableResponse {
+  items: UploadTableItem[];
+  missing: string[];
 }
 
 const api = axios.create({
@@ -96,11 +123,85 @@ export async function uploadImages(
 
 export async function fetchRecords(params?: {
   status?: ImageStatus;
+  used?: UsageFilter;
+  ids?: string[];
   limit?: number;
   offset?: number;
 }): Promise<RecordListResponse> {
-  const { data } = await api.get<RecordListResponse>("/api/records", { params });
+  const { ids, ...rest } = params ?? {};
+  const { data } = await api.get<RecordListResponse>("/api/records", {
+    params: { ...rest, ids: ids && ids.length > 0 ? ids.join(",") : undefined },
+  });
   return data;
+}
+
+export async function fetchRecord(id: string): Promise<ImageRecord> {
+  const { data } = await api.get<ImageRecord>(`/api/records/${id}`);
+  return data;
+}
+
+export async function setRecordUsed(
+  id: string,
+  isUsed: boolean
+): Promise<BulkActionResult> {
+  const { data } = await api.patch<BulkActionResult>(`/api/records/${id}/used`, {
+    is_used: isUsed,
+  });
+  return data;
+}
+
+export async function setRecordsUsed(
+  ids: string[],
+  isUsed: boolean
+): Promise<BulkActionResult> {
+  const { data } = await api.patch<BulkActionResult>("/api/records/used", {
+    record_ids: ids,
+    is_used: isUsed,
+  });
+  return data;
+}
+
+export async function deleteRecord(id: string): Promise<BulkActionResult> {
+  const { data } = await api.delete<BulkActionResult>(`/api/records/${id}`);
+  return data;
+}
+
+export async function deleteRecords(ids: string[]): Promise<BulkActionResult> {
+  const { data } = await api.post<BulkActionResult>("/api/records/bulk-delete", {
+    record_ids: ids,
+  });
+  return data;
+}
+
+export async function fetchUploadTable(
+  ids: string[]
+): Promise<UploadTableResponse> {
+  const { data } = await api.post<UploadTableResponse>("/api/upload-table", {
+    record_ids: ids,
+  });
+  return data;
+}
+
+/** Trigger a browser download for a single staged asset. */
+export function getDownloadUrl(recordId: string): string {
+  return `${API_BASE_URL}/api/records/${recordId}/download`;
+}
+
+/** Trigger a browser download of a ZIP containing the given staged assets. */
+export async function downloadRecordsZip(ids: string[]): Promise<void> {
+  const response = await api.post(
+    "/api/records/download-zip",
+    { record_ids: ids },
+    { responseType: "blob" }
+  );
+  const blobUrl = URL.createObjectURL(response.data as Blob);
+  const anchor = document.createElement("a");
+  anchor.href = blobUrl;
+  anchor.download = "adobe-stock-upload-batch.zip";
+  document.body.appendChild(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(blobUrl);
 }
 
 export async function approveRecord(

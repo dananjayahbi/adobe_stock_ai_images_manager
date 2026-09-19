@@ -24,3 +24,5 @@ frontend/node_modules/
 # OS
 .DS_Store
 Thumbs.db
+
+/backend/upscayl-2.15.0/
