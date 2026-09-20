@@ -48,9 +48,6 @@ from services.refine import ops
 
 logger = logging.getLogger(__name__)
 
-#: Target monochromatic noise sigma for a natural-looking 4K capture.
-TARGET_GRAIN_SIGMA = 1.6
-
 #: Ceiling on any single correction's strength. Adobe treats "overprocessing"
 #: and "heavy color grading" as refusal reasons, so even a badly out-of-tolerance
 #: input is corrected conservatively - the loop in ``refiner.py`` can always run
@@ -340,34 +337,42 @@ def apply_recipe(
         outcome.addressed.append(SOFT_FOCUS)
 
     # ---------------------------------------------------------------- #
-    # 4. Texture: restore a plausible sensor noise floor.
+    # 4. Texture: restore local detail (never fake a noise floor).
     # ---------------------------------------------------------------- #
+    # The old branch added synthetic grain to raise ``noise_sigma`` to a
+    # "natural" floor. Research refuted that: Adobe's guidance is that noise be
+    # *minimised* and that files carry "no added grain, filters or textures", so
+    # the fix addressed a property Adobe does not want. The genuine defect
+    # behind a "waxy" surface is loss of local micro-detail, which is restored
+    # directly.
     if FLAT_SYNTHETIC_TEXTURE in by_code:
-        current = float(metrics.get("noise_sigma", 0.0))
-        outcome.image = ops.add_sensor_grain(
-            outcome.image, target_sigma=TARGET_GRAIN_SIGMA, current_sigma=current
-        )
+        amount = cap(0.55)
+        outcome.image = ops.restore_texture(outcome.image, amount=amount)
         outcome.steps.append(
             RefineStep(
-                "sensor_grain",
-                TARGET_GRAIN_SIGMA,
-                f"Added monochromatic sensor grain (target sigma {TARGET_GRAIN_SIGMA}) to break up waxy surfaces.",
+                "restore_texture",
+                amount,
+                f"Restored local micro-detail (amount {amount:.2f}) on "
+                "over-smoothed surfaces without adding synthetic grain.",
             )
         )
         outcome.addressed.append(FLAT_SYNTHETIC_TEXTURE)
 
     if EXCESSIVE_NOISE in by_code:
-        # Denoise lightly; aggressive denoising recreates the flat look. The
-        # strength still escalates, because a single light pass is not enough to
-        # bring a badly noisy frame under the natural-noise ceiling.
-        denoise_strength = cap(0.35)
-        outcome.image = ops.deblock(outcome.image, strength=denoise_strength)
-        outcome.image = ops.sharpen(outcome.image, amount=0.25, radius=1.0)
+        # Denoise only where noise is visible, and give back the micro-detail
+        # the filter removes - Adobe refuses "unrealistic skin-smoothing" as
+        # readily as it refuses noise. Strength escalates, because one light
+        # pass does not always bring a noisy frame under the ceiling.
+        denoise_strength = cap(0.60)
+        outcome.image = ops.denoise_flat_regions(
+            outcome.image, strength=denoise_strength
+        )
         outcome.steps.append(
             RefineStep(
-                "light_denoise",
+                "denoise_flat_regions",
                 denoise_strength,
-                "Smoothed excessive sensor noise while preserving edge detail.",
+                "Suppressed noise where it is visible (flat regions) while "
+                "preserving texture detail elsewhere.",
             )
         )
         outcome.addressed.append(EXCESSIVE_NOISE)

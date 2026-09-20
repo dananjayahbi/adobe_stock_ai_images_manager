@@ -240,12 +240,35 @@ def test_refiner_never_mutates_the_source(tmp_path, lenient_config):
 
 
 def test_refiner_improves_a_damaged_image(tmp_path):
-    image = _noisy_gradient(2000, 1600)
-    image[200:1400, 200:1400] = 255
-    image[0:100, :] = 0
+    """The refiner must measurably improve a fixable image.
+
+    Three properties of the fixture matter, and all three were learned the hard
+    way:
+
+    * It must clear Adobe's **4 MP** floor. Below it the image carries a genuine
+      ``low_resolution`` critical issue, which caps the score at
+      ``threshold - critical_cap_margin`` whatever the refiner does - so the test
+      would measure the cap rather than the improvement.
+    * The damage must not blanket the **centre** of the frame. Sharpness is
+      measured on a native 1:1 centre crop (Adobe's reviewers inspect at 100%
+      zoom), so a large flat block in the middle makes ``soft_focus`` genuinely
+      0.0 and caps the score again.
+    * The damage must be a large enough share of the frame for the clipped-pixel
+      ratio to exceed its tolerance. Thin bands do not move the metric: a 120px
+      band on a 2000px frame is ~6% of the frame, which is below the scorer's
+      ``highlight_fail``.
+    """
+    image = _noisy_gradient(2400, 2000)  # 4.8 MP, above Adobe's 4 MP floor
+    image[:500, :] = 255  # blown highlight region
+    image[-500:, :] = 0  # crushed shadow region
     source = _write(tmp_path / "damaged.jpg", image)
 
-    config = AcceptanceConfig(threshold=0.55)
+    # The DEFAULT threshold (0.80), not a lenient one. The damaged fixture is
+    # pinned at ``ceiling_floor`` (0.55) by its genuine exposure failure, so a
+    # threshold of 0.55 would read as "already met" and the refiner would
+    # correctly do nothing - the test would then be measuring the short-circuit
+    # rather than the improvement.
+    config = AcceptanceConfig(threshold=0.80)
     result = refine_image(
         source,
         tmp_path / "out",

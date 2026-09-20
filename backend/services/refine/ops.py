@@ -232,6 +232,95 @@ def add_sensor_grain(
     return np.clip(out, 0, 255).astype(np.uint8)
 
 
+def denoise_flat_regions(
+    image: np.ndarray,
+    strength: float = 0.6,
+    detail_preserve: float = 0.65,
+) -> np.ndarray:
+    """Denoise only where noise is VISIBLE, then restore lost micro-detail.
+
+    A uniform denoise pass is the wrong tool: it removes noise that was never
+    objectionable (inside foliage, fabric, hair) while leaving the visible noise
+    in flat regions only partly reduced. Adobe's own evidence shows the
+    criterion is visibility - an ISO-160 file was refused for noise because it
+    was a flat blue sky.
+
+    Two stages:
+
+    1. **Weighted denoise.** A bilateral filter is blended in proportion to a
+       per-pixel *noise visibility* weight, so smooth regions are cleaned and
+       textured regions are left alone.
+    2. **Detail restoration.** Denoising always removes some genuine
+       micro-texture, and Adobe explicitly refuses "unrealistic
+       skin-smoothing". The high-frequency component that the filter removed is
+       added back at ``detail_preserve``, which keeps pores and fine texture
+       while the noise stays suppressed.
+
+    Args:
+        image: BGR image array.
+        strength: 0..1 blend toward the denoised result in flat regions.
+        detail_preserve: 0..1 share of the removed high-frequency detail to add
+            back.
+
+    Returns:
+        The filtered image, same shape and dtype as the input.
+    """
+    from services.acceptance.texture import noise_visibility_weight
+
+    strength = float(np.clip(strength, 0.0, 1.0))
+    detail_preserve = float(np.clip(detail_preserve, 0.0, 1.0))
+
+    source = image.astype(np.float32)
+    # A bilateral filter is edge-preserving, so it removes noise without
+    # smearing real edges the way a Gaussian blur would.
+    filtered = cv2.bilateralFilter(image, d=7, sigmaColor=28.0, sigmaSpace=7.0)
+    filtered = filtered.astype(np.float32)
+
+    weight = noise_visibility_weight(image)[:, :, None] * strength
+    blended = source * (1.0 - weight) + filtered * weight
+
+    # Give back the micro-detail the filter removed, so surfaces do not turn
+    # waxy - which Adobe lists as a refusal reason ("unrealistic
+    # skin-smoothing").
+    removed_detail = source - filtered
+    restored = blended + removed_detail * detail_preserve
+
+    return np.clip(restored, 0, 255).astype(np.uint8)
+
+
+def restore_texture(image: np.ndarray, amount: float = 0.6) -> np.ndarray:
+    """Recover local micro-contrast on over-smoothed surfaces.
+
+    Targets the honest version of the "waxy" defect: a loss of high-frequency
+    detail in flat regions, not the absence of sensor noise. The gain is applied
+    through a luminance-detail mask so colour is untouched.
+
+    Args:
+        image: BGR image array.
+        amount: 0..1 strength of the recovered detail.
+
+    Returns:
+        The texture-restored image.
+    """
+    amount = float(np.clip(amount, 0.0, 1.0))
+    source = image.astype(np.float32)
+
+    # High-pass the luminance channel only: adding chroma detail would amplify
+    # any residual chroma noise.
+    ycrcb = cv2.cvtColor(image, cv2.COLOR_BGR2YCrCb).astype(np.float32)
+    luma = ycrcb[:, :, 0]
+    blurred = cv2.GaussianBlur(luma, (0, 0), 1.4)
+    detail = luma - blurred
+
+    # Only boost detail that is genuinely weak, so already-crisp areas are not
+    # over-sharpened (Adobe refuses over-sharpened files).
+    weak = np.clip(1.0 - np.abs(detail) / 6.0, 0.0, 1.0)
+    ycrcb[:, :, 0] = luma + detail * amount * weak
+
+    restored = cv2.cvtColor(ycrcb.astype(np.uint8), cv2.COLOR_YCrCb2BGR)
+    return restored
+
+
 def sharpen(image: np.ndarray, amount: float = 0.8, radius: float = 1.2) -> np.ndarray:
     """Apply an unsharp mask to recover softness lost during upscaling."""
     blurred = cv2.GaussianBlur(image, (0, 0), radius)

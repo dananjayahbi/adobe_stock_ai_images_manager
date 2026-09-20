@@ -185,16 +185,35 @@ def test_oversaturation_is_detected(tmp_path, config):
     assert report.passed is False
 
 
-def test_flat_image_is_flagged_as_synthetic(tmp_path, config):
-    """A perfectly flat surface has no noise floor - the 'waxy AI' tell."""
+def test_flat_image_is_not_flagged_as_synthetic(tmp_path, config):
+    """A perfectly flat surface must NOT be penalised for having no noise.
+
+    This test previously asserted the opposite ("a flat surface has no noise
+    floor - the 'waxy AI' tell"), and that rule was the reason **every** image
+    scored exactly 55%: it emitted a MAJOR ``flat_synthetic_texture`` issue,
+    which capped the score at ``ceiling_floor``.
+
+    Research refuted the premise. Adobe's published guidance is "check that
+    noise and artifacts are **minimized**" and that files carry "**no added
+    grain**, filters or textures"; no source shows a refusal for cleanliness. A
+    flat surface is also exactly what a legitimate subject (a studio backdrop, a
+    clear sky) looks like, so the check could not be made precise enough to keep.
+
+    The test now pins the honest contract: a flat image may fail on genuine
+    grounds (a synthetic fixture is below the 4 MP floor and is genuinely soft),
+    but never on the false "no sensor noise" tell.
+    """
     flat = np.full((2000, 2400, 3), 150, dtype=np.uint8)
     path = _write(tmp_path / "flat.jpg", flat)
 
     report = score_image(path, config=config)
     codes = {issue.code for issue in report.issues}
 
-    assert FLAT_SYNTHETIC_TEXTURE in codes
-    assert report.passed is False
+    assert FLAT_SYNTHETIC_TEXTURE not in codes, (
+        "a clean image was penalised for having no sensor noise"
+    )
+    # The texture dimension must not be dragged down by the absence of noise.
+    assert report.sub_scores["texture"].score == pytest.approx(1.0)
 
 
 def test_chroma_fringing_is_detected(tmp_path, config):
@@ -225,7 +244,20 @@ def test_chroma_fringing_is_detected(tmp_path, config):
 
 
 def test_smooth_colour_boundary_is_not_fringing(tmp_path, config):
-    """A saturated edge with aligned channels must not be reported as fringing."""
+    """A saturated edge with aligned channels must not be reported as fringing.
+
+    This is the regression that made the old detector useless: it measured the
+    ``R-G``/``B-G`` colour-difference channel, so a saturated boundary (a 170-unit
+    step in that channel) registered as aberration. It fired on essentially every
+    image, including a real approved Adobe Stock photo, and it did not even
+    increase with the amount of aberration.
+
+    Written as **PNG** deliberately. JPEG uses chroma subsampling, which physically
+    misaligns the channels at a hard colour boundary - measured: the same array
+    scores 0.00 lossless but 1.98 as JPEG 4:2:0. That is a genuine encoding defect,
+    not a false positive, so a JPEG cannot be used to test the "channels aligned"
+    property.
+    """
     image = _noisy_gradient()
     width = image.shape[1]
     # Strong red/green colour split, but every channel aligned - so no fringe.
@@ -234,8 +266,61 @@ def test_smooth_colour_boundary_is_not_fringing(tmp_path, config):
     image[:, : width // 2, 2] = 60
     image[:, : width // 2, 1] = 200
 
-    path = _write(tmp_path / "colourful.jpg", image)
-    report = score_image(path, config=config)
+    path = tmp_path / "colourful.png"
+    cv2.imwrite(str(path), image)
+    report = score_image(str(path), config=config)
+
+    assert CHROMA_FRINGE not in {issue.code for issue in report.issues}
+
+
+def test_jpeg_chroma_subsampling_at_a_hard_colour_edge_is_reported(tmp_path, config):
+    """Chroma subsampling at a saturated boundary IS a real misalignment.
+
+    Documented because it looks like a false positive but is not: the lossless and
+    JPEG encodes of one identical array differ by ~2.0 on the misalignment index
+    (measured 0.00 as PNG vs 1.98 as JPEG 4:2:0).
+
+    The assertion is on the *metric* rather than the emitted issue, because the
+    issue is only raised past ``chroma_misalignment_tolerance`` and this frame's
+    hard edge is narrow relative to the frame. What matters is that the detector
+    sees the misalignment at all.
+    """
+    from services.acceptance import chroma
+
+    image = _noisy_gradient()
+    width = image.shape[1]
+    image[:, width // 2 :, 2] = 230
+    image[:, width // 2 :, 1] = 90
+    image[:, : width // 2, 2] = 60
+    image[:, : width // 2, 1] = 200
+
+    jpeg = cv2.imread(str(_write(tmp_path / "colourful.jpg", image)))
+    png = cv2.imread(str(_write(tmp_path / "colourful.png", image)))
+
+    jpeg_index = chroma.measure_channel_misalignment(jpeg)
+    png_index = chroma.measure_channel_misalignment(png)
+
+    assert png_index < 0.05, f"lossless encode reported {png_index:.3f}"
+    assert jpeg_index > png_index + 0.2, (
+        f"subsampling not detected: jpeg={jpeg_index:.3f} png={png_index:.3f}"
+    )
+    assert jpeg_index > config.chroma_misalignment_tolerance
+
+
+def test_solid_two_colour_graphic_is_not_fringing(tmp_path, config):
+    """A graphic with one hard edge and flat interiors must not read as fringing.
+
+    Flat interiors carry only quantisation noise in each channel's Laplacian, and
+    that noise is uncorrelated between channels - so a purely percentile-based
+    edge mask selects mostly flat pixels here and reports misalignment.
+    """
+    graphic = np.zeros((1200, 1600, 3), dtype=np.uint8)
+    graphic[:, :800] = (255, 0, 0)
+    graphic[:, 800:] = (0, 255, 0)
+
+    path = tmp_path / "graphic.png"
+    cv2.imwrite(str(path), graphic)
+    report = score_image(str(path), config=config)
 
     assert CHROMA_FRINGE not in {issue.code for issue in report.issues}
 

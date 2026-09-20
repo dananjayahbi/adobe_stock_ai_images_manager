@@ -81,11 +81,13 @@ def test_autofix_persists_the_new_score_and_report(client, saturated_record):
     listed = client.get("/api/records").json()["items"]
     record = next(item for item in listed if item["id"] == saturated_record)
 
-    assert record["acceptance_score"] == pytest.approx(body["final_score"], abs=1e-6)
+    # The persisted score column keeps 4 decimals, so compare at that precision
+    # rather than to the full float the response carries.
+    assert record["acceptance_score"] == pytest.approx(body["final_score"], abs=1e-4)
     assert record["acceptance_report"] is not None
     assert record["working_path"]
     assert record["stage_details"]["autofix"]["final_score"] == pytest.approx(
-        body["final_score"], abs=1e-6
+        body["final_score"], abs=1e-4
     )
 
 

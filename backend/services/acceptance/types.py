@@ -155,11 +155,25 @@ class SubScore:
     #: Kept so the overall ceiling can react to a single failing criterion
     #: instead of only the group average that hid it.
     components: list[float] = field(default_factory=list)
+    #: The subset of ``components`` that may CAP the overall score.
+    #:
+    #: Adobe reviewers check one box and stop at the first problem, so a
+    #: decisive defect must be able to cap the score. An advisory nitpick
+    #: (mild chromatic fringing, a low noise floor) must move the score without
+    #: capping it - otherwise a single minor signal pins every image at the
+    #: ceiling floor. When empty, ``components`` is treated as all-decisive.
+    decisive_components: list[float] = field(default_factory=list)
 
     @property
     def worst_component(self) -> float:
         """Lowest individual measurement, falling back to the group score."""
         return min(self.components) if self.components else self.score
+
+    @property
+    def worst_decisive_component(self) -> float:
+        """Lowest measurement that is allowed to cap the overall score."""
+        values = self.decisive_components or self.components
+        return min(values) if values else self.score
 
     def to_dict(self) -> dict:
         return {

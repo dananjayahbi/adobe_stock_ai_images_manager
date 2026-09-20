@@ -16,6 +16,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageCms
 
+from services.acceptance import chroma, texture
 from services.srgb_profile import srgb_profile_bytes
 
 logger = logging.getLogger(__name__)
@@ -27,10 +28,6 @@ ANALYSIS_MAX_DIM = 1600
 #: Adobe reviewers inspect at 100% (1:1 pixel) zoom, so noise and sharpness
 #: must be measured at native resolution - downscaling averages noise away.
 NATIVE_CROP_SIZE = 1024
-
-#: sqrt(20) is the L2 norm of OpenCV's 3x3 Laplacian kernel
-#: [[0,1,0],[1,-4,1],[0,1,0]]; it converts MAD back to input noise sigma.
-_LAPLACIAN_KERNEL_NORM = 4.47213595499958
 
 # Neutral fallbacks keep a single unreadable image from collapsing the score.
 _NEUTRAL: dict[str, float] = {
@@ -47,7 +44,9 @@ _NEUTRAL: dict[str, float] = {
     "tenengrad": 0.0,
     "halo_ratio": 0.0,
     "chroma_fringe_ratio": 0.0,
+    "chroma_misalignment": 0.0,
     "noise_sigma": 0.0,
+    "noise_sigma_flat": 0.0,
     "flat_region_ratio": 0.0,
     "blockiness": 0.0,
     "megapixels": 0.0,
@@ -164,12 +163,12 @@ def _edge_artifact_stats(image: np.ndarray) -> dict[str, float]:
     A halo is a bright rim: pixels that sit next to a strong gradient yet are
     brighter than their local neighbourhood.
 
-    Chromatic aberration is specifically a *channel misalignment*, not merely a
-    colourful edge. A saturated edge (a red flower against green foliage) has a
-    large ``r - g`` difference but a perfectly smooth one. Fringing instead
-    makes the difference channels spiky at the edge, so the detector measures
-    high-frequency energy in ``r - g`` and ``b - g`` *restricted to edges*.
-    That distinguishes real fringing from legitimate colour contrast.
+    Chromatic aberration is delegated to :mod:`services.acceptance.chroma`,
+    which measures *channel misalignment* rather than colour contrast. The
+    previous inline implementation correlated the ``R-G``/``B-G`` difference
+    channels, so a saturated object boundary - which produces a large difference
+    step - was reported as fringing. That fired on essentially every image and
+    did not even increase with the amount of aberration.
     """
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     gray_f = gray.astype(np.float32)
@@ -181,75 +180,44 @@ def _edge_artifact_stats(image: np.ndarray) -> dict[str, float]:
     # Edges = top decile of gradient energy.
     threshold = float(np.percentile(magnitude, 90))
     if threshold <= 1e-6:
-        return {"halo_ratio": 0.0, "chroma_fringe_ratio": 0.0}
+        return {
+            "halo_ratio": 0.0,
+            "chroma_fringe_ratio": 0.0,
+            "chroma_misalignment": 0.0,
+        }
 
     edge_mask = magnitude >= threshold
     edge_count = float(np.count_nonzero(edge_mask))
     if edge_count <= 0:
-        return {"halo_ratio": 0.0, "chroma_fringe_ratio": 0.0}
+        return {
+            "halo_ratio": 0.0,
+            "chroma_fringe_ratio": 0.0,
+            "chroma_misalignment": 0.0,
+        }
 
     local_median = cv2.medianBlur(gray, 5).astype(np.float32)
     # A halo is a locally-bright rim: >12 luma units above the neighbourhood.
     halo_mask = edge_mask & (gray_f - local_median > 12.0)
 
-    # Fringing: high-frequency spikes in the colour-difference channels.
-    blue, green, red = cv2.split(image.astype(np.float32))
-    red_diff = red - green
-    blue_diff = blue - green
-
-    # A Laplacian of the difference channel isolates the spike; its magnitude at
-    # an edge pixel is large only when the channels are spatially misaligned.
-    spike = np.maximum(
-        np.abs(cv2.Laplacian(red_diff, cv2.CV_32F, ksize=3)),
-        np.abs(cv2.Laplacian(blue_diff, cv2.CV_32F, ksize=3)),
-    )
-    # 25 units of curvature in a difference channel is well beyond JPEG ringing
-    # in a smooth colour gradient.
-    fringe_mask = edge_mask & (spike > 25.0)
+    misalignment = chroma.measure_channel_misalignment(image)
 
     return {
         "halo_ratio": float(np.count_nonzero(halo_mask)) / edge_count,
-        "chroma_fringe_ratio": float(np.count_nonzero(fringe_mask)) / edge_count,
+        # Kept as a normalised 0..1 mirror of the misalignment index so existing
+        # callers and stored reports keep a comparable "fringe ratio" field.
+        "chroma_fringe_ratio": float(min(misalignment / 2.0, 1.0)),
+        "chroma_misalignment": misalignment,
     }
 
 
 def _texture_stats(image: np.ndarray) -> dict[str, float]:
-    """Noise sigma, flat-region share, and JPEG blockiness.
+    """Noise and texture, measured where noise is actually visible.
 
-    Generative models and neural upscalers produce unnaturally flat surfaces;
-    real camera sensors carry a low-amplitude noise floor. The median absolute
-    deviation of a Laplacian is a robust noise estimator that ignores edges.
+    Delegates to :mod:`services.acceptance.texture`. A single global sigma
+    cannot express Adobe's actual criterion, which is *visibility*: the same
+    noise is objectionable in a flat sky and invisible in foliage.
     """
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY).astype(np.float32)
-
-    laplacian = cv2.Laplacian(gray, cv2.CV_32F, ksize=3)
-    # 1.4826 * MAD = sigma for normally distributed data; dividing by the
-    # kernel norm converts the post-filter spread back to input noise sigma.
-    mad = float(np.median(np.abs(laplacian - np.median(laplacian))))
-    noise_sigma = 1.4826 * mad / _LAPLACIAN_KERNEL_NORM
-
-    # Flat regions: local standard deviation below 2 luma units.
-    local_mean = cv2.blur(gray, (7, 7))
-    local_sq_mean = cv2.blur(gray * gray, (7, 7))
-    local_var = np.clip(local_sq_mean - local_mean * local_mean, 0.0, None)
-    flat_ratio = float(np.count_nonzero(local_var < 4.0)) / float(gray.size)
-
-    # Blockiness: mean absolute difference across 8-pixel block boundaries
-    # versus interior differences. >1 means visible JPEG grid artefacts.
-    horizontal = np.abs(np.diff(gray, axis=1))
-    vertical = np.abs(np.diff(gray, axis=0))
-    block_h = horizontal[:, 7::8].mean() if horizontal.shape[1] > 8 else 0.0
-    block_v = vertical[7::8, :].mean() if vertical.shape[0] > 8 else 0.0
-    interior_h = horizontal.mean() if horizontal.size else 0.0
-    interior_v = vertical.mean() if vertical.size else 0.0
-    interior = (interior_h + interior_v) / 2.0 or 1e-6
-    blockiness = float(((block_h + block_v) / 2.0) / interior)
-
-    return {
-        "noise_sigma": float(noise_sigma),
-        "flat_region_ratio": flat_ratio,
-        "blockiness": blockiness,
-    }
+    return texture.measure_texture(image)
 
 
 def _container_stats(path: str | Path) -> dict[str, float]:

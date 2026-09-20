@@ -114,14 +114,31 @@ class AcceptanceConfig:
     # Edge artefacts (share of edge pixels affected)
     halo_tolerance: float = 0.05
     halo_fail: float = 0.30
-    fringe_tolerance: float = 0.02
-    fringe_fail: float = 0.15
+    #: Chromatic aberration is measured as channel MISALIGNMENT (0..2), not as
+    #: a share of edge pixels. Adobe lists "colour fringing" once, as general
+    #: editing hygiene, and never as an AI-specific defect; community evidence
+    #: ranks it a minor nitpick. Calibrated against synthetic ground truth:
+    #: clean frames measure <= 0.27, clearly visible CA >= 0.79.
+    chroma_misalignment_tolerance: float = 0.20
+    chroma_misalignment_fail: float = 0.60
 
-    # Texture
-    noise_min_ideal: float = 0.90
-    noise_max_ideal: float = 6.0
+    # Texture. Adobe's rule is "check that noise and artifacts are minimized" -
+    # there is no published number, and the objectionable quantity is noise in a
+    # FLAT region (a clear sky shows noise a reviewer can see; the same sigma in
+    # foliage is invisible). The scored value is therefore the noise sigma over
+    # the flattest 30% of the frame, which tracks injected noise almost exactly
+    # linearly. Calibrated against synthetic ground truth: a clean frame measures
+    # 0.0, a lightly grained one ~2, and a visibly noisy one >=20.
+    noise_flat_ideal: float = 12.0
+    noise_flat_fail: float = 25.0
+    #: The old rule penalised noise *below* 0.90 as "flat synthetic texture".
+    #: Adobe says the opposite ("noise and artifacts are minimized") and no
+    #: source shows a refusal for cleanliness, so a low noise floor is no longer
+    #: a defect. The signal is kept as a diagnostic metric only - a genuine
+    #: "over-denoised" measure cannot be separated from a legitimately smooth
+    #: subject (a sky, a studio backdrop), so scoring it produces false
+    #: positives on exactly the images Adobe accepts.
     flat_ratio_tolerance: float = 0.55
-    flat_ratio_fail: float = 0.85
 
     #: A plain weighted mean lets one badly failing dimension be masked by five
     #: passing ones - a 29%-blown image still scored 83%. The overall score is
@@ -130,6 +147,11 @@ class AcceptanceConfig:
     #: ``ceiling_floor + ceiling_span * worst_sub_score``: a perfect worst
     #: dimension (1.0) imposes no cap, while a failing one (0.0) caps the score
     #: at ``ceiling_floor``, which is below any sane threshold.
+    #:
+    #: The ceiling deliberately uses the worst *decisive* component only. Adobe
+    #: reviewers check one box and stop at the first problem, so a decisive
+    #: defect must be able to cap the score - but an advisory nitpick (mild
+    #: fringing, mild noise) must not, or every image pins at the floor.
     ceiling_floor: float = 0.55
     ceiling_span: float = 0.45
 
@@ -361,10 +383,13 @@ def _score_color(metrics: dict[str, float], cfg: AcceptanceConfig) -> SubScore:
 def _score_detail(metrics: dict[str, float], cfg: AcceptanceConfig) -> SubScore:
     issues: list[Issue] = []
     components: list[float] = []
+    #: Only these may cap the overall score (see ``SubScore``).
+    decisive: list[float] = []
 
     laplacian = metrics["laplacian_variance"]
     sharpness_score = _ramp(laplacian, cfg.sharpness_fail, cfg.sharpness_ideal)
     components.append(sharpness_score)
+    decisive.append(sharpness_score)
     if laplacian < cfg.sharpness_ideal:
         issues.append(
             Issue(
@@ -379,6 +404,7 @@ def _score_detail(metrics: dict[str, float], cfg: AcceptanceConfig) -> SubScore:
     halo_ratio = metrics["halo_ratio"]
     halo_score = 1.0 - _ramp(halo_ratio, cfg.halo_tolerance, cfg.halo_fail)
     components.append(halo_score)
+    decisive.append(halo_score)
     if halo_ratio > cfg.halo_tolerance:
         issues.append(
             Issue(
@@ -389,16 +415,30 @@ def _score_detail(metrics: dict[str, float], cfg: AcceptanceConfig) -> SubScore:
             )
         )
 
-    fringe_ratio = metrics["chroma_fringe_ratio"]
-    fringe_score = 1.0 - _ramp(fringe_ratio, cfg.fringe_tolerance, cfg.fringe_fail)
+    # Chromatic aberration: channel MISALIGNMENT, not colour contrast. Adobe
+    # lists it as general editing hygiene rather than an AI-specific defect, and
+    # community evidence ranks it minor, so it is ADVISORY - it lowers the
+    # dimension score but can never cap the overall score on its own.
+    misalignment = metrics.get(
+        "chroma_misalignment",
+        float(metrics.get("chroma_fringe_ratio", 0.0)) * 2.0,
+    )
+    fringe_score = 1.0 - _ramp(
+        misalignment,
+        cfg.chroma_misalignment_tolerance,
+        cfg.chroma_misalignment_fail,
+    )
     components.append(fringe_score)
-    if fringe_ratio > cfg.fringe_tolerance:
+    if misalignment > cfg.chroma_misalignment_tolerance:
         issues.append(
             Issue(
                 CHROMA_FRINGE,
-                "major" if fringe_ratio > cfg.fringe_fail * 0.6 else "minor",
-                f"{fringe_ratio * 100:.1f}% of edge pixels show purple/green colour fringing.",
-                fringe_ratio,
+                "major"
+                if misalignment > cfg.chroma_misalignment_fail
+                else "minor",
+                f"Inter-channel misalignment index {misalignment:.2f} indicates "
+                f"colour fringing along high-contrast edges.",
+                misalignment,
             )
         )
 
@@ -409,61 +449,50 @@ def _score_detail(metrics: dict[str, float], cfg: AcceptanceConfig) -> SubScore:
         cfg.weight_detail,
         issues,
         components=components,
+        decisive_components=decisive,
     )
 
 
 def _score_texture(metrics: dict[str, float], cfg: AcceptanceConfig) -> SubScore:
     issues: list[Issue] = []
     components: list[float] = []
+    #: Only these may cap the overall score (see ``SubScore``).
+    decisive: list[float] = []
 
-    noise_sigma = metrics["noise_sigma"]
-    flat_ratio = metrics["flat_region_ratio"]
-
-    # The noise floor and the flat-region share describe one root cause - a
-    # surface with no real sensor texture - so they produce a single issue whose
-    # detail mentions both measurements. Emitting two issues for one problem
-    # would double-penalise the score and clutter the UI.
-    low_noise = noise_sigma < cfg.noise_min_ideal
-    # A smooth sky or a gradient backdrop is legitimately texture-free, so the
-    # flat-region share only adds evidence when the noise floor is also missing.
-    too_flat = low_noise and flat_ratio > cfg.flat_ratio_tolerance
-
-    if noise_sigma > cfg.noise_max_ideal:
-        noise_score = 1.0 - _ramp(
-            noise_sigma, cfg.noise_max_ideal, cfg.noise_max_ideal * 2.5
-        )
-        components.append(noise_score)
+    # Noise is judged where it is VISIBLE. Adobe refused an ISO-160 file for
+    # noise because it was a flat blue sky; the same sigma inside foliage is
+    # invisible. A global sigma cannot express that, so the flat-region value
+    # drives the score and the textured-region value is informational only.
+    noise_flat = float(
+        metrics.get("noise_sigma_flat", metrics.get("noise_sigma", 0.0))
+    )
+    noise_score = 1.0 - _ramp(
+        noise_flat, cfg.noise_flat_ideal, cfg.noise_flat_fail
+    )
+    components.append(noise_score)
+    decisive.append(noise_score)
+    if noise_flat > cfg.noise_flat_ideal:
         issues.append(
             Issue(
                 EXCESSIVE_NOISE,
-                "major",
-                f"Sensor noise {noise_sigma:.2f} is above the natural ceiling "
-                f"{cfg.noise_max_ideal:.2f}.",
-                noise_sigma,
+                "major" if noise_flat > cfg.noise_flat_fail else "minor",
+                f"Visible noise {noise_flat:.2f} in smooth regions exceeds the "
+                f"natural ceiling {cfg.noise_flat_ideal:.2f}.",
+                noise_flat,
             )
         )
-    elif low_noise:
-        # Score from both signals when both are out of range; the noise floor is
-        # the primary tell, so it sets the ceiling on this component.
-        noise_score = _ramp(noise_sigma, 0.0, cfg.noise_min_ideal)
-        if too_flat:
-            flat_score = 1.0 - _ramp(
-                flat_ratio, cfg.flat_ratio_tolerance, cfg.flat_ratio_fail
-            )
-            noise_score = min(noise_score, flat_score)
-        components.append(noise_score)
 
-        detail = (
-            f"Sensor noise {noise_sigma:.2f} is below the natural floor "
-            f"{cfg.noise_min_ideal:.2f} (waxy, synthetic-looking surfaces)."
-        )
-        if too_flat:
-            detail += f" {flat_ratio * 100:.0f}% of the frame is texture-free."
-
-        issues.append(Issue(FLAT_SYNTHETIC_TEXTURE, "major", detail, noise_sigma))
-    else:
-        components.append(1.0)
-
+    # A LOW noise floor is deliberately NOT scored.
+    #
+    # The old rule penalised ``noise_sigma < 0.90`` as "flat synthetic texture"
+    # at MAJOR severity, which capped the overall score at ``ceiling_floor``
+    # (0.55) for every clean image - including a real, already-approved Adobe
+    # Stock file. Research refuted the premise: Adobe's published guidance is
+    # "check that noise and artifacts are MINIMIZED" and no source shows a
+    # refusal for cleanliness. The genuine defect behind a "waxy" surface is
+    # loss of local micro-detail from over-denoising, which is not reliably
+    # separable from a legitimately smooth subject (a sky, a studio backdrop),
+    # so it is reported as a diagnostic metric rather than scored.
     return SubScore(
         "texture",
         SUB_SCORE_LABELS["texture"],
@@ -471,6 +500,7 @@ def _score_texture(metrics: dict[str, float], cfg: AcceptanceConfig) -> SubScore
         cfg.weight_texture,
         issues,
         components=components,
+        decisive_components=decisive,
     )
 
 
@@ -576,10 +606,16 @@ def score_image(
 
     # Apply the worst-dimension ceiling so one failed criterion cannot be
     # averaged away by the dimensions that happen to look fine. Using the worst
-    # *component* rather than the worst group average is what catches a single
-    # failing measurement inside an otherwise healthy group.
+    # *decisive component* rather than the worst group average is what catches a
+    # single failing measurement inside an otherwise healthy group.
+    #
+    # Only DECISIVE measurements may cap the score. Adobe reviewers check one
+    # box and stop at the first problem, so a decisive defect (soft focus,
+    # clipping, a colour cast) must be able to pin the score. An advisory signal
+    # (mild chromatic fringing, a low noise floor) must not: capping on those is
+    # what pinned otherwise-acceptable images at ``ceiling_floor``.
     worst = min(
-        (sub.worst_component for sub in sub_scores.values()), default=1.0
+        (sub.worst_decisive_component for sub in sub_scores.values()), default=1.0
     )
     ceiling = cfg.ceiling_floor + cfg.ceiling_span * worst
     score = _clamp(min(score, ceiling))

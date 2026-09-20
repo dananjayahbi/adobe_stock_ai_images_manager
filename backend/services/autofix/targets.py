@@ -96,9 +96,11 @@ def dimensions_from_report(report) -> list[DimensionTarget]:
             DimensionTarget(
                 key=key,
                 label=sub.label,
-                # The *worst component* is what caps the overall score, so it is
-                # the honest number to show and to test against the target.
-                score=sub.worst_component,
+                # The worst DECISIVE component is what caps the overall score, so
+                # it is the honest number to show and to test against the target.
+                # Advisory measurements (mild fringing, a low noise floor) are
+                # shown separately and never gate the loop.
+                score=sub.worst_decisive_component,
                 weight=sub.weight,
                 fixable_codes=fixable,
                 manual_codes=manual,
