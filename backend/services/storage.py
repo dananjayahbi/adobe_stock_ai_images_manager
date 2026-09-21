@@ -21,6 +21,7 @@ def create_data_directories() -> None:
         settings.READY_DIR,
         settings.REFINED_DIR,
         settings.UPSCALED_DIR,
+        settings.CONVERTED_DIR,
     ]:
         Path(dir_path).mkdir(parents=True, exist_ok=True)
 
@@ -124,8 +125,8 @@ def delete_record_files(record, cfg=None) -> list[str]:
     """Remove every on-disk artifact owned by a record.
 
     Deletes the inbox original, the generated thumbnail, the staged
-    ready-to-upload copy, and any Stage 3/4 working copies (upscaled, refined).
-    Missing files are ignored.
+    ready-to-upload copy, and any Stage 3/4 working copies (upscaled, refined),
+    plus the Collector's PNG-to-JPEG conversion. Missing files are ignored.
 
     Returns the list of paths that were successfully removed.
     """
@@ -142,7 +143,7 @@ def delete_record_files(record, cfg=None) -> list[str]:
     if working_path:
         candidates.append(Path(working_path))
 
-    for attribute in ("REFINED_DIR", "UPSCALED_DIR"):
+    for attribute in ("REFINED_DIR", "UPSCALED_DIR", "CONVERTED_DIR"):
         directory = getattr(cfg, attribute, None) or getattr(settings, attribute, None)
         if not directory:
             continue

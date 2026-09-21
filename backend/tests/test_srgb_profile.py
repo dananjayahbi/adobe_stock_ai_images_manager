@@ -156,6 +156,35 @@ def test_write_creates_missing_parent_directories(tmp_path: pathlib.Path):
     assert destination.is_file()
 
 
+def test_detailed_image_exports_successfully(tmp_path: pathlib.Path):
+    """A high-entropy image must export, not silently return False.
+
+    Regression guard. ``optimize=True`` combined with 4:4:4 makes libjpeg abort
+    with "broken data stream when writing image file" on detailed input. The
+    broad handler below it turned that into a plain ``False``, so every refine
+    and upscale pass on a real photograph wrote *no file at all* while
+    reporting nothing worse than a log line. A flat fill did not trigger it,
+    which is why the earlier tests never caught it.
+    """
+    rng = np.random.default_rng(5)
+    noisy = rng.integers(0, 255, (400, 400, 3), dtype=np.uint8)
+    destination = tmp_path / "detailed.jpg"
+
+    assert write_srgb_jpeg(noisy, destination, quality=95) is True
+    assert destination.is_file()
+    assert destination.stat().st_size > 0
+
+
+def test_detailed_image_export_is_still_srgb_tagged(tmp_path: pathlib.Path):
+    """Dropping ``optimize`` must not cost the ICC profile."""
+    rng = np.random.default_rng(6)
+    noisy = rng.integers(0, 255, (300, 300, 3), dtype=np.uint8)
+    destination = tmp_path / "detailed-tagged.jpg"
+
+    assert write_srgb_jpeg(noisy, destination, quality=100) is True
+    assert has_srgb_profile(destination) is True
+
+
 def test_write_returns_false_when_the_destination_is_unwritable(tmp_path: pathlib.Path):
     """A disk error must be reported, not raised into a batch."""
     directory = tmp_path / "as-directory"

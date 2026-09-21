@@ -1,4 +1,10 @@
-"""Upload router - handles multipart image uploads."""
+"""Upload router - handles multipart image uploads.
+
+The Collector accepts JPEG and PNG. A PNG is normalised to JPEG at quality 100
+as part of ingestion, because Adobe Stock refuses PNG for photos while most
+generative tools emit it. The uploaded original is kept byte-for-byte in the
+inbox; the JPEG becomes the record's working copy.
+"""
 
 import logging
 from pathlib import Path
@@ -9,8 +15,9 @@ from sqlalchemy.orm import Session
 
 from config import settings
 from database import get_db
-from models import ImageRecord, ImageStatus, PipelineStage, utcnow
+from models import ImageRecord, ImageStatus, PipelineStage, generate_uuid, utcnow
 from schemas import UploadResponse
+from services.image_normalizer import convert_png_to_jpeg, needs_conversion
 from services.storage import generate_thumbnail, save_uploaded_file
 
 logger = logging.getLogger(__name__)
@@ -27,9 +34,10 @@ async def upload_images(
 ) -> UploadResponse:
     """Accept a batch of image uploads and register them at Stage 1.
 
-    Steps: validate batch + extensions -> save to inbox -> generate thumbnails ->
-    create COLLECTED records in a single transaction. No auditing runs here; the
-    operator drives Stages 2-7 from the pipeline workspace.
+    Steps: validate batch + extensions -> save to inbox -> normalise PNG to
+    JPEG -> generate thumbnails -> create COLLECTED records in a single
+    transaction. No auditing runs here; the operator drives Stages 2-7 from the
+    pipeline workspace.
     """
     if not files:
         raise HTTPException(status_code=400, detail="No files provided.")
@@ -75,19 +83,46 @@ async def upload_images(
             except Exception:
                 logger.warning("Could not read dimensions for %s", full_path)
 
-            thumb_path = generate_thumbnail(full_path, settings.THUMBNAILS_DIR, Path(full_path).stem)
+            # A PNG is unusable for Adobe Stock as-is, so a JPEG copy is written
+            # now and becomes the working file. The inbox original is untouched.
+            # The id is generated up front because the conversion output is named
+            # after it; the column default would not be applied until flush.
+            record_id = generate_uuid()
+            working_path = str(full_path)
+            stage_detail: dict | None = None
+            if needs_conversion(full_path, settings):
+                conversion = convert_png_to_jpeg(
+                    full_path,
+                    settings.CONVERTED_DIR,
+                    record_id,
+                    quality=settings.PNG_CONVERSION_QUALITY,
+                )
+                if conversion.converted and conversion.output_path:
+                    working_path = conversion.output_path
+                    written_files.append(Path(conversion.output_path))
+                else:
+                    logger.warning(
+                        "PNG conversion failed for %s: %s", full_path, conversion.reason
+                    )
+                stage_detail = {"collector": conversion.to_dict()}
+
+            thumb_path = generate_thumbnail(
+                working_path, settings.THUMBNAILS_DIR, Path(full_path).stem
+            )
             if thumb_path:
                 written_files.append(Path(thumb_path))
 
             record = ImageRecord(
+                id=record_id,
                 filename=upload.filename or Path(full_path).name,
                 original_path=str(full_path),
                 thumbnail_path=thumb_path or None,
                 status=ImageStatus.PENDING,
                 # New uploads enter the stage workspace at Stage 1 (Collector).
                 stage=PipelineStage.COLLECTED,
-                working_path=str(full_path),
+                working_path=working_path,
                 stage_updated_at=utcnow(),
+                stage_details=stage_detail,
                 width=width,
                 height=height,
                 megapixels=megapixels,

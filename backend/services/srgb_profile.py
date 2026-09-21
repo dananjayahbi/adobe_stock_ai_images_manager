@@ -119,7 +119,15 @@ def write_srgb_jpeg(
                 quality=int(quality),
                 subsampling=0,  # 4:4:4
                 icc_profile=profile,
-                optimize=True,
+                # NOTE: ``optimize=True`` is deliberately NOT used here.
+                # libjpeg's entropy optimiser aborts with "broken data stream
+                # when writing image file" on high-entropy input when combined
+                # with 4:4:4 (measured: every detailed 400x400 image failed,
+                # while a flat fill succeeded). Because that OSError was caught
+                # by the handler below, the export silently returned False and
+                # no file was written at all - so every refine/upscale pass on a
+                # real photograph failed without an error surfacing.
+                # See tests/test_srgb_profile.py::test_detailed_image_exports_successfully.
             )
         return True
     except Exception:  # noqa: BLE001 - disk/encoder errors must not crash a batch

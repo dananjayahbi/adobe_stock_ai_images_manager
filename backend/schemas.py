@@ -374,3 +374,85 @@ class CategoryResponse(BaseModel):
     """One Adobe Stock category option."""
     code: int
     name: str
+
+
+# --------------------------------------------------------------------------- #
+# Application settings (Settings modal)
+# --------------------------------------------------------------------------- #
+
+class SettingsDefaults(BaseModel):
+    """Values that apply when the operator has stored nothing."""
+
+    llm_base_url: str
+    llm_model: str
+    llm_context_window: int
+
+
+class SettingsBounds(BaseModel):
+    """Valid range for a numeric setting, so the UI can validate locally."""
+
+    min_context_window: int
+    max_context_window: int
+
+
+class SettingsResponse(BaseModel):
+    """Current LLM configuration.
+
+    ``llm_*`` fields are what the operator stored (empty when unset);
+    ``effective_*`` fields are what a request would actually use right now,
+    after the stored value and the environment are merged. The UI shows both so
+    an empty field never looks like "no endpoint configured".
+
+    ``llm_api_key`` is deliberately absent - only a mask and a boolean are
+    exposed, because the raw key is never needed by the client.
+    """
+
+    llm_base_url: str = ""
+    llm_model: str = ""
+    llm_api_key_masked: str = ""
+    llm_api_key_set: bool = False
+    llm_context_window: int
+    effective_base_url: str
+    effective_model: str
+    effective_context_window: int
+    #: Long edge an image is downscaled to, derived from the context window.
+    effective_image_max_dim: int
+    defaults: SettingsDefaults
+    bounds: SettingsBounds
+
+
+class SettingsUpdateRequest(BaseModel):
+    """Partial update for the LLM configuration.
+
+    Omitted fields are left untouched. ``llm_api_key`` set to an empty string or
+    to the mask returned by ``GET`` keeps the stored key; use
+    ``clear_api_key`` to remove it deliberately.
+    """
+
+    llm_base_url: Optional[str] = None
+    llm_model: Optional[str] = None
+    llm_api_key: Optional[str] = None
+    llm_context_window: Optional[int] = None
+    clear_api_key: bool = False
+
+
+class SettingsTestRequest(BaseModel):
+    """Optional candidate values to verify before saving."""
+
+    llm_base_url: Optional[str] = None
+    llm_model: Optional[str] = None
+    llm_api_key: Optional[str] = None
+    llm_context_window: Optional[int] = None
+
+
+class SettingsTestResponse(BaseModel):
+    """Outcome of an endpoint probe.
+
+    A failure is a normal result, not an HTTP error: the modal renders the
+    message inline so the operator can correct a typo and retry.
+    """
+
+    ok: bool
+    model: Optional[str] = None
+    reply: Optional[str] = None
+    error: Optional[str] = None

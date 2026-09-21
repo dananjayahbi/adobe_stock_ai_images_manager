@@ -26,13 +26,23 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3100",
     ]
 
-    # LLM gateway (OpenAI-compatible). Defaults to the local multi-provider router.
+    # LLM gateway (OpenAI-compatible). These are the *defaults*: the operator
+    # can override base URL, model, key, and context window from the Settings
+    # modal, which persists to APP_SETTINGS_PATH (see services/app_settings.py).
     LLM_BASE_URL: str = "http://localhost:4006/api/gateway/v1"
     LLM_API_KEY: str = ""
     LLM_MODEL: str = "OpenRouter-Free-Endpoint"
     LLM_TIMEOUT_SECONDS: int = 240
-    # Images are downscaled before upload to keep requests small and fast.
+    #: Preferred long edge for an image sent to a vision model. A hard ceiling:
+    #: a context window small enough to overflow steps this down, never up.
     LLM_IMAGE_MAX_DIM: int = 1024
+    #: Fallback context window when the operator has not declared one. Kept
+    #: deliberately small so an unknown model is never assumed to be large.
+    LLM_CONTEXT_WINDOW: int = 32_768
+
+    #: JSON document holding operator-editable settings. Lives beside the DB so
+    #: one storage directory holds all mutable state.
+    APP_SETTINGS_PATH: Path = STORAGE_ROOT / "app_settings.json"
 
     # Legacy Gemini key. Retained only as a fallback source for LLM_API_KEY so
     # existing .env files keep working.
@@ -70,8 +80,18 @@ class Settings(BaseSettings):
     MAX_FILE_SIZE_MB: int = 35
     ABSOLUTE_MAX_FILE_SIZE_MB: int = 45
 
-    # Allowed file extensions
-    ALLOWED_EXTENSIONS: set[str] = {".jpg", ".jpeg"}
+    # Allowed file extensions. PNG is accepted at the Collector and normalised to
+    # JPEG immediately afterwards (see services/image_normalizer.py), because
+    # Adobe rejects PNG for photos but AI tools commonly emit it.
+    ALLOWED_EXTENSIONS: set[str] = {".jpg", ".jpeg", ".png"}
+    #: Extensions the Collector converts to JPEG on ingestion.
+    PNG_EXTENSIONS: set[str] = {".png"}
+    #: Where normalised JPEG copies are written. Kept separate from the inbox so
+    #: the uploaded original stays byte-for-byte intact as the audit source.
+    CONVERTED_DIR: Path = STORAGE_ROOT / "converted"
+    #: Quality for the PNG -> JPEG conversion. 100 keeps the result visually
+    #: lossless so the conversion cannot itself introduce an acceptance issue.
+    PNG_CONVERSION_QUALITY: int = 100
 
     # Colour space requirement
     REQUIRED_COLOR_SPACE: str = "sRGB"
@@ -161,7 +181,13 @@ class Settings(BaseSettings):
 
     @property
     def effective_llm_api_key(self) -> str:
-        """Gateway key, falling back to the legacy GEMINI_API_KEY."""
+        """Environment-level gateway key, falling back to the legacy GEMINI_API_KEY.
+
+        This is only one of three layers. Call
+        :func:`services.app_settings.resolve` to get the key a request should
+        actually use, because an operator-saved key in the Settings modal takes
+        precedence over this one.
+        """
         return self.LLM_API_KEY or self.GEMINI_API_KEY
 
 

@@ -1,5 +1,3 @@
-import axios from "axios";
-
 import type {
   AcceptanceReport,
   AdobeCategory,
@@ -12,9 +10,9 @@ import type {
   StageSummary,
 } from "./stages";
 import type { UpscaleOptions } from "./upscale";
+import { API_BASE_URL, api } from "./client";
 
-export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8100";
+export { API_BASE_URL, api };
 
 export type ImageStatus =
   | "PENDING"
@@ -112,22 +110,6 @@ export interface UploadTableResponse {
   items: UploadTableItem[];
   missing: string[];
 }
-
-const api = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 60000,
-});
-
-api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    const detail =
-      error?.response?.data?.detail ??
-      error?.message ??
-      "Unexpected network error.";
-    return Promise.reject(new Error(String(detail)));
-  }
-);
 
 export async function uploadImages(
   files: File[],

@@ -15,12 +15,21 @@ export interface StageUploaderProps {
   disabled?: boolean;
 }
 
+/** Extensions the Collector accepts. PNG is converted to JPEG on ingestion. */
+const ACCEPTED_EXTENSIONS = /\.(jpe?g|png)$/i;
+/** Subset that the backend rewrites, used only to explain the outcome. */
+const CONVERTED_EXTENSIONS = /\.png$/i;
+
 /**
  * Collector upload target.
  *
  * Uploading is the Collector's only action, so the target is a full-width panel
  * rather than a small drop box: it is the first thing the operator interacts
  * with and the panel is the largest hit area we can give them.
+ *
+ * PNG is accepted because most generative tools emit it; the backend converts
+ * it to a quality-100 JPEG during ingestion, so the operator never has to
+ * pre-convert anything by hand.
  */
 export function StageUploader({ onUploaded, disabled = false }: StageUploaderProps) {
   const [isDragging, setDragging] = useState(false);
@@ -35,28 +44,40 @@ export function StageUploader({ onUploaded, disabled = false }: StageUploaderPro
       if (!fileList || fileList.length === 0) return;
 
       const all = Array.from(fileList);
-      const jpegs = all.filter(
-        (file) => file.type === "image/jpeg" || /\.jpe?g$/i.test(file.name)
+      // Match on the name as well as the MIME type: a drag-and-drop from some
+      // file managers reports an empty or generic type for a valid image.
+      const accepted = all.filter(
+        (file) =>
+          file.type === "image/jpeg" ||
+          file.type === "image/png" ||
+          ACCEPTED_EXTENSIONS.test(file.name)
       );
 
-      if (jpegs.length === 0) {
-        setError("Only JPEG files (.jpg / .jpeg) are accepted.");
+      if (accepted.length === 0) {
+        setError("Only JPEG and PNG files (.jpg / .jpeg / .png) are accepted.");
         return;
       }
 
       setError(null);
       setMessage(
-        jpegs.length < all.length
-          ? `${all.length - jpegs.length} non-JPEG file(s) were skipped.`
+        accepted.length < all.length
+          ? `${all.length - accepted.length} unsupported file(s) were skipped.`
           : null
       );
       setUploading(true);
       setProgress(0);
 
       try {
-        const response = await uploadImages(jpegs, setProgress);
+        const response = await uploadImages(accepted, setProgress);
+        const pngCount = accepted.filter((file) =>
+          CONVERTED_EXTENSIONS.test(file.name)
+        ).length;
+        const conversionNote =
+          pngCount > 0
+            ? ` ${pngCount} PNG${pngCount === 1 ? " was" : "s were"} converted to JPEG.`
+            : "";
         setMessage(
-          `Uploaded ${response.count} image${response.count === 1 ? "" : "s"} to the Collector.`
+          `Uploaded ${response.count} image${response.count === 1 ? "" : "s"} to the Collector.${conversionNote}`
         );
         onUploaded(response.count);
       } catch (err) {
@@ -122,11 +143,11 @@ export function StageUploader({ onUploaded, disabled = false }: StageUploaderPro
 
         <div>
           <p className="text-sm font-medium text-navy-50">
-            {isUploading ? "Uploading…" : "Drop JPEGs here, or click to browse"}
+            {isUploading ? "Uploading…" : "Drop JPEGs or PNGs here, or click to browse"}
           </p>
           <p className="mt-1 text-xs text-navy-400">
-            Files land in the Collector and stay there until you push them to the OCR
-            Detector.
+            PNGs are converted to quality-100 JPEGs automatically, because Adobe
+            Stock accepts JPEG only for photos.
           </p>
         </div>
 
@@ -145,7 +166,7 @@ export function StageUploader({ onUploaded, disabled = false }: StageUploaderPro
       <input
         ref={inputRef}
         type="file"
-        accept="image/jpeg,.jpg,.jpeg"
+        accept="image/jpeg,image/png,.jpg,.jpeg,.png"
         multiple
         className="hidden"
         onChange={(event) => void handleFiles(event.target.files)}

@@ -1,10 +1,11 @@
 "use client";
 
-import { ChevronDown, Table2 } from "lucide-react";
+import { ChevronDown, Settings2, Table2 } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+import SettingsModal from "@/components/settings/SettingsModal";
 import { cn } from "@/lib/cn";
 import { ALL_STAGE_META } from "@/lib/stageMeta";
 
@@ -19,10 +20,14 @@ const UTILITY_ITEMS = [{ href: "/upload-table", label: "Upload Table", icon: Tab
  * Full-bleed (no `max-w-*`) and stage-driven: the seven stages are real routes,
  * not tabs. Below `lg` the stage strip collapses into a disclosure menu so the
  * header never wraps into two rows on small screens.
+ *
+ * The settings gear sits outside that menu so the endpoint configuration is
+ * reachable from every route at every breakpoint.
  */
 export default function NavBar() {
   const pathname = usePathname();
   const [isMenuOpen, setMenuOpen] = useState(false);
+  const [isSettingsOpen, setSettingsOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   // Close the compact menu whenever the route changes.
@@ -92,6 +97,18 @@ export default function NavBar() {
               </Link>
             );
           })}
+
+          {/* Endpoint configuration — reachable from every route and width. */}
+          <button
+            type="button"
+            onClick={() => setSettingsOpen(true)}
+            aria-label="Open system settings"
+            title="System settings"
+            className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-navy-300 transition-colors duration-150 hover:bg-navy-750/70 hover:text-navy-100"
+          >
+            <Settings2 className="h-3.5 w-3.5" aria-hidden />
+            <span className="hidden xl:inline">Settings</span>
+          </button>
 
           {/* Compact stage switcher below `lg`. */}
           <div className="relative lg:hidden" ref={menuRef}>
@@ -163,6 +180,11 @@ export default function NavBar() {
           </div>
         </div>
       </div>
+
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setSettingsOpen(false)}
+      />
     </header>
   );
 }

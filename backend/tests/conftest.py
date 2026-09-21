@@ -19,6 +19,21 @@ from database import Base, get_db  # noqa: E402
 from main import app  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def isolated_app_settings(tmp_path, monkeypatch):
+    """Point the runtime settings store at a per-test file.
+
+    Without this every test would read the developer's real
+    ``storage/app_settings.json``, so a locally saved endpoint or API key would
+    silently change what the LLM tests exercise.
+    """
+    from config import settings
+
+    store = tmp_path / "app_settings.json"
+    monkeypatch.setattr(settings, "APP_SETTINGS_PATH", store)
+    return store
+
+
 @pytest.fixture()
 def db_session_factory():
     """In-memory SQLite session factory isolated per test."""
@@ -59,13 +74,15 @@ def client(db_session_factory, monkeypatch, tmp_path):
     ready = tmp_path / "ready"
     refined = tmp_path / "refined"
     upscaled = tmp_path / "upscaled"
-    for directory in (inbox, thumbnails, ready, refined, upscaled):
+    converted = tmp_path / "converted"
+    for directory in (inbox, thumbnails, ready, refined, upscaled, converted):
         directory.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(settings, "INBOX_DIR", inbox)
     monkeypatch.setattr(settings, "THUMBNAILS_DIR", thumbnails)
     monkeypatch.setattr(settings, "READY_DIR", ready)
     monkeypatch.setattr(settings, "REFINED_DIR", refined)
     monkeypatch.setattr(settings, "UPSCALED_DIR", upscaled)
+    monkeypatch.setattr(settings, "CONVERTED_DIR", converted)
 
     # Upload is Stage 1 only and schedules no background work, so no audit
     # stubbing is needed here. Stage operations are dispatched explicitly by

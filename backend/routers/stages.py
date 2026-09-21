@@ -16,6 +16,7 @@ Endpoints are grouped by concern:
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
@@ -42,7 +43,7 @@ from schemas import (
 )
 from services import csv_export, upscaler
 from services.adobe_categories import all_categories, resolve_category
-from services.jobs import STATUS_RUNNING, JobItem, registry
+from services.jobs import STATUS_FAILED, STATUS_RUNNING, JobItem, registry
 from services.stage_registry import (
     STAGE_BY_VALUE,
     TERMINAL_STAGES,
@@ -69,10 +70,70 @@ STAGE_RUNNERS = {
     "gallery": stage_orchestrator.publish_records,
 }
 
-#: Stages whose runners accept the optional semantic/delay keyword arguments.
-#: ``upscale`` is handled separately below because its runner takes a validated
-#: ``options`` object instead, built from the Stage 3 panel's configuration.
-STAGES_WITH_OPTIONS = {"refine", "compatibility", "metadata"}
+#: Stages whose runners accept the optional ``use_semantic`` keyword.
+#:
+#: This is an explicit per-stage table rather than a single set, because passing
+#: a keyword a runner does not accept raises ``TypeError`` inside the background
+#: task - and FastAPI logs that without failing the request, so the job sat at
+#: "running" forever while every item stayed "pending". ``metadata`` does not
+#: run the semantic audit, so it must not be listed here.
+#: ``tests/test_stage_runner_signatures.py`` pins this table against the runners.
+STAGES_WITH_SEMANTIC = {"refine", "compatibility"}
+
+#: Stages whose runners accept ``delay_seconds`` (rate-limit pacing).
+STAGES_WITH_DELAY = {"metadata"}
+
+
+def _stage_kwargs(stage_key: str, request: StageRunRequest, job_id: str) -> dict:
+    """Build the keyword arguments for a stage runner.
+
+    Centralised so the table above and the dispatch below cannot disagree.
+    """
+    kwargs: dict = {"job_id": job_id}
+    if stage_key in STAGES_WITH_SEMANTIC:
+        kwargs["use_semantic"] = request.use_semantic
+    if stage_key in STAGES_WITH_DELAY:
+        kwargs["delay_seconds"] = request.delay_seconds
+    if stage_key == "upscale":
+        # Validated and clamped server-side; an unusable model name degrades to
+        # the default rather than failing the whole batch.
+        kwargs["options"] = (
+            request.upscale.model_dump(exclude_none=True) if request.upscale else None
+        )
+    return kwargs
+
+
+def _run_stage_job(
+    stage_key: str,
+    runner,
+    record_ids: list[str],
+    kwargs: dict,
+) -> None:
+    """Dispatch a stage runner, making a crash visible instead of silent.
+
+    FastAPI's ``BackgroundTasks`` logs a raised exception but leaves the request
+    already answered, so a runner that dies on its first line (a bad keyword, a
+    missing import) produced a job stuck at "running" with every item still
+    "pending" - which reads to the operator as "nothing happened". Catching here
+    marks the job failed so the UI shows a real error.
+    """
+    job_id = kwargs.get("job_id")
+    try:
+        runner(SessionLocal, record_ids, settings, **kwargs)
+    except Exception as exc:  # noqa: BLE001 - must not escape into the task runner
+        logger.exception("Stage '%s' crashed before completing", stage_key)
+        job = registry.get(job_id) if job_id else None
+        if job is None:
+            return
+        for item in job.items:
+            if item.status in ("pending", "running"):
+                item.status = "failed"
+                item.message = f"The stage could not start: {type(exc).__name__}: {exc}"
+                item.finished_at = time.time()
+        job.message = (
+            f"The {stage_key} stage failed to start. See the server log for the traceback."
+        )
+        registry.finish(job, STATUS_FAILED)
 
 
 def _get_record_or_404(db: Session, record_id: str) -> ImageRecord:
@@ -206,20 +267,14 @@ async def run_stage(
     if missing:
         job.message = f"{len(missing)} record(s) were not found and were skipped."
 
-    kwargs: dict = {"job_id": job.id}
-    if stage_key in STAGES_WITH_OPTIONS:
-        kwargs["use_semantic"] = request.use_semantic
-    if stage_key == "metadata":
-        kwargs["delay_seconds"] = request.delay_seconds
-    if stage_key == "upscale":
-        # Validated and clamped server-side; an unusable model name degrades to
-        # the default rather than failing the whole batch.
-        kwargs["options"] = (
-            request.upscale.model_dump(exclude_none=True) if request.upscale else None
-        )
+    kwargs = _stage_kwargs(stage_key, request, job.id)
 
     background_tasks.add_task(
-        runner, SessionLocal, [record.id for record in ordered], settings, **kwargs
+        _run_stage_job,
+        stage_key,
+        runner,
+        [record.id for record in ordered],
+        kwargs,
     )
 
     return JobResponse(**job.to_dict())
