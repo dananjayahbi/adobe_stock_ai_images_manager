@@ -10,6 +10,7 @@ import { cn } from "@/lib/cn";
 import { ALL_STAGE_META } from "@/lib/stageMeta";
 
 import PublishedGalleryLink from "./shell/PublishedGalleryLink";
+import ResearchLink from "./shell/ResearchLink";
 import StageProgressRail from "./shell/StageProgressRail";
 
 /** Routes that are not stages but still deserve a nav entry. */
@@ -81,6 +82,11 @@ export default function NavBar() {
           {/* The published gallery is the endpoint of the pipeline, so it is
               reachable from every route rather than only from Stage 7. */}
           <PublishedGalleryLink />
+
+          {/* Prompt Research sits *before* Stage 1 — it writes the prompts the
+              Collector's library holds — so it belongs beside the utility
+              links, not inside the stage rail. */}
+          <ResearchLink />
 
           {UTILITY_ITEMS.map((item) => {
             const isActive = pathname.startsWith(item.href);

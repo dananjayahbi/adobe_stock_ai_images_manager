@@ -265,6 +265,147 @@ def test_connection(
     return {"ok": True, "model": cfg.model, "reply": reply.strip()[:80]}
 
 
+#: Fields of a streamed delta that carry text worth forwarding, in the order the
+#: UI should render them. ``reasoning_content`` is DeepSeek's chain of thought;
+#: ``reasoning`` is the OpenAI-compatible alias other providers use.
+_STREAM_TEXT_FIELDS = ("reasoning_content", "reasoning", "content")
+
+
+def stream_chat(
+    messages: list[dict],
+    *,
+    temperature: float = 0.3,
+    max_tokens: int | None = None,
+    timeout_seconds: int | None = None,
+    model: str | None = None,
+):
+    """Stream a text chat completion, yielding reasoning and content deltas.
+
+    Yields ``("thinking", text)`` for the model's hidden chain of thought and
+    ``("content", text)`` for its visible answer, in arrival order. The caller
+    renders the two differently — thinking is what the operator inspects and
+    collapses, content is the answer.
+
+    Why this exists rather than reusing :func:`chat_json`: the research page has
+    to show the model *as it works*. A buffered call would leave the UI blank for
+    a minute and then dump the whole answer at once, which is exactly the
+    "black box" the feature is meant to replace.
+
+    Only the standard library is used, so the streaming path adds no dependency
+    and shares :func:`_completion_url`, :func:`_post`'s header shape, and the
+    settings resolution with the buffered path.
+
+    Args:
+        messages: OpenAI-style ``[{"role": …, "content": …}]`` list.
+        temperature: Sampling temperature.
+        max_tokens: Completion budget; sized from the context window when omitted.
+        timeout_seconds: Request timeout; defaults to the configured value.
+        model: Override the configured model.
+
+    Yields:
+        ``(kind, text)`` tuples with ``kind`` in ``{"thinking", "content"}``.
+
+    Raises:
+        LLMTruncatedError: when the stream finished without producing any content
+            — the signature of a reasoning model whose chain of thought consumed
+            the whole budget. Raised as a *type* rather than left for the caller to
+            infer, because the caller cannot otherwise tell it apart from a
+            connection fault, and the two need opposite handling.
+        LLMError: when no key is configured or the endpoint cannot be read.
+    """
+    cfg = app_settings.resolve()
+    if not cfg.api_key:
+        raise LLMError(
+            "No LLM API key configured. Open Settings and enter one, or set "
+            "LLM_API_KEY in the environment."
+        )
+
+    effective_model = model or cfg.model
+    prompt_text = "\n".join(
+        str(message.get("content", "")) for message in messages if message.get("content")
+    )
+    if max_tokens is None:
+        max_tokens = llm_budget.completion_token_budget(
+            cfg.context_window, prompt=prompt_text, model=effective_model
+        )
+
+    body = {
+        "model": effective_model,
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "stream": True,
+    }
+    request = urllib.request.Request(
+        _completion_url(cfg.base_url),
+        data=json.dumps(body).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {cfg.api_key}",
+            "Accept": "text/event-stream",
+        },
+        method="POST",
+    )
+
+    timeout = timeout_seconds or cfg.timeout_seconds
+    try:
+        response = urllib.request.urlopen(request, timeout=timeout)
+    except urllib.error.HTTPError as exc:
+        detail = ""
+        try:
+            detail = exc.read().decode()[:300]
+        except Exception:  # noqa: BLE001
+            pass
+        raise LLMError(f"HTTP {exc.code}: {detail}") from exc
+    except Exception as exc:  # noqa: BLE001
+        raise LLMError(f"{type(exc).__name__}: {exc}") from exc
+
+    try:
+        saw_content = False
+        for raw_line in response:
+            line = raw_line.decode("utf-8", "replace").strip()
+            if not line or not line.startswith("data:"):
+                # SSE comments and keep-alive blank lines are ignored; some
+                # gateways send them between deltas.
+                continue
+            payload = line[len("data:") :].strip()
+            if payload == "[DONE]":
+                break
+            try:
+                envelope = json.loads(payload)
+            except json.JSONDecodeError:
+                logger.debug("Skipping unparseable stream chunk: %s", payload[:120])
+                continue
+
+            choices = envelope.get("choices") or []
+            if not choices:
+                continue
+            delta = choices[0].get("delta") or {}
+            for field in _STREAM_TEXT_FIELDS:
+                text = delta.get(field)
+                if not text:
+                    continue
+                kind = "content" if field == "content" else "thinking"
+                if kind == "content":
+                    saw_content = True
+                yield kind, text
+    finally:
+        try:
+            response.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    if not saw_content:
+        # The stream completed cleanly but carried no answer. Reported as a
+        # truncation because that is what it is in practice: a reasoning model
+        # that spent the whole budget thinking. Left to the caller as a bare
+        # "no output", it was indistinguishable from a dead endpoint.
+        raise LLMTruncatedError(
+            "The stream ended without any answer content. The model most likely "
+            "used its whole token budget on reasoning."
+        )
+
+
 def chat_json(
     image_path: str | Path,
     prompt: str,

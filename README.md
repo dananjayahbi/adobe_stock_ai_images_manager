@@ -106,6 +106,14 @@ cd backend
 | `PATCH` | `/api/prompts/{id}` | Partial update; also marks a prompt used/draft/archived by hand. |
 | `DELETE` | `/api/prompts/{id}` | Delete a prompt, keeping and unbinding its images. |
 | `POST` | `/api/prompts/{id}/bind` | Bind images to a prompt, or unbind (`{"record_ids": [...], "unbind": true}`). |
+| `GET` | `/api/research/settings` | Prompt Research vocabulary: modes, the default style instruction, the house rules, and the confidence disclaimer. |
+| `GET` | `/api/research/runs` | List research threads, newest first. |
+| `POST` | `/api/research/runs` | Start a thread and run the first turn. `stream_first: true` creates it without running, so the caller can stream. |
+| `GET` | `/api/research/runs/{id}` | One thread, with its stored transcript for replay. |
+| `POST` | `/api/research/runs/{id}/messages` | Continue a thread (buffered). The confidence buttons post here. |
+| `GET` | `/api/research/runs/{id}/stream` | Continue a thread, streamed as Server-Sent Events. |
+| `POST` | `/api/research/runs/{id}/accept` | Push accepted prompts into the Prompt Library as drafts. |
+| `DELETE` | `/api/research/runs/{id}` | Delete a thread; prompts already accepted are kept. |
 | `GET` | `/thumbnails/{filename}` | Static thumbnail images. |
 | `GET` | `/health` | Liveness probe. |
 
@@ -129,7 +137,156 @@ endpoint reports both, and they legitimately disagree:
 | --- | --- |
 | `/` | Pipeline dashboard: upload, live QC status, batch approve. |
 | `/gallery` | Masonry gallery of staged assets — usage filters, multi-select, ZIP download, bulk delete, and "Generate upload table". |
+| `/research` | Prompt Research: an agentic chat workspace that researches a niche and writes generation prompts. |
 | `/upload-table` | Copy/paste-ready title/description/keyword rows with image previews, opened in a new tab from the gallery. |
+
+## Prompt Research
+
+Reachable from the header on every route. It sits *before* Stage 1: the prompts it
+produces are what the Collector's Prompt Library holds and what the images are
+generated from.
+
+| Mode | What it does |
+| --- | --- |
+| **Static** | A hint in, a fully specified prompt out. No web research. |
+| **Batch** | A niche plus a count in, a set of prompts out — each describing a different image, with overlaps flagged before you save. |
+| **Research** | The agent searches the web, checks how crowded the niche is, then writes researched prompts. |
+| **Find ideas** | The agent proposes niches for you to choose from. It writes no prompts until you pick one. |
+
+The agent is a small tool-using loop, not a single prompt:
+
+| Tool | Purpose |
+| --- | --- |
+| `web_search` | General web search. |
+| `fetch_page` | Read one page in full. |
+| `market_overview` | How heavily a niche is already supplied — marketplace share and the catalogue figure printed on a marketplace page. |
+| `check_restrictions` | Screen wording against Adobe's known-restrictions list. |
+| `check_prompt_similarity` | Flag drafted prompts too alike to be worth generating separately. |
+| `assess_validity` | Record the two confidence scores; the collective average is computed. |
+| `list_categories` | Adobe Stock category codes. |
+
+### The validity check
+
+When it is on, the agent researches the idea, records a scorecard, and **stops** —
+offering *Continue with these confidence rates* or *Research a better idea or
+niche*. Both buttons send an ordinary chat message, so a button press and a typed
+sentence take exactly the same path.
+
+Two things are deliberate:
+
+* **The gate suppresses prompt generation.** Asking for prompts while also asking
+  the agent to stop and await a decision is a contradiction; the model resolves it
+  badly. With the gate on there is no output-format block and no similarity tool,
+  because nothing has been drafted yet.
+* **The scores are labelled as a judgement, not a measurement.** Nothing in this
+  app has access to keyword volume, download counts or sales data, and search
+  results show what *already exists* rather than how many customers would buy it.
+  The disclaimer is rendered with the scorecard, not hidden in a tooltip.
+
+### The JSON output contract
+
+Every prompt-producing run answers in **one JSON object**, not prose with
+headings:
+
+```json
+{
+  "summary": "one sentence describing what was produced",
+  "prompts": [
+    {
+      "title": "short human label",
+      "body": "the full generation prompt paragraph, ending with --ar 16:9",
+      "tags": ["2-4 short topical tags"],
+      "category": 1,
+      "notes": "optional one-line note for the operator"
+    }
+  ]
+}
+```
+
+A schema rather than a delimiter, for three reasons:
+
+* **The fields arrive labelled.** The title, tags and category no longer have to
+  be inferred from prose, and they are carried all the way into the Prompt
+  Library when the prompt is accepted.
+* **`json.dumps` escapes newlines.** The payload survives a stored transcript and
+  an SSE frame without a second parsing convention.
+* **A missing field is a missing key** rather than a silently truncated
+  paragraph.
+
+The parser reads the object by **brace matching**, not a regex, because `{` is
+legitimate prompt text. A ```json fence, prose around the object, or a bare
+string entry are all tolerated; an invented category code is dropped *and*
+reported, because Adobe's CSV import rejects a code it does not know. If the
+model ignores the contract entirely, the parser falls back to the older delimited
+and paragraph paths — and **announces the fallback**, so a guess is never
+presented as structured output.
+
+Because the answer is a machine payload, the run stores a **rendered** version of
+it (the summary plus the prompt bodies) rather than the raw JSON, and the live
+transcript shows the reasoning and tool steps streaming while the payload itself
+arrives as parsed cards.
+
+The contract is enforced on the way back too. Protocol markup is **never**
+streamed into the transcript, in any mode: a turn's content stops being streamed
+the moment it reveals itself to be a tool call, with a short hold-back so a marker
+split across two deltas cannot leak its first half. That check is mode-independent
+because the validity gate makes `wants_prompts` false, and an earlier version tied
+the streaming decision to that flag — so the flagship mode streamed its raw
+`<tool_call>{…` markup as the agent's answer.
+
+### Watching a run
+
+A research turn can legitimately take a minute, so a bare spinner is not enough.
+The transcript shows the model's reasoning (collapsed, and collapsible) and one
+row per tool call with its arguments and result as they arrive; the composer
+reports what is actually happening — *Thinking…*, *Running web_search — …*,
+*Writing the answer…* — derived from the stream rather than from a timer.
+
+Two details are worth knowing if you change this code:
+
+* **The turn being streamed has no assistant message yet.** It is created only
+  when the turn finishes, so live activity must render outside the message list.
+  Rendering it only inside an assistant message hid the whole first turn.
+* **A silent turn is retried, then finalised — not discarded.** A reasoning model
+  routinely emits a thinking-only turn, and a run that already gathered evidence
+  must not be thrown away because the final phrasing turn misbehaved. If nothing
+  usable can be recovered from the transcript, the tools are withheld and the
+  model is asked once more for a conclusion, because a run that shows its research
+  and then ends in silence is the same defect as a stalled spinner.
+
+Two storage details are worth knowing, because both fail *silently*:
+
+* **`result` is a JSON column.** It must receive plain data. Storing the
+  `ValidityView` dataclass that `validity.describe` returns raises
+  `TypeError: … not JSON serializable` — and because that happens inside the
+  stream's `finally` block, the turn is lost and the conversation stays `RUNNING`
+  forever. It only bit the *success* path of the validity gate, because a run with
+  no assessment stores `None`, which serialises fine.
+* **A persistence failure is recorded, not swallowed.** The run is marked
+  `FAILED` with the reason, so the thread shows what happened instead of claiming
+  a turn is still running.
+
+### Two search providers, because one is not enough
+
+DuckDuckGo's lite front-end answers a scripted query, but it rate-limits
+aggressively — a burst of eight queries got the anti-bot challenge on all eight,
+and the block persisted. Google News RSS is tried as a fallback: no key, a stable
+documented shape, and dated, attributed articles. A fallback result is **marked as
+one** and the tool text says news coverage is not marketplace catalogue data.
+
+A failure is never rendered as an empty result set. If every provider fails, the
+model is told explicitly not to conclude that the niche has no competition —
+otherwise a blocked search would look like an underserved market.
+
+### How the agent calls tools
+
+The configured gateway does not support OpenAI tool calling (verified: sending
+`tools` returns `finish_reason: "stop"`, `tool_calls: null`, and the intended call
+leaked into `content` as DeepSeek's internal `DSML` markup). So tool calls are
+exchanged as **text** and parsed from three shapes: the requested
+`<tool_call>{"name": …, "arguments": {…}}</tool_call>` envelope, fenced JSON, and
+the DSML markup. Prose that merely mentions a tool is not read as a call — that
+would stop the loop from ever terminating.
 
 ## Delivery: filenames, forced acceptance, CSV & ZIP
 

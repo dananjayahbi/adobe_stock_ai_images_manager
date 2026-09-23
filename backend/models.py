@@ -253,3 +253,66 @@ class ImageRecord(Base):
 
         return effective_download_name(self)
 
+
+class ResearchRunStatus(str, enum.Enum):
+    """Lifecycle of one Prompt Research conversation."""
+
+    RUNNING = "RUNNING"
+    COMPLETED = "COMPLETED"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class ResearchRun(Base):
+    """One Prompt Research conversation.
+
+    A conversation is a *durable* object rather than process state, because the
+    whole point of the feature is that the operator returns to a research thread
+    — to pick one of the proposed ideas, to answer "continue with these
+    confidence rates", or to accept the prompts it produced. An in-memory store
+    (like the stage job registry) would lose the thread on every restart and the
+    research would have to be repeated.
+
+    ``messages`` holds the conversation and ``events`` the streamed transcript
+    (thinking, tool steps, sources, scores) as JSON, so a reloaded page replays
+    what actually happened instead of showing a bare result. Both are JSON rather
+    than child tables: they are read whole, never queried across, and a run's
+    transcript is a document.
+    """
+
+    __tablename__ = "research_runs"
+    __table_args__ = (
+        Index("ix_research_runs_created_at", "created_at"),
+        Index("ix_research_runs_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    #: The operator's opening message, kept separate so the thread list can show
+    #: it without parsing the message document.
+    seed_message: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    mode: Mapped[str] = mapped_column(String(20), nullable=False, default="static")
+    status: Mapped[ResearchRunStatus] = mapped_column(
+        Enum(ResearchRunStatus), default=ResearchRunStatus.RUNNING, nullable=False
+    )
+
+    #: ``[{"role", "content", "created_at"}]`` — what the model is shown.
+    messages: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    #: The streamed transcript, replayed by the UI when the page reloads.
+    events: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    #: The run's derived result: prompts, sources, confidence, notices.
+    result: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    #: The settings a run used, so a reopened conversation shows the same style
+    #: instruction it was researched with.
+    settings: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    #: Set when the run failed, so the thread shows why instead of an empty thread.
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+

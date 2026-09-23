@@ -644,3 +644,114 @@ class PromptBindResponse(BaseModel):
     #: Records that were already bound elsewhere and were re-pointed.
     rebound: list[str] = []
     prompt: PromptResponse
+
+
+# --------------------------------------------------------------------------- #
+# Prompt Research (agentic prompt research workspace)
+# --------------------------------------------------------------------------- #
+
+class ResearchRunRequest(BaseModel):
+    """Start a research conversation.
+
+    ``mode`` selects the objective (see ``services.research.agent``); ``count`` is
+    the number of prompts wanted, used only by the prompt-producing modes.
+    ``style_instruction`` is the operator's editable house standard — when
+    omitted, the built-in default is used so a run never starts with no style.
+
+    ``stream_first`` creates the conversation **without** running the opening turn,
+    so the caller can stream it. A buffered first turn would leave the live view
+    blank for the whole first minute, which is the opposite of the feature.
+    """
+
+    message: str
+    mode: str = "static"
+    count: int = 1
+    style_instruction: Optional[str] = None
+    validity_check: bool = False
+    stream_first: bool = False
+
+
+class ResearchFollowUpRequest(BaseModel):
+    """Continue an existing conversation.
+
+    The two confidence-score buttons send their message through this endpoint, so
+    a click and a typed sentence follow exactly the same path — the agent does
+    not need to distinguish them.
+    """
+
+    message: str
+    count: Optional[int] = None
+    style_instruction: Optional[str] = None
+    validity_check: Optional[bool] = None
+
+
+class ResearchRunSummary(BaseModel):
+    """A conversation as it appears in the thread list."""
+
+    id: str
+    title: str
+    seed_message: str
+    mode: str
+    status: str
+    error: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+    #: How many prompts this run produced, so the list can show it.
+    prompt_count: int = 0
+    #: Whether the run recorded a confidence assessment.
+    has_validity: bool = False
+
+
+class ResearchRunResponse(BaseModel):
+    """A full conversation, including its transcript for replay."""
+
+    id: str
+    title: str
+    seed_message: str
+    mode: str
+    status: str
+    messages: list[dict[str, Any]] = []
+    events: list[dict[str, Any]] = []
+    result: dict[str, Any] = {}
+    settings: dict[str, Any] = {}
+    error: Optional[str] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class ResearchRunListResponse(BaseModel):
+    """All conversations, newest first."""
+
+    items: list[ResearchRunSummary]
+    total: int
+
+
+class ResearchAcceptRequest(BaseModel):
+    """Push accepted prompts from a run into the Prompt Library."""
+
+    prompts: list[str]
+    tags: Optional[list[str]] = None
+    negative_prompt: Optional[str] = None
+    #: Optional per-prompt metadata, positionally matching ``prompts``. Carries
+    #: the title, tags and category the JSON contract supplied, so they reach the
+    #: library instead of being thrown away at the last step.
+    details: Optional[list[dict[str, Any]]] = None
+
+
+class ResearchAcceptResponse(BaseModel):
+    """Which prompts were added, and which were already in the library."""
+
+    created: list[dict[str, Any]] = []
+    skipped: list[str] = []
+    count: int = 0
+
+
+class ResearchSettingsResponse(BaseModel):
+    """The research page's own defaults, so the UI never hard-codes them."""
+
+    modes: list[dict[str, Any]] = []
+    default_style_instruction: str = ""
+    house_rules: str = ""
+    max_prompts: int = 60
+    max_tool_calls: int = 10
+    disclaimer: str = ""
