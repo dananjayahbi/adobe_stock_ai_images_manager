@@ -208,6 +208,16 @@ class ImageRecord(Base):
     #: the three can never disagree.
     download_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
+    #: Upload filename proposed by the metadata model, including the extension.
+    #:
+    #: Separate from ``download_name`` on purpose. This one is a *proposal* made
+    #: at generation time (the model has just looked at the image and knows what
+    #: it shows, so it names it better than a truncated title can), while
+    #: ``download_name`` is the operator's decision. Keeping them apart means the
+    #: proposal can be reviewed and re-applied without any way for a model's
+    #: output to silently become the delivered filename.
+    suggested_filename: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     # Gallery usage tracking - set once the asset has been consumed/published.
     is_used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

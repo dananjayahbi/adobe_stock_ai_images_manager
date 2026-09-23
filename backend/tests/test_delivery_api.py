@@ -743,7 +743,12 @@ def test_bundle_reports_when_nothing_is_staged(client, make_record, tmp_path, mo
     response = client.post("/api/assets/bundle", json={"record_ids": [record_id]})
 
     assert response.status_code == 409
-    assert "staged files" in response.json()["detail"]
+    # The message must say *why* nothing can be staged, not just that it cannot:
+    # publishing is what creates the staged file, which is the whole reason the
+    # operator's "Zip + CSV" click failed.
+    detail = response.json()["detail"]
+    assert "staged file" in detail
+    assert "Publishing" in detail
 
 
 # --------------------------------------------------------------------------- #

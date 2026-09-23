@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import settings
 from database import Base, engine
+from services.metric_repair import run_metric_repairs
 from services.migrations import run_additive_migrations
 from services.storage import create_data_directories
 
@@ -22,6 +23,10 @@ async def lifespan(app: FastAPI):
     # Patch pre-existing databases with columns added after their creation.
     run_additive_migrations(engine)
     create_data_directories()
+    # Records written before the metrics were measured on the *deliverable* file
+    # carry the original upload's geometry and size. Repair them once; the pass
+    # is self-limiting, so later starts do nothing.
+    run_metric_repairs(engine)
     yield
     # Shutdown cleanup if needed
 

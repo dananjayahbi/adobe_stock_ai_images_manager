@@ -217,7 +217,11 @@ def _render(rows: list[list[str]]) -> str:
     return buffer.getvalue()
 
 
-def build_csv(records: list[ImageRecord]) -> CsvBuildResult:
+def build_csv(
+    records: list[ImageRecord],
+    *,
+    apply_names: bool = False,
+) -> CsvBuildResult:
     """Render records into an Adobe Stock CSV document.
 
     Applies Adobe's hard limits: at most :data:`MAX_ROWS` rows, and the encoded
@@ -227,6 +231,11 @@ def build_csv(records: list[ImageRecord]) -> CsvBuildResult:
 
     Args:
         records: Records to include, in the order they should appear.
+        apply_names: When true, the batch-resolved names are written onto the
+            records as well as into the rows. The delivery export sets this so
+            the ZIP entry, the CSV row and the response all name the same file;
+            a preview leaves it false so asking what a CSV *would* look like
+            cannot change a record.
 
     Returns:
         A :class:`CsvBuildResult` with the CSV text and any warnings. The
@@ -237,6 +246,7 @@ def build_csv(records: list[ImageRecord]) -> CsvBuildResult:
     overflowed: list[str] = []
     rows: list[list[str]] = []
     row_ids: list[str] = []
+    row_records: list[ImageRecord] = []
 
     for index, record in enumerate(records):
         if len(rows) >= MAX_ROWS:
@@ -255,12 +265,25 @@ def build_csv(records: list[ImageRecord]) -> CsvBuildResult:
 
         rows.append(row)
         row_ids.append(record.id)
+        row_records.append(record)
         warnings.extend(row_warnings)
 
     # Adobe matches rows to files by name, so two identical Filename values would
-    # make one of them unreachable (and one asset silently un-described). Names
-    # are de-duplicated across the whole document, not per row, because the
-    # collision only exists in the context of the batch being uploaded.
+    # make one of them unreachable (and one asset silently un-described).
+    #
+    # The suffix is carved out of the stem, so when a title-derived name already
+    # fills the 30-character budget the marked row is clipped one word shorter:
+    #
+    #   ``fleet-of-autonomous-transp.jpg``  (first)
+    #   ``fleet-of-autonomous-tran-2.jpg``  (collision)
+    #
+    # That is a real limitation of a hard 30-character cap with no identifier to
+    # disambiguate on, and it is preferable to the alternative it replaced - the
+    # old derivation appended a slice of the record id to *every* truncated name
+    # (``futuristic-automat-b2d58dd.jpg``), which put a meaningless code in the
+    # operator's deliverable. Rebuilding the shorter name from the title was tried
+    # and is provably unreachable: the marked stem is clipped to the *same* budget
+    # as the unmarked one, so it is never shorter and there is no marker to detect.
     unique_names = asset_naming.deduplicate([row[0] for row in rows])
     for row, name in zip(rows, unique_names):
         if row[0] != name:
@@ -268,6 +291,12 @@ def build_csv(records: list[ImageRecord]) -> CsvBuildResult:
                 f"{row[0]}: renamed to {name} to keep filenames unique in this CSV."
             )
             row[0] = name
+
+    # Every reader of this batch - the CSV row, the ZIP entry, the API response -
+    # must resolve the same string, so the batch-resolved names are pinned on the
+    # records before anyone else reads them.
+    if apply_names:
+        asset_naming.patch_download_names(row_records, unique_names)
 
     # Enforce the 1 MB ceiling by dropping whole rows from the tail. Each probe
     # re-renders, which is cheap relative to the network round trip that a

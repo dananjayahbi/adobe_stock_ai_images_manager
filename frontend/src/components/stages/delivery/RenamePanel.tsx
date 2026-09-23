@@ -63,7 +63,11 @@ export function RenamePanel({
   useEffect(() => {
     const next: Record<string, string> = {};
     for (const record of records) {
-      next[record.id] = record.download_name ?? "";
+      // Prefer the operator's own name, then the model's proposal made while
+      // looking at the image, and only then an empty field. The model's proposal
+      // is what the operator most likely wants, and showing it as the starting
+      // draft is what makes "apply these names" a one-click action.
+      next[record.id] = record.download_name ?? record.suggested_filename ?? "";
     }
     setDrafts(next);
     setSuggestions({});
@@ -176,6 +180,9 @@ export function RenamePanel({
         {records.map((record) => {
           const suggested = suggestions[record.id];
           const value = drafts[record.id] ?? "";
+          // The model's own proposal for this record, distinct from a name
+          // rebuilt from the title by the button above.
+          const fromModel = record.suggested_filename ?? "";
           return (
             <li
               key={record.id}
@@ -205,9 +212,14 @@ export function RenamePanel({
                     "focus:border-accent-500/70 focus:outline-none focus:ring-1 focus:ring-accent-500/40"
                   )}
                 />
-                {suggested && value === suggested ? (
+                {fromModel && value === fromModel ? (
                   <span className="shrink-0 rounded-full border border-accent-500/40 bg-accent-500/10 px-2 py-0.5 text-[10px] font-medium text-accent-200">
-                    proposed
+                    from the model
+                  </span>
+                ) : null}
+                {suggested && value === suggested ? (
+                  <span className="shrink-0 rounded-full border border-navy-600/50 bg-navy-800/40 px-2 py-0.5 text-[10px] font-medium text-navy-300">
+                    from the title
                   </span>
                 ) : null}
                 <span className="shrink-0 text-[10px] tabular-nums text-navy-500">

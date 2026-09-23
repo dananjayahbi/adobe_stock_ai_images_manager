@@ -31,6 +31,10 @@ class RecordResponse(BaseModel):
     generated_keywords: Optional[list[str]] = None
     #: Operator-chosen upload filename. NULL means "derive it from the title".
     download_name: Optional[str] = None
+    #: Upload filename proposed by the metadata model at generation time.
+    #: Separate from ``download_name`` because it is a proposal, not a decision:
+    #: the operator applies it (one record or a whole batch) or ignores it.
+    suggested_filename: Optional[str] = None
     #: The name this asset is uploaded under — the value the CSV Filename column
     #: carries. Sent so the UI can show the same name the CSV will contain rather
     #: than the raw upload filename, which is a different string.

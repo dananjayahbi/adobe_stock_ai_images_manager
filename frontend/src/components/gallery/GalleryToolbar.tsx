@@ -3,14 +3,19 @@
 import { CheckCircle2, Circle, Download, Table, Trash2 } from "lucide-react";
 
 import CsvExportActions from "@/components/stages/delivery/CsvExportActions";
-import type { UsageFilter } from "@/lib/api";
-import type { StatusScope } from "./useGalleryRecords";
+import RenameBar from "@/components/stages/delivery/RenameBar";
+import type { ImageRecord, UsageFilter } from "@/lib/api";
+import {
+  GALLERY_SCOPES,
+  GALLERY_USAGE_FILTERS,
+  type GalleryScope,
+} from "@/lib/galleryFilters";
 
 interface GalleryToolbarProps {
   usageFilter: UsageFilter;
   onUsageFilterChange: (value: UsageFilter) => void;
-  statusScope: StatusScope;
-  onStatusScopeChange: (value: StatusScope) => void;
+  statusScope: GalleryScope;
+  onStatusScopeChange: (value: GalleryScope) => void;
   counts: Record<UsageFilter, number>;
   selectedCount: number;
   visibleCount: number;
@@ -23,20 +28,18 @@ interface GalleryToolbarProps {
   onBulkDelete: () => void;
   /** Ids of the selected records, for the CSV/bundle actions. */
   selectedIds: string[];
+  /** The selected records themselves, for the naming actions. */
+  selectedRecords: ImageRecord[];
   onCsvError: (message: string | null) => void;
   onCsvNotice: (message: string | null) => void;
+  /** Refresh the list after the names change, so the new names show at once. */
+  onNamesApplied: () => Promise<void> | void;
 }
 
-const USAGE_FILTERS: { key: UsageFilter; label: string }[] = [
-  { key: "unused", label: "Unused" },
-  { key: "used", label: "Used" },
-  { key: "all", label: "All" },
-];
+const USAGE_FILTERS: { key: UsageFilter; label: string }[] =
+  GALLERY_USAGE_FILTERS;
 
-const SCOPES: { key: StatusScope; label: string }[] = [
-  { key: "ready", label: "Upload-ready" },
-  { key: "all", label: "All states" },
-];
+const SCOPES: { key: GalleryScope; label: string; hint: string }[] = GALLERY_SCOPES;
 
 /** Filter chips plus the bulk-action bar for the gallery. */
 export default function GalleryToolbar({
@@ -55,8 +58,10 @@ export default function GalleryToolbar({
   onGenerateTable,
   onBulkDelete,
   selectedIds,
+  selectedRecords,
   onCsvError,
   onCsvNotice,
+  onNamesApplied,
 }: GalleryToolbarProps) {
   const hasSelection = selectedCount > 0;
   const allSelected = visibleCount > 0 && selectedCount >= visibleCount;
@@ -85,13 +90,14 @@ export default function GalleryToolbar({
 
         <span className="mx-1 h-5 w-px bg-navy-800" aria-hidden />
 
-        {SCOPES.map(({ key, label }) => {
+        {SCOPES.map(({ key, label, hint }) => {
           const isActive = statusScope === key;
           return (
             <button
               key={key}
               type="button"
               onClick={() => onStatusScopeChange(key)}
+              title={hint}
               className={`rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors ${
                 isActive
                   ? "border-violet-500 bg-violet-500/15 text-violet-300"
@@ -156,11 +162,25 @@ export default function GalleryToolbar({
           they are the *delivery* step, and the operator reaches for them when
           the batch is final, not while triaging. The gallery exports published
           assets, so `onlyReady={false}` keeps the server's ready-only filter
-          from silently emptying the CSV. */}
+          from silently emptying the CSV.
+
+          Naming belongs in the same bar, because it is the step immediately
+          before the CSV: Adobe matches rows to files by name, so the names have
+          to be settled before the export, not after it. This is where the
+          operator takes the batch from, so the one-click "use the model's
+          names" action has to be here and not only on the Metadata page. */}
       <div className="flex flex-wrap items-center gap-2 rounded-xl border border-navy-800 bg-navy-900/50 px-3 py-2">
         <span className="text-[11px] font-medium uppercase tracking-wide text-navy-400">
           Adobe delivery
         </span>
+        <RenameBar
+          records={selectedRecords}
+          disabled={isBusy}
+          onError={onCsvError}
+          onNotice={onCsvNotice}
+          onApplied={onNamesApplied}
+        />
+        <span className="h-4 w-px bg-navy-800" aria-hidden />
         <CsvExportActions
           selectedIds={selectedIds}
           onlyReady={false}

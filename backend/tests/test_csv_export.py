@@ -324,14 +324,35 @@ def test_build_row_filenames_respect_adobe_length_cap():
 
 
 def test_build_row_filenames_stay_unique_after_truncation():
-    """Two long titles that share a prefix must not collapse to one filename."""
-    shared = "a beautifully lit mountain landscape scene with soft golden "
-    left, _ = build_row(_record(id="aaaaaaaa-1111", generated_title=shared + "light"))
-    right, _ = build_row(_record(id="bbbbbbbb-2222", generated_title=shared + "haze"))
+    """Two long titles that share a prefix must not collapse to one filename.
 
-    assert left[0] != right[0]
-    assert len(left[0]) <= MAX_FILENAME_LENGTH
-    assert len(right[0]) <= MAX_FILENAME_LENGTH
+    Uniqueness is a property of the **batch**, not of a single row: the name is
+    derived from the title alone (no record id mixed in), so two records with
+    titles sharing a long prefix necessarily derive the same truncated name. What
+    must not happen is that both are *exported* under it, so the guarantee is
+    asserted on the document - which is also where Adobe reads it from.
+
+    Asserting it per row would require the row builder to know the other rows,
+    which is exactly the coupling that put a meaningless record-id fragment into
+    every truncated filename.
+    """
+    shared = "a beautifully lit mountain landscape scene with soft golden "
+    left = _record(id="aaaaaaaa-1111", generated_title=shared + "light")
+    right = _record(id="bbbbbbbb-2222", generated_title=shared + "haze")
+
+    result = build_csv([left, right])
+    filenames = [
+        line.split(",")[0]
+        for line in result.csv_text.splitlines()[1:]
+        if line.strip()
+    ]
+
+    assert len(filenames) == 2
+    assert len(set(filenames)) == 2
+    assert all(len(name) <= MAX_FILENAME_LENGTH for name in filenames)
+    assert all(name.endswith(".jpg") for name in filenames)
+    # And the substitution is reported rather than silent.
+    assert any("renamed to" in warning for warning in result.warnings)
 
 
 def test_build_csv_stops_at_adobe_row_limit():

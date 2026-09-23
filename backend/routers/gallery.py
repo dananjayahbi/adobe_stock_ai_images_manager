@@ -272,7 +272,7 @@ async def build_upload_table(
 
     base_url = str(http_request.base_url).rstrip("/")
     items = [
-        build_upload_row(by_id[rid], base_url, disambiguator=rid)
+        build_upload_row(by_id[rid], base_url)
         for rid in request.record_ids
         if rid in by_id
     ]

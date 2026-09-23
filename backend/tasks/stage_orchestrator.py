@@ -31,6 +31,7 @@ from services import (
     gemini_auditor,
     gemini_metadata,
     ocr_scanner,
+    record_metrics,
     upscaler,
 )
 from services.acceptance.scorer import AcceptanceConfig
@@ -375,6 +376,12 @@ def run_upscale_stage(
                 else:
                     if result.output_path and result.backend != upscaler.BACKEND_SKIPPED:
                         record.working_path = result.output_path
+                        # The delivered file just changed, so the reported
+                        # geometry must follow it. Measuring only at ingestion is
+                        # what made an 8.2 MP asset report 1.06 MP - the original
+                        # upload's dimensions - and look like the upscale had
+                        # shrunk it.
+                        record_metrics.refresh_delivery_metrics(record, cfg)
                     _set_stage(
                         record,
                         PipelineStage.UPSCALED,
@@ -474,6 +481,10 @@ def run_refine_stage(
 
                 if result.output_path:
                     record.working_path = result.output_path
+                    # A refine pass can change the geometry too (and always
+                    # rewrites the file), so the delivered metrics are re-measured
+                    # rather than left describing the pre-refine file.
+                    record_metrics.refresh_delivery_metrics(record, cfg)
                 record.refine_passes = result.passes
                 if result.report is not None:
                     record.acceptance_report = result.report.to_dict()
@@ -694,6 +705,10 @@ def run_metadata_stage(
                 record.generated_description = metadata.get("description") or None
                 record.generated_keywords = metadata.get("keywords") or []
                 record.category = metadata.get("category")
+                # The model named the asset while looking at it. Stored as a
+                # *proposal* only - it never becomes the delivered filename until
+                # the operator applies it - so a batch can be reviewed first.
+                record.suggested_filename = metadata.get("suggested_filename") or None
 
                 _set_stage(
                     record,
@@ -703,6 +718,7 @@ def run_metadata_stage(
                         "keyword_count": len(record.generated_keywords or []),
                         "category": record.category,
                         "generated_at": utcnow().isoformat(),
+                        "suggested_filename": record.suggested_filename,
                     },
                 )
 
@@ -850,6 +866,7 @@ def build_metadata_csv(
     *,
     only_ready: bool = True,
     db: Session | None = None,
+    apply_names: bool = False,
 ) -> csv_export.CsvBuildResult:
     """Build the Adobe Stock CSV for the given records.
 
@@ -867,6 +884,10 @@ def build_metadata_csv(
     tests means the **real** database rather than the isolated one the request
     dependency injected — so a record created through the test client was
     invisible to its own CSV export.
+
+    ``apply_names`` pins the batch-resolved filenames onto the records, which a
+    *download* needs (so the ZIP entry matches its CSV row) but a *preview* must
+    not do.
     """
     owns_session = db is None
     session = db if db is not None else db_session_factory()
@@ -881,8 +902,15 @@ def build_metadata_csv(
                 )
             )
 
-        records = query.order_by(ImageRecord.created_at.asc()).all()
-        return csv_export.build_csv(records)
+        # Ordered, not merely sorted: `created_at` is stored at microsecond
+        # resolution and two records inserted in the same call share a value, so
+        # without the id tiebreak two identical requests could emit their rows in
+        # different orders. The CSV is a delivered artifact, so the same selection
+        # must produce the same file every time.
+        records = (
+            query.order_by(ImageRecord.created_at.asc(), ImageRecord.id.asc()).all()
+        )
+        return csv_export.build_csv(records, apply_names=apply_names)
     finally:
         # Only close a session this function opened.
         if owns_session:

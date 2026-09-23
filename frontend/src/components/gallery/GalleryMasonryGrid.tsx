@@ -15,6 +15,14 @@ interface GalleryMasonryGridProps {
   onToggleUsed: (record: ImageRecord) => void;
   onDownload: (record: ImageRecord) => void;
   onDelete: (record: ImageRecord) => void;
+  /**
+   * Copy for the empty state.
+   *
+   * Supplied by the page because the *cause* differs: an empty search result and
+   * an empty gallery need different advice, and a single generic "no images"
+   * message makes an active search look like an empty library.
+   */
+  emptyState?: { title: string; description: string };
 }
 
 /** CSS-columns masonry grid of gallery tiles. */
@@ -27,6 +35,7 @@ export default function GalleryMasonryGrid({
   onToggleUsed,
   onDownload,
   onDelete,
+  emptyState,
 }: GalleryMasonryGridProps) {
   if (isLoading && records.length === 0) {
     return (
@@ -39,9 +48,14 @@ export default function GalleryMasonryGrid({
 
   if (records.length === 0) {
     return (
-      <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-navy-800 py-16 text-navy-400">
+      <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-navy-800 px-6 py-16 text-center text-navy-400">
         <ImageOff className="h-7 w-7 text-navy-700" />
-        <p className="text-sm">No staged images match the current filter.</p>
+        <p className="text-sm text-navy-200">
+          {emptyState?.title ?? "No staged images match the current filter."}
+        </p>
+        {emptyState?.description ? (
+          <p className="max-w-md text-xs text-navy-500">{emptyState.description}</p>
+        ) : null}
       </div>
     );
   }

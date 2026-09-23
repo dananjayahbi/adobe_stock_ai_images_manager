@@ -171,10 +171,32 @@ def derive_name(record: ImageRecord, staged_path: Path | str | None = None) -> s
     """The name a record would get with no operator override.
 
     Wraps :func:`services.upload_table.build_download_name` so the derivation
-    rule (title → slug → cap, with the record id as a disambiguator) stays in one
-    place and this module only owns the *override* behaviour.
+    rule (title → slug → cap) stays in one place and this module only owns the
+    *override* behaviour.
+
+    Deliberately **no identifier is mixed into the name**. The name is a
+    deliverable the operator reads and uploads, so it is built from the title
+    alone; batch uniqueness is applied separately, and only where a collision
+    actually exists, by :func:`deduplicate`.
     """
-    return build_download_name(record, staged_path, disambiguator=record.id)
+    return build_download_name(record, staged_path)
+
+
+def patch_download_names(records: list[ImageRecord], names: list[str]) -> None:
+    """Set ``download_name`` on records in memory so every reader agrees.
+
+    The CSV build resolves a name in two places - once to emit the row, once
+    when the batch is de-duplicated. Those two must produce the same string, or
+    the Filename column names a file the ZIP does not contain.
+
+    Persisting the de-duplicated names instead would be wrong: uniqueness is a
+    property of *this batch*, so two records that collide here will legitimately
+    collide in a different export. The names are therefore pinned on the
+    in-memory objects and the caller decides whether to commit (a delivery export
+    flushes them; a read-only preview does not).
+    """
+    for record, name in zip(records, names):
+        record.download_name = name
 
 
 def effective_download_name(

@@ -23,6 +23,13 @@ function fields(record: ImageRecord): { label: string; value: string }[] {
       // that is the original upload's name, which never matches the CSV.
       value: record.upload_filename ?? record.download_name ?? record.filename,
     },
+    {
+      label: "Suggested filename",
+      // What the metadata model proposed while looking at the image. Shown as a
+      // separate field, never merged into the one above, so it is always clear
+      // which name is actually being delivered and which is only a proposal.
+      value: record.suggested_filename ?? "",
+    },
     { label: "Title", value: record.generated_title ?? "" },
     { label: "Description", value: record.generated_description ?? "" },
     { label: "Keywords", value: keywords.join(", ") },

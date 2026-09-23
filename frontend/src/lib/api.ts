@@ -48,6 +48,14 @@ export interface ImageRecord {
    */
   download_name: string | null;
   /**
+   * Upload filename proposed by the metadata model at generation time.
+   *
+   * Deliberately separate from `download_name`: this is a proposal the operator
+   * applies (per record or for a whole batch) or ignores. A model's output never
+   * becomes the delivered filename on its own.
+   */
+  suggested_filename: string | null;
+  /**
    * The name this asset is uploaded under — the value the CSV Filename column
    * carries. Distinct from `filename`, which is the original upload's name.
    */
@@ -151,15 +159,26 @@ export async function fetchRecords(params?: {
   queued?: StageKey | "none";
   /** Prompt id to filter by, or "none" for images with no source prompt. */
   promptId?: string | "none";
+  /**
+   * Restrict to these pipeline stages.
+   *
+   * Distinct from `status`: `status` is the QC verdict, `stage` is the pipeline
+   * position. "Browse published" asks by stage, because a record can be READY
+   * while still sitting at METADATA_READY.
+   */
+  stages?: PipelineStage[];
+  /** Case-insensitive substring match across title, keywords, filenames. */
+  search?: string;
   ids?: string[];
   limit?: number;
   offset?: number;
 }): Promise<RecordListResponse> {
-  const { ids, promptId, ...rest } = params ?? {};
+  const { ids, promptId, stages, ...rest } = params ?? {};
   const { data } = await api.get<RecordListResponse>("/api/records", {
     params: {
       ...rest,
       prompt_id: promptId,
+      stage: stages && stages.length > 0 ? stages.join(",") : undefined,
       ids: ids && ids.length > 0 ? ids.join(",") : undefined,
     },
   });

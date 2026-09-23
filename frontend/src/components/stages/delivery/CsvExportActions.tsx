@@ -25,6 +25,17 @@ export interface CsvExportActionsProps {
   onlyReady?: boolean;
   /** Rendered inline (a toolbar) or as a panel with the preview attached. */
   variant?: "toolbar" | "panel";
+  /**
+   * Whether to offer the "ZIP + CSV" action at all.
+   *
+   * A bundle holds the *staged* files, and only some stages have them, so a page
+   * whose records are not staged must not offer the control: clicking it can only
+   * produce a 409. Withheld rather than disabled-with-no-reason, because
+   * `bundleHint` then says which action produces a stageable file.
+   */
+  includeBundle?: boolean;
+  /** Shown in place of the bundle button when `includeBundle` is false. */
+  bundleHint?: string;
   onError?: (message: string | null) => void;
   onNotice?: (message: string | null) => void;
   disabled?: boolean;
@@ -47,6 +58,8 @@ export function CsvExportActions({
   selectedIds,
   onlyReady = true,
   variant = "toolbar",
+  includeBundle = true,
+  bundleHint,
   onError,
   onNotice,
   disabled = false,
@@ -133,22 +146,39 @@ export function CsvExportActions({
         CSV {count > 0 ? `(${count})` : ""}
       </Button>
 
-      <Button
-        size="sm"
-        variant="secondary"
-        disabled={disabled || busy !== null || count === 0}
-        onClick={() => void run("zip")}
-        icon={<Package className="h-3.5 w-3.5" aria-hidden />}
-        title={
-          count === 0
-            ? "Select images to bundle them"
-            : `Download a ZIP of the ${count} image(s) plus their CSV`
-        }
-      >
-        ZIP + CSV {count > 0 ? `(${count})` : ""}
-      </Button>
+      {includeBundle ? (
+        <Button
+          size="sm"
+          variant="secondary"
+          disabled={disabled || busy !== null || count === 0}
+          onClick={() => void run("zip")}
+          icon={<Package className="h-3.5 w-3.5" aria-hidden />}
+          title={
+            count === 0
+              ? "Select images to bundle them"
+              : `Download a ZIP of the ${count} image(s) plus their CSV`
+          }
+        >
+          ZIP + CSV {count > 0 ? `(${count})` : ""}
+        </Button>
+      ) : null}
     </>
   );
+
+  /**
+   * What replaces the bundle button when the bundle cannot work here.
+   *
+   * Silence would be worse than a disabled button: the operator would think the
+   * feature was removed. This says what is missing and how to get it.
+   */
+  const bundleNotice = !includeBundle && bundleHint ? (
+    <span
+      className="max-w-md text-[11px] leading-snug text-navy-400"
+      title={bundleHint}
+    >
+      {bundleHint}
+    </span>
+  ) : null;
 
   /**
    * The preview block, rendered in BOTH variants.
@@ -196,6 +226,7 @@ export function CsvExportActions({
     return (
       <div className={cn("flex flex-wrap items-center gap-2", className)}>
         {buttons}
+        {bundleNotice}
         {previewBlock}
       </div>
     );
@@ -222,6 +253,7 @@ export function CsvExportActions({
         <div className="flex flex-wrap items-center gap-2">{buttons}</div>
       </header>
 
+      {bundleNotice}
       {previewBlock}
     </section>
   );

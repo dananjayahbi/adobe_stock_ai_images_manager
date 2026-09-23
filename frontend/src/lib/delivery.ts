@@ -79,6 +79,24 @@ export async function suggestNames(recordIds: string[]): Promise<RenameResponse>
   return data;
 }
 
+/**
+ * Adopt the metadata model's proposed filenames for these records.
+ *
+ * Distinct from `suggestNames`, which derives a name from the *title*. This one
+ * applies the name the model chose while looking at the image, which is usually
+ * the better name — but it writes immediately, because applying a stored
+ * proposal is a deliberate one-click decision rather than a draft.
+ */
+export async function applySuggestedNames(
+  recordIds: string[]
+): Promise<RenameResponse> {
+  const { data } = await api.post<RenameResponse>(
+    "/api/assets/apply-suggested-names",
+    { items: recordIds.map((recordId) => ({ record_id: recordId, name: "" })) }
+  );
+  return data;
+}
+
 /** Force records past the acceptance gate, recording the reason. */
 export async function forceAccept(
   recordIds: string[],

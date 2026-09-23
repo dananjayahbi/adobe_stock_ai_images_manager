@@ -13,10 +13,9 @@ counted on the complete filename *including* the extension. That is a hard
 portal-side limit, so names are truncated to fit rather than emitted long and
 rejected.
 
-Because truncation can make two long titles collide, the length cap alone is not
-enough for the ZIP/CSV path: :func:`build_download_name` accepts an optional
-``disambiguator`` (normally the record id) which is appended when - and only
-when - the slug had to be shortened.
+Because truncation can make two long titles collide, a *batch* de-duplicates its
+names before export (see :func:`services.asset_naming.deduplicate`) and shortens
+the title of the second row so the numeric suffix still fits inside Adobe's cap.
 """
 
 import re
@@ -36,9 +35,6 @@ _SEPARATOR_RUN = re.compile(r"[-_]{2,}")
 
 #: Adobe: "Filename | 30 characters maximum". Counted on the whole filename.
 MAX_FILENAME_LENGTH = 30
-
-#: Reserved room for a disambiguating suffix, e.g. ``-7f3a2b``.
-_DISAMBIGUATOR_ROOM = 7
 
 
 def _slugify(value: str) -> str:
@@ -68,7 +64,6 @@ def build_download_name(
     record: ImageRecord,
     staged_path: Path | str | None = None,
     *,
-    disambiguator: str | None = None,
     max_length: int = MAX_FILENAME_LENGTH,
 ) -> str:
     """Human-friendly, Adobe-compliant download filename for a record.
@@ -81,13 +76,22 @@ def build_download_name(
     name the file exactly as it will be uploaded - and the staged file may be
     the refined JPEG rather than the original upload.
 
+    The name is **derived from the title alone**, with no identifier mixed in.
+
+    An earlier version appended a short token carved out of the record id
+    whenever the slug had to be truncated, which produced names like
+    ``futuristic-automat-b2d58dd.jpg``: the operator sees a filename with a
+    meaningless code in it, and the filename is a *deliverable* here, not an
+    internal key. Uniqueness inside a batch is handled where the batch is known
+    - by :func:`services.asset_naming.deduplicate`, which appends a readable
+    ``-2``/``-3`` only on an actual collision - so this function does not need
+    to guess.
+
     Args:
         record: The record being named.
         staged_path: The file that will be uploaded, when known.
-        disambiguator: Short unique token appended if the slug is truncated.
-            Required for correctness whenever several records share a ZIP or
-            CSV, because truncation can otherwise collide.
-        max_length: Cap on the complete filename, extension included.
+        max_length: Cap on the complete filename, extension included. Callers
+            that must fit a suffix onto the name pass a smaller figure.
 
     Returns:
         A filename no longer than ``max_length`` characters.
@@ -106,15 +110,7 @@ def build_download_name(
     stem_budget = max(max_length - len(suffix), 1)
 
     if len(slug) > stem_budget:
-        if disambiguator:
-            token = _slugify(disambiguator).replace("-", "")[:_DISAMBIGUATOR_ROOM]
-            token = token[: max(stem_budget - 1, 1)]
-            # Shorten the slug first, then append the token, so the token is
-            # never itself truncated away by the length check below.
-            head_budget = max(stem_budget - len(token) - 1, 1)
-            slug = f"{slug[:head_budget].rstrip('-')}-{token}"
-        else:
-            slug = slug[:stem_budget].rstrip("-")
+        slug = slug[:stem_budget].rstrip("-")
 
     if not slug:
         slug = _slugify(record.id)[:stem_budget] or "asset"
@@ -127,7 +123,6 @@ def build_upload_row(
     base_url: str,
     *,
     staged_path: Path | str | None = None,
-    disambiguator: str | None = None,
 ) -> dict:
     """Convert a READY record into a single upload-table row."""
     # Imported here rather than at module scope: `asset_naming` imports from

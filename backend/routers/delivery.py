@@ -171,6 +171,8 @@ async def suggest_names(
         asset_naming.derive_name(record, resolve_ready_path(record, settings.READY_DIR))
         for record in records
     ]
+    # De-duplicated as a batch: two records sharing a title would otherwise be
+    # offered the same filename, and the CSV cannot carry two rows for one file.
     unique = asset_naming.deduplicate(derived)
 
     items = [
@@ -183,6 +185,54 @@ async def suggest_names(
         for record, name in zip(records, unique)
     ]
     return RenameResponse(items=items, updated=len(items), failed=0)
+
+
+@router.post("/api/assets/apply-suggested-names", response_model=RenameResponse)
+async def apply_suggested_names(
+    request: RenameRequest,
+    db: Session = Depends(get_db),
+) -> RenameResponse:
+    """Adopt the metadata model's proposed filenames for the given records.
+
+    The one-button version of "rename them all". The model named each asset while
+    looking at it, so its proposal is usually better than a truncated title —
+    but a model's output must never silently become the delivered filename, so
+    the proposal is stored separately at generation time and only *this* explicit
+    action turns it into the name Adobe will be given.
+
+    A record the model did not name (generated before the model was asked, or an
+    answer that normalised to nothing) falls back to its title-derived name, so
+    the button is never a no-op on part of a selection.
+    """
+    ids = [item.record_id for item in request.items]
+    records = _load_records(db, ids) if ids else []
+
+    proposed = [
+        (record.suggested_filename or "").strip()
+        or asset_naming.derive_name(record, resolve_ready_path(record, settings.READY_DIR))
+        for record in records
+    ]
+    # De-duplicated as a batch: the model can propose the same name twice (two
+    # similar images), and one CSV cannot carry two rows for one file.
+    unique = asset_naming.deduplicate(proposed)
+
+    items: list[RenameResultItem] = []
+    applied = 0
+    for record, name in zip(records, unique):
+        changed = record.download_name != name
+        record.download_name = name
+        applied += 1
+        items.append(
+            RenameResultItem(
+                record_id=record.id,
+                filename=record.filename,
+                download_name=name,
+                changed=changed,
+            )
+        )
+
+    db.commit()
+    return RenameResponse(items=items, updated=applied, failed=0)
 
 
 # --------------------------------------------------------------------------- #
@@ -252,7 +302,10 @@ def _csv_response(result: csv_export.CsvBuildResult) -> Response:
 
 
 def _build_selected_csv(
-    request: CsvExportRequest, db: Session
+    request: CsvExportRequest,
+    db: Session,
+    *,
+    apply_names: bool = False,
 ) -> csv_export.CsvBuildResult:
     if request.record_ids is not None and len(request.record_ids) > MAX_DELIVERY_BATCH:
         raise HTTPException(
@@ -266,6 +319,7 @@ def _build_selected_csv(
         # The request's own session, so the export sees exactly the rows this
         # request can see (and so a test's isolated DB is honoured).
         db=db,
+        apply_names=apply_names,
     )
 
 
@@ -278,7 +332,10 @@ async def export_selected_csv(
     Available from Stage 6 onward *including* the Gallery, because an operator
     uploads from there and needs the CSV at the same moment as the images.
     """
-    result = _build_selected_csv(request, db)
+    # A *download* pins the batch-resolved names, so the CSV the operator keeps
+    # and the names the UI shows afterwards are the same strings. The write is
+    # committed because the operator has now taken delivery of this batch.
+    result = _build_selected_csv(request, db, apply_names=True)
 
     if result.row_count == 0:
         raise HTTPException(
@@ -289,6 +346,7 @@ async def export_selected_csv(
             ),
         )
 
+    db.commit()
     return _csv_response(result)
 
 
@@ -354,8 +412,9 @@ async def download_bundle(
         raise HTTPException(
             status_code=409,
             detail=(
-                "None of the selected records have staged files to bundle. "
-                "Publish them first."
+                "None of the selected records have a staged file yet. Publishing "
+                "is what stages the upload copy, so publish them first (or "
+                "download just the CSV)."
             ),
         )
 
@@ -368,6 +427,11 @@ async def download_bundle(
         # images the archive contains.
         only_ready=False,
         db=db,
+        # Pin the batch-resolved names, so the ZIP entry written below and the
+        # CSV row describe the same file. Without this the archive could contain
+        # `fleet-of-autonomous-1.jpg` while the CSV named
+        # `fleet-of-autonomous-transpor.jpg`.
+        apply_names=True,
     )
 
     tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False, dir=str(STORAGE_ROOT))
@@ -390,6 +454,10 @@ async def download_bundle(
         zip_path.unlink(missing_ok=True)
         logger.exception("Failed to build the delivery bundle")
         raise HTTPException(status_code=500, detail="Failed to build the bundle.")
+
+    # The names above are now part of the delivered artifact, so record them: a
+    # later re-export of the same batch must produce the same filenames.
+    db.commit()
 
     return FileResponse(
         path=str(zip_path),

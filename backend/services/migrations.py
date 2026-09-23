@@ -36,6 +36,10 @@ ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     # Operator-chosen upload filename (Stage 6). NULL means "derive it from the
     # title", so existing rows keep their current names with no backfill.
     ("image_records", "download_name", "VARCHAR(255)"),
+    # Upload filename proposed by the metadata model (Stage 6). NULL for every
+    # record generated before the model was asked to name the asset, which falls
+    # back to the title-derived name with no backfill needed.
+    ("image_records", "suggested_filename", "VARCHAR(255)"),
 ]
 
 # Rows that already reached READY under the old two-column model are already

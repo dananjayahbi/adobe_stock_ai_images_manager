@@ -5,10 +5,12 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 
 import ConfirmDialog from "@/components/ConfirmDialog";
 import { getDownloadUrl, type ImageRecord } from "@/lib/api";
+import { galleryEmptyMessage } from "@/lib/galleryFilters";
 import { saveUploadTableSelection } from "@/lib/uploadTableStore";
 
 import GalleryMasonryGrid from "./GalleryMasonryGrid";
 import GalleryPreviewModal from "./GalleryPreviewModal";
+import GallerySearchBar from "./GallerySearchBar";
 import GalleryToolbar from "./GalleryToolbar";
 import { useGalleryRecords } from "./useGalleryRecords";
 import { useGallerySelection } from "./useGallerySelection";
@@ -86,6 +88,16 @@ export default function GalleryView() {
     return `${selection.count} selected image(s), their thumbnails, and any staged upload files will be permanently removed.`;
   }, [pendingDelete, selection.count]);
 
+  const emptyState = useMemo(
+    () =>
+      galleryEmptyMessage({
+        hasSearch: gallery.search.trim().length > 0,
+        usageFilter: gallery.usageFilter,
+        scope: gallery.statusScope,
+      }),
+    [gallery.search, gallery.usageFilter, gallery.statusScope]
+  );
+
   return (
     <div className="space-y-5">
       {deliveryError && (
@@ -128,6 +140,14 @@ export default function GalleryView() {
         </Banner>
       )}
 
+      <GallerySearchBar
+        value={gallery.search}
+        onChange={gallery.setSearch}
+        resultCount={gallery.records.length}
+        totalCount={gallery.counts.all}
+        isPending={gallery.isLoading}
+      />
+
       <GalleryToolbar
         usageFilter={gallery.usageFilter}
         onUsageFilterChange={gallery.setUsageFilter}
@@ -144,8 +164,12 @@ export default function GalleryView() {
         onGenerateTable={handleGenerateTable}
         onBulkDelete={() => setPendingDelete({ kind: "many" })}
         selectedIds={selection.selectedIds}
+        selectedRecords={gallery.records.filter((record) =>
+          selection.isSelected(record.id)
+        )}
         onCsvError={setDeliveryError}
         onCsvNotice={setDeliveryNotice}
+        onNamesApplied={() => gallery.load()}
       />
 
       <GalleryMasonryGrid
@@ -157,6 +181,7 @@ export default function GalleryView() {
         onToggleUsed={(record) => void gallery.toggleUsed(record)}
         onDownload={handleDownload}
         onDelete={(record) => setPendingDelete({ kind: "one", record })}
+        emptyState={emptyState}
       />
 
       <GalleryPreviewModal

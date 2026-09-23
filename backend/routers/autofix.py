@@ -22,6 +22,7 @@ from database import get_db
 from models import ImageRecord, utcnow
 from schemas import AutoFixResponse
 from services import autofix
+from services import record_metrics
 from services.acceptance.scorer import AcceptanceConfig
 
 logger = logging.getLogger(__name__)
@@ -145,6 +146,10 @@ async def auto_fix_record(
         )
 
     record.working_path = result.output_path
+    # An auto-fix rewrites the working file, so the delivered geometry and size
+    # are re-measured here too. Otherwise the fix could raise the resolution and
+    # the gallery would still show the pre-fix numbers.
+    record_metrics.refresh_delivery_metrics(record, settings)
     record.acceptance_report = result.report.to_dict() if result.report else None
     record.acceptance_score = result.final_score
     details = dict(record.stage_details or {})

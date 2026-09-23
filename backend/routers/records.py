@@ -1,17 +1,21 @@
 """Records router - handles listing and retrieving image records."""
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, select
+from sqlalchemy import String, func, or_, select
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import ImageRecord, ImageStatus
+from models import ImageRecord, ImageStatus, PipelineStage
 from schemas import RecordListResponse, RecordResponse
 
 router = APIRouter(tags=["records"])
 
 DEFAULT_LIMIT = 100
 MAX_LIMIT = 500
+
+#: Longest accepted search term. A search is a UI affordance, not a report
+#: generator, and an unbounded pattern makes the `LIKE` scan arbitrarily wide.
+MAX_SEARCH_LENGTH = 200
 
 # Gallery usage filter values accepted by the `used` query parameter.
 USED_FILTERS = ("all", "used", "unused")
@@ -21,6 +25,42 @@ QUEUED_NONE_SENTINEL = "none"
 
 #: ``prompt_id`` sentinel that selects records with no bound source prompt.
 PROMPT_NONE_SENTINEL = "none"
+
+#: Valid values for the ``stage`` filter, taken from the enum so the two cannot
+#: drift. A typo in a query string is reported rather than silently matching
+#: nothing, which would look like "the filter is broken".
+_PIPELINE_STAGE_VALUES: frozenset[str] = frozenset(stage.value for stage in PipelineStage)
+
+#: SQL type used to cast JSON and integer columns to text for a substring match.
+_TEXT = String()
+
+
+def _search_condition(term: str):
+    """Match ``term`` against every text field a user would search by.
+
+    Deliberately broad, because the operator searching the published gallery is
+    looking for *an image they remember*, and they may recall it by its title, a
+    keyword, the category, or the filename they set for the upload. Searching
+    only the title would fail for the two cases that matter most: a keyword that
+    never made it into the title, and the delivered filename.
+
+    ``keywords`` is a JSON column. SQLite has no JSON operators guaranteed to be
+    present, so it is matched as text - which is exactly right here, since the
+    stored form is a JSON array of plain strings and a substring match on it
+    finds a keyword without needing to unpack it.
+    """
+    pattern = f"%{term.lower()}%"
+    return or_(
+        func.lower(func.coalesce(ImageRecord.generated_title, "")).like(pattern),
+        func.lower(func.coalesce(ImageRecord.generated_description, "")).like(pattern),
+        func.lower(func.coalesce(ImageRecord.filename, "")).like(pattern),
+        func.lower(func.coalesce(ImageRecord.download_name, "")).like(pattern),
+        func.lower(func.coalesce(ImageRecord.suggested_filename, "")).like(pattern),
+        func.lower(func.coalesce(func.cast(ImageRecord.generated_keywords, _TEXT), "")).like(
+            pattern
+        ),
+        func.cast(ImageRecord.category, _TEXT).like(pattern),
+    )
 
 
 @router.get("/api/records", response_model=RecordListResponse)
@@ -46,6 +86,20 @@ async def list_records(
         description=(
             "Filter by the Prompt Library link: a prompt id, or 'none' for "
             "images with no known source prompt."
+        ),
+    ),
+    stage: str | None = Query(
+        default=None,
+        description=(
+            "Comma-separated pipeline stages to include, e.g. 'PUBLISHED'. "
+            "Used by the published gallery to scope itself to finished assets."
+        ),
+    ),
+    search: str | None = Query(
+        default=None,
+        description=(
+            "Case-insensitive substring match across the title, description, "
+            "keywords, category and filename."
         ),
     ),
     limit: int = Query(default=DEFAULT_LIMIT, description="Max records to return."),
@@ -116,6 +170,34 @@ async def list_records(
     if id_filter:
         base = base.where(ImageRecord.id.in_(id_filter))
         count_stmt = count_stmt.where(ImageRecord.id.in_(id_filter))
+
+    if stage:
+        stage_filter = [value.strip().upper() for value in stage.split(",") if value.strip()]
+        invalid_stages = [
+            value for value in stage_filter if value not in _PIPELINE_STAGE_VALUES
+        ]
+        if invalid_stages:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Invalid stage(s): {', '.join(invalid_stages)}. Accepted "
+                    f"values: {', '.join(sorted(_PIPELINE_STAGE_VALUES))}."
+                ),
+            )
+        if stage_filter:
+            base = base.where(ImageRecord.stage.in_(stage_filter))
+            count_stmt = count_stmt.where(ImageRecord.stage.in_(stage_filter))
+
+    if search and search.strip():
+        term = search.strip()
+        if len(term) > MAX_SEARCH_LENGTH:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Search term exceeds {MAX_SEARCH_LENGTH} characters.",
+            )
+        condition = _search_condition(term)
+        base = base.where(condition)
+        count_stmt = count_stmt.where(condition)
 
     total = db.execute(count_stmt).scalar_one()
     stmt = (

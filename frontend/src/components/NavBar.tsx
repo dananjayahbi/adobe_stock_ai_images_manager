@@ -9,6 +9,7 @@ import SettingsModal from "@/components/settings/SettingsModal";
 import { cn } from "@/lib/cn";
 import { ALL_STAGE_META } from "@/lib/stageMeta";
 
+import PublishedGalleryLink from "./shell/PublishedGalleryLink";
 import StageProgressRail from "./shell/StageProgressRail";
 
 /** Routes that are not stages but still deserve a nav entry. */
@@ -77,6 +78,10 @@ export default function NavBar() {
         </div>
 
         <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {/* The published gallery is the endpoint of the pipeline, so it is
+              reachable from every route rather than only from Stage 7. */}
+          <PublishedGalleryLink />
+
           {UTILITY_ITEMS.map((item) => {
             const isActive = pathname.startsWith(item.href);
             const Icon = item.icon;

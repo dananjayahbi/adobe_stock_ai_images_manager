@@ -1,10 +1,11 @@
 "use client";
 
-import { ArrowRight, PencilLine, Play, Tags } from "lucide-react";
+import { ArrowRight, PencilLine, Play } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import CsvExportActions from "@/components/stages/delivery/CsvExportActions";
 import ForceAcceptControl from "@/components/stages/delivery/ForceAcceptControl";
+import RenameBar from "@/components/stages/delivery/RenameBar";
 import RenamePanel from "@/components/stages/delivery/RenamePanel";
 import MetadataEditorPanel from "@/components/stages/MetadataEditorPanel";
 import StageDeleteButton from "@/components/stages/StageDeleteButton";
@@ -16,6 +17,15 @@ import { STAGE_META, poolFor } from "@/lib/stageMeta";
 import type { AdobeCategory } from "@/lib/stages";
 
 const META = STAGE_META.metadata;
+
+/**
+ * Why the bundle is unavailable here, shown in place of the button.
+ *
+ * A disabled control with no explanation is a dead end; this names the action
+ * that resolves it.
+ */
+const BUNDLE_HINT =
+  "Publishing is what stages the upload copy, so publish the selection first — then bundle it from the Gallery.";
 
 /**
  * Stage 6 — Metadata & CSV.
@@ -101,6 +111,11 @@ export default function MetadataPage() {
           const processedIds = selected
             .filter((record) => record.queued_stage !== "metadata")
             .map((record) => record.id);
+          // A bundle can only be built from records that have a staged file, and
+          // at this stage that means an already-published one. Anything else is
+          // a guaranteed 409, so the control is withheld rather than offered and
+          // then refused.
+          const canBundle = selected.some((record) => record.stage === "PUBLISHED");
 
           return (
             <>
@@ -130,26 +145,39 @@ export default function MetadataPage() {
                 </Button>
               ) : null}
 
-              {/* Naming is only meaningful once there is a selection to name. */}
+              {/* Naming, one click for the common case.
+
+                  The model named each asset while looking at it, so its
+                  proposal is applied directly; the editor stays available for
+                  the cases that need a human decision. */}
               {selected.length > 0 ? (
-                <Button
-                  size="sm"
-                  variant="secondary"
+                <RenameBar
+                  records={selected}
                   disabled={isBusy}
-                  onClick={() => setShowRename((current) => !current)}
-                  icon={<Tags className="h-3.5 w-3.5" aria-hidden />}
-                  title="Set the upload filenames Adobe will match against the CSV"
-                >
-                  Filenames ({selected.length})
-                </Button>
+                  onError={setError}
+                  onNotice={setNotice}
+                  onApplied={async () => {
+                    await controller.load();
+                  }}
+                  onEdit={() => setShowRename((current) => !current)}
+                />
               ) : null}
 
               {/* CSV/ZIP follow the selection and do NOT require the metadata
                   gate to have passed: a force-accepted record still needs a
-                  CSV, and `onlyReady={false}` is what lets it through. */}
+                  CSV, and `onlyReady={false}` is what lets it through.
+
+                  The bundle is a different matter. It contains the *staged*
+                  files, and publishing is what stages one — so at this stage a
+                  bundle can only ever fail with a 409, which is exactly what the
+                  operator hit. Offering the control only where it can succeed is
+                  better than explaining the failure after the click; the CSV
+                  alone works here, and the button says where to get the bundle. */}
               <CsvExportActions
                 selectedIds={ids}
                 onlyReady={false}
+                includeBundle={canBundle}
+                bundleHint={BUNDLE_HINT}
                 disabled={isBusy}
                 onError={setError}
                 onNotice={setNotice}

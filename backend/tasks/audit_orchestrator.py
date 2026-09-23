@@ -8,7 +8,13 @@ from sqlalchemy.orm import Session
 
 from config import Settings, settings as default_settings
 from models import ImageRecord, ImageStatus
-from services import exiftool_embedder, gemini_auditor, gemini_metadata, qc_engine
+from services import (
+    exiftool_embedder,
+    gemini_auditor,
+    gemini_metadata,
+    qc_engine,
+    record_metrics,
+)
 from services.storage import copy_to_ready
 
 logger = logging.getLogger(__name__)
@@ -236,6 +242,10 @@ def process_approval(
 
         # Update status to READY
         record.status = ImageStatus.READY
+        # The staged file is now the deliverable, so measure *it*: this is the
+        # last point at which the reported geometry can be corrected before the
+        # operator sees it in the gallery.
+        record_metrics.refresh_delivery_metrics(record, cfg)
         db.commit()
         logger.info("Record %s approved and moved to READY status", record_id)
         return True

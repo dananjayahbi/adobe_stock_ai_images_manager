@@ -11,9 +11,12 @@ import {
   setRecordsUsed,
   type BulkActionResult,
   type ImageRecord,
-  type ImageStatus,
   type UsageFilter,
 } from "@/lib/api";
+import {
+  PUBLISHED_STAGES,
+  type GalleryScope,
+} from "@/lib/galleryFilters";
 
 const POLL_INTERVAL_MS = 5000;
 const PAGE_LIMIT = 500;
@@ -24,8 +27,9 @@ export interface GalleryCounts {
   unused: number;
 }
 
-/** Which pipeline states the gallery should surface. */
-export type StatusScope = "ready" | "all";
+/** Re-exported so existing importers keep working while the type lives with
+ *  the rest of the filter vocabulary. */
+export type StatusScope = GalleryScope;
 
 /**
  * Owns all gallery data: fetching, polling, and the mutating operations
@@ -35,7 +39,10 @@ export function useGalleryRecords() {
   const [records, setRecords] = useState<ImageRecord[]>([]);
   const [counts, setCounts] = useState<GalleryCounts>({ all: 0, used: 0, unused: 0 });
   const [usageFilter, setUsageFilter] = useState<UsageFilter>("unused");
-  const [statusScope, setStatusScope] = useState<StatusScope>("ready");
+  // Default to the published gallery: it is the system's endpoint, and an
+  // operator opening it wants finished assets rather than work in progress.
+  const [statusScope, setStatusScope] = useState<StatusScope>("published");
+  const [search, setSearch] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,25 +56,33 @@ export function useGalleryRecords() {
   filterRef.current = usageFilter;
   const scopeRef = useRef<StatusScope>(statusScope);
   scopeRef.current = statusScope;
+  const searchRef = useRef(search);
+  searchRef.current = search;
 
   const load = useCallback(async (showSpinner = false) => {
     const id = ++requestId.current;
     if (showSpinner) setIsLoading(true);
 
-    // "ready" scope lists only upload-ready assets; "all" lists every state.
-    const scopeStatus: ImageStatus | undefined =
-      scopeRef.current === "ready" ? "READY" : undefined;
+    // Scope by *stage*, not by the legacy status column. `status` is the QC
+    // verdict, so `status=READY` also matched records that were approved but not
+    // yet published - which is not what "browse published" means.
+    const scopeStages =
+      scopeRef.current === "published" ? PUBLISHED_STAGES : undefined;
+    const term = searchRef.current.trim() || undefined;
 
     try {
-      // Fetch the active filter plus the aggregate counts in parallel.
+      // Fetch the active filter plus the aggregate counts in parallel. The
+      // counts deliberately ignore the search term: they describe the scope, and
+      // a count that changed as you typed would make the chips look unstable.
       const [filtered, all, used] = await Promise.all([
         fetchRecords({
-          status: scopeStatus,
+          stages: scopeStages,
           used: filterRef.current,
+          search: term,
           limit: PAGE_LIMIT,
         }),
-        fetchRecords({ status: scopeStatus, used: "all", limit: 1 }),
-        fetchRecords({ status: scopeStatus, used: "used", limit: 1 }),
+        fetchRecords({ stages: scopeStages, used: "all", limit: 1 }),
+        fetchRecords({ stages: scopeStages, used: "used", limit: 1 }),
       ]);
 
       if (id !== requestId.current) return; // superseded by a newer request
@@ -89,7 +104,7 @@ export function useGalleryRecords() {
 
   useEffect(() => {
     void load(true);
-  }, [load, usageFilter, statusScope]);
+  }, [load, usageFilter, statusScope, search]);
 
   useEffect(() => {
     const interval = setInterval(() => void load(), POLL_INTERVAL_MS);
@@ -165,6 +180,13 @@ export function useGalleryRecords() {
 
   const clearNotice = useCallback(() => setNotice(null), []);
 
+  /** Clear the search and both filters - what "show me everything" means. */
+  const resetFilters = useCallback(() => {
+    setSearch("");
+    setUsageFilter("all");
+    setStatusScope("all");
+  }, []);
+
   const availableIds = useMemo(() => records.map((r) => r.id), [records]);
 
   return {
@@ -174,6 +196,9 @@ export function useGalleryRecords() {
     setUsageFilter,
     statusScope,
     setStatusScope,
+    search,
+    setSearch,
+    resetFilters,
     isLoading,
     isBusy,
     error,

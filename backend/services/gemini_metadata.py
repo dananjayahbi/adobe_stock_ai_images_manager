@@ -24,6 +24,7 @@ from pathlib import Path
 from config import settings
 from services.adobe_categories import CATEGORY_CODES, resolve_category
 from services.adobe_restrictions import scan_metadata
+from services.asset_naming import normalise_name
 from services.llm_client import LLMError, chat_json
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,11 @@ PROHIBITED_TERMS = (
 #: Adobe: "Title | 70 characters maximum". The generator is told a slightly
 #: lower target so a trailing word is never chopped mid-phrase.
 TITLE_TARGET = 68
+#: Characters the model may use for the filename *stem*. Adobe's 30-character
+#: filename cap includes the extension, so the stem gets the remainder; a little
+#: headroom is kept back because the batch de-duplicator may need to append a
+#: ``-2`` marker to a colliding name.
+FILENAME_STEM_TARGET = 26
 #: Adobe's ceiling; the prompt targets the same figure so nothing is wasted.
 MAX_KEYWORDS = settings.CSV_MAX_KEYWORDS
 #: Keywords in these positions influence search ranking most, so the prompt
@@ -57,6 +63,7 @@ _CATEGORY_LIST = ", ".join(
 METADATA_PROMPT = """Generate Adobe Stock optimized metadata for this image. Respond with ONLY valid JSON (no markdown fences):
 {{
   "title": "<string, max {title_target} characters, natural English sentence, descriptive and commercially appealing>",
+  "filename": "<string, a short descriptive filename stem in lower-case hyphenated words, no extension, max {filename_target} characters>",
   "description": "<string, one or two plain sentences describing the image content>",
   "keywords": ["<up to {max_keywords} keyword strings, ordered from most to least important>"],
   "category": "<the single best Adobe Stock category code, as a number>"
@@ -67,6 +74,13 @@ Title rules:
 - A natural, readable phrase or short sentence - never a list of keywords.
 - Plain text only: NO commas, semicolons, slashes, pipes, quotation marks, or other special characters.
 - Describe the actual subject and setting. Do not include camera or gear terms, and do not include technical specifications.
+
+Filename rules:
+- Lower-case words separated by single hyphens. No spaces, dots, underscores, accents, or other punctuation.
+- Maximum {filename_target} characters. Do not add a file extension - only the stem.
+- Describe the specific subject of THIS image, so the file can be recognised in a folder of similar assets.
+- Use the strongest searchable words, because the filename is what a customer sees in the download.
+- Do NOT include any date, number, serial, or random code. No identifiers of any kind.
 
 Keyword rules:
 - Return up to {max_keywords} keywords, ordered by importance.
@@ -112,6 +126,7 @@ def generate_metadata(file_path: str | Path, api_key: str | None = None) -> dict
     prompt = METADATA_PROMPT.format(
         categories=_CATEGORY_LIST,
         title_target=TITLE_TARGET,
+        filename_target=FILENAME_STEM_TARGET,
         max_keywords=MAX_KEYWORDS,
         high_impact=HIGH_IMPACT_SLOTS,
     )
@@ -177,11 +192,23 @@ def generate_metadata(file_path: str | Path, api_key: str | None = None) -> dict
     # rather than silently rewriting, because the image may genuinely depict it.
     title_risks = scan_metadata(title)
 
+    # The model was asked to name the file as well as describe it. The name is
+    # normalised through the same rules the operator's own renames go through
+    # (slugified, JPEG extension, 30-character cap), so a proposal is always
+    # directly applicable - never something the operator has to fix by hand.
+    #
+    # An absent or useless answer stays None rather than becoming the generic
+    # "asset.jpg" that `normalise_name` falls back to: a placeholder offered as a
+    # suggestion would be applied to a whole batch and destroy every name in it.
+    raw_filename = str(data.get("filename", "") or "").strip()
+    suggested_filename = normalise_name(raw_filename) if raw_filename else None
+
     return {
         "title": title,
         "description": description,
         "keywords": cleaned_keywords,
         "category": resolve_category(data.get("category")),
+        "suggested_filename": suggested_filename,
         "title_restriction_warnings": title_risks,
         "blocked_keywords": blocked,
     }
