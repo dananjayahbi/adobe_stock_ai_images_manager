@@ -30,6 +30,9 @@ ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("image_records", "stage_details", "JSON"),
     ("image_records", "category", "INTEGER"),
     ("image_records", "queued_stage", "VARCHAR(20)"),
+    # Prompt Library link (Stage 1). Nullable: an image may be collected
+    # without a known prompt, and one prompt binds to many images.
+    ("image_records", "prompt_id", "VARCHAR(36)"),
 ]
 
 # Rows that already reached READY under the old two-column model are already

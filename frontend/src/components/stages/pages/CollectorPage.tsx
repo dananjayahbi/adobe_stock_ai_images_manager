@@ -1,44 +1,66 @@
 "use client";
 
-import { ArrowRight, Database, Undo2 } from "lucide-react";
-import { useMemo } from "react";
+import { ArrowRight, Undo2 } from "lucide-react";
+import { useCallback, useState } from "react";
 
+import GalleryUploadSlot from "@/components/stages/GalleryUploadSlot";
 import StageDeleteButton from "@/components/stages/StageDeleteButton";
-import StagePageFrame, { type StageStat } from "@/components/stages/pages/StagePageFrame";
-import StageUploader from "@/components/stages/pages/StageUploader";
+import StagePageFrame from "@/components/stages/pages/StagePageFrame";
+import CollectorModeTabs, {
+  type CollectorMode,
+} from "@/components/stages/prompts/CollectorModeTabs";
+import { useCollectorWorkspace } from "@/components/stages/prompts/useCollectorWorkspace";
 import { Button } from "@/components/ui/Button";
 import { useStagePage } from "@/hooks/useStagePage";
+import type { ImageRecord } from "@/lib/api";
 import { COLLECTOR_META } from "@/lib/stageMeta";
 
 /**
  * Stage 1 — Collector.
  *
- * Upload only. This page deliberately has **no** processing action: its job is
- * to hold images until the operator decides which ones to move forward. The
- * forward move is a *push* into the OCR Detector's queue, not a run — the scan
- * happens on the OCR page.
+ * The only stage with **two working modes**, because there are two genuinely
+ * different ways images arrive here:
+ *
+ * - **Advanced** (default) — the operator writes the generation prompts first,
+ *   then collects the images those prompts produced and binds them. The screen
+ *   splits: collection gallery on the left, Prompt Library on the right. A
+ *   prompt block is dragged onto an image to link them, and one prompt can be
+ *   bound to many images.
+ * - **Quick upload** — upload-only, the original behaviour, for images whose
+ *   prompt is unknown or irrelevant.
+ *
+ * Neither mode runs anything: the forward move is a *push* into the OCR
+ * Detector's queue, and the scan happens on that page.
  */
 export default function CollectorPage() {
   const controller = useStagePage();
   const { records, push, unpush, isPushing, removeRecords, selection } = controller;
 
+  const [mode, setMode] = useState<CollectorMode>("advanced");
+
   // Every record is visible here; the buckets decide what belongs where.
   const pool = records;
 
-  const stats: StageStat[] = useMemo(() => {
-    const inCollector = pool.filter(
-      (record) => record.stage === "COLLECTED" && record.queued_stage !== "ocr"
-    ).length;
-    const pushed = pool.filter((record) => record.queued_stage === "ocr").length;
-    const advanced = pool.filter((record) => record.stage !== "COLLECTED").length;
+  const selectedIds = selection.selectedIds;
 
-    return [
-      { label: "In Collector", value: inCollector, tone: "accent" },
-      { label: "Pushed to OCR", value: pushed, hint: "Awaiting a scan", tone: "warning" },
-      { label: "Moved on", value: advanced, hint: "Past the OCR stage", tone: "success" },
-      { label: "Total", value: pool.length },
-    ];
-  }, [pool]);
+  // Hooks cannot be called conditionally, so the workspace is always mounted
+  // and `enabled` is what stops it fetching in Quick mode.
+  const workspace = useCollectorWorkspace({
+    selectedIds,
+    enabled: mode === "advanced",
+    onRecordsChanged: controller.load,
+  });
+
+  const promptTitleFor = useCallback(
+    (record: ImageRecord) =>
+      mode === "advanced" ? workspace.promptTitleFor(record) : null,
+    [mode, workspace]
+  );
+
+  // The workspace owns prompt errors/notices; the frame renders one banner, so
+  // they are merged here rather than rendered twice.
+  const mergedError = workspace.error ?? controller.error;
+  const mergedNotice = workspace.notice ?? controller.notice;
 
   return (
     <StagePageFrame
@@ -46,17 +68,33 @@ export default function CollectorPage() {
       controller={controller}
       pool={pool}
       buckets={COLLECTOR_META.buckets}
-      stats={stats}
+      error={mergedError}
+      notice={mergedNotice}
+      onClearError={() => {
+        workspace.setError(null);
+        controller.setError(null);
+      }}
+      onClearNotice={() => {
+        workspace.clearNotice();
+        controller.clearNotice();
+      }}
       emptyTitle="No images in this bucket"
-      emptyDescription="Upload JPEGs above, then select the ones you want and push them to the OCR Detector."
-      emptyAction={
-        <span className="inline-flex items-center gap-1.5 text-xs text-navy-400">
-          <Database className="h-3.5 w-3.5" aria-hidden />
-          Use the upload panel above
-        </span>
+      emptyDescription={
+        mode === "advanced"
+          ? "Use the first tile to add images, then drop a prompt block onto one to bind them."
+          : "Use the first tile to add images, then push the ones you want to the OCR Detector."
       }
-      panels={
-        <StageUploader onUploaded={() => void controller.load()} disabled={isPushing} />
+      sidePanel={mode === "advanced" ? workspace.sidePanel : undefined}
+      headerExtra={<CollectorModeTabs mode={mode} onChange={setMode} />}
+      onPromptDrop={mode === "advanced" ? workspace.onPromptDrop : undefined}
+      promptTitleFor={promptTitleFor}
+      gridLeadingSlot={
+        // The upload slot is the first cell of the grid: adding images and
+        // holding them are one surface, not two stacked sections.
+        <GalleryUploadSlot
+          onUploaded={() => void controller.load()}
+          disabled={isPushing}
+        />
       }
       renderActions={(visible) => {
         const visibleIds = new Set(visible.map((record) => record.id));
@@ -70,6 +108,8 @@ export default function CollectorPage() {
 
         return (
           <>
+            {mode === "advanced" ? workspace.actions : null}
+
             {canPush ? (
               <Button
                 size="sm"

@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from models import ImageStatus, PipelineStage
+from models import ImageStatus, PipelineStage, PromptStatus
 
 
 class RecordResponse(BaseModel):
@@ -44,6 +44,8 @@ class RecordResponse(BaseModel):
     refine_passes: int = 0
     stage_details: Optional[dict[str, Any]] = None
     category: Optional[int] = None
+    #: Prompt Library link. Null when the image has no known source prompt.
+    prompt_id: Optional[str] = None
 
 
 class RecordListResponse(BaseModel):
@@ -456,3 +458,89 @@ class SettingsTestResponse(BaseModel):
     model: Optional[str] = None
     reply: Optional[str] = None
     error: Optional[str] = None
+
+
+# --------------------------------------------------------------------------- #
+# Prompt Library (Stage 1 — Collector)
+# --------------------------------------------------------------------------- #
+
+class PromptResponse(BaseModel):
+    """A generation prompt plus its live binding count.
+
+    ``bound_count`` is computed from the records table rather than stored, so it
+    can never drift from the actual bindings. The UI uses it to show
+    "3 images" on a prompt block and to render the used state.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    title: str
+    body: str
+    negative_prompt: Optional[str] = None
+    params: Optional[dict[str, Any]] = None
+    tags: Optional[list[str]] = None
+    status: PromptStatus
+    used_at: Optional[datetime] = None
+    created_at: datetime
+    updated_at: datetime
+    #: How many image records are currently bound to this prompt.
+    bound_count: int = 0
+
+
+class PromptListResponse(BaseModel):
+    """All prompts, newest first, with their binding counts."""
+
+    items: list[PromptResponse]
+    total: int
+    used: int
+    unused: int
+
+
+class PromptCreateRequest(BaseModel):
+    """Body for creating a prompt.
+
+    ``title`` is optional: a prompt written straight into the body is still
+    valid, and the UI derives a display title from the first line. Sending
+    neither a title nor a body is rejected.
+    """
+
+    title: Optional[str] = None
+    body: str
+    negative_prompt: Optional[str] = None
+    params: Optional[dict[str, Any]] = None
+    tags: Optional[list[str]] = None
+    status: Optional[PromptStatus] = None
+
+
+class PromptUpdateRequest(BaseModel):
+    """Partial update for a prompt; omitted fields are left untouched."""
+
+    title: Optional[str] = None
+    body: Optional[str] = None
+    negative_prompt: Optional[str] = None
+    params: Optional[dict[str, Any]] = None
+    tags: Optional[list[str]] = None
+    status: Optional[PromptStatus] = None
+
+
+class PromptBindRequest(BaseModel):
+    """Bind (or unbind) images to a prompt.
+
+    Binding one prompt to many images is the normal case, so the record list is
+    the payload rather than a single id. ``unbind`` reverses the operation
+    without deleting the prompt.
+    """
+
+    record_ids: list[str]
+    unbind: bool = False
+
+
+class PromptBindResponse(BaseModel):
+    """Outcome of a bind/unbind, with the refreshed prompt."""
+
+    updated: int = 0
+    missing: list[str] = []
+    #: Records that were already bound elsewhere and were re-pointed.
+    rebound: list[str] = []
+    prompt: PromptResponse

@@ -59,6 +59,8 @@ export interface ImageRecord {
   refine_passes: number;
   stage_details: StageDetails | null;
   category: number | null;
+  /** Prompt Library link. Null when the image has no known source prompt. */
+  prompt_id: string | null;
 }
 
 export interface RecordListResponse {
@@ -135,13 +137,19 @@ export async function fetchRecords(params?: {
   used?: UsageFilter;
   /** Stage key to filter by pending queue, or "none" for unqueued records. */
   queued?: StageKey | "none";
+  /** Prompt id to filter by, or "none" for images with no source prompt. */
+  promptId?: string | "none";
   ids?: string[];
   limit?: number;
   offset?: number;
 }): Promise<RecordListResponse> {
-  const { ids, ...rest } = params ?? {};
+  const { ids, promptId, ...rest } = params ?? {};
   const { data } = await api.get<RecordListResponse>("/api/records", {
-    params: { ...rest, ids: ids && ids.length > 0 ? ids.join(",") : undefined },
+    params: {
+      ...rest,
+      prompt_id: promptId,
+      ids: ids && ids.length > 0 ? ids.join(",") : undefined,
+    },
   });
   return data;
 }

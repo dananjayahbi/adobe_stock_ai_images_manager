@@ -1,10 +1,11 @@
 "use client";
 
-import { AlertTriangle, CheckCircle2, ImageOff, Lock, Maximize2 } from "lucide-react";
-import { useState } from "react";
+import { AlertTriangle, CheckCircle2, ImageOff, Lock, Maximize2, Sparkles } from "lucide-react";
+import { useState, type DragEvent } from "react";
 
 import { formatFileSize, getPreviewUrl, getThumbnailUrl, type ImageRecord } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { isPromptDrag, readPromptDrag } from "@/lib/promptDrag";
 import { formatScore, scoreTone, stageLabel } from "@/lib/stages";
 
 const SCORE_TONES = {
@@ -21,6 +22,15 @@ export interface RecordCardProps {
   isRunning?: boolean;
   onToggleSelect: (id: string) => void;
   onInspect: (record: ImageRecord) => void;
+  /**
+   * Called when a prompt block is dropped onto this card.
+   *
+   * Optional: only the Collector binds prompts, so every other stage leaves
+   * this undefined and the card stays a plain tile with no drop affordance.
+   */
+  onPromptDrop?: (recordId: string, promptId: string) => void;
+  /** Title of the prompt bound to this image, shown as a badge. */
+  promptTitle?: string | null;
   className?: string;
 }
 
@@ -30,6 +40,10 @@ export interface RecordCardProps {
  * Selection is the card's primary interaction: the checkbox is always visible
  * (not hover-only) so a batch selection is readable without hovering every
  * tile, and the whole card is a button for keyboard users.
+ *
+ * When `onPromptDrop` is supplied the tile also becomes a drop target for a
+ * dragged prompt block — the gesture that links a generation prompt to the
+ * images it produced.
  */
 export function RecordCard({
   record,
@@ -37,20 +51,50 @@ export function RecordCard({
   isRunning = false,
   onToggleSelect,
   onInspect,
+  onPromptDrop,
+  promptTitle = null,
   className,
 }: RecordCardProps) {
   const [hasError, setHasError] = useState(false);
+  const [isPromptOver, setPromptOver] = useState(false);
   const thumbnail = getThumbnailUrl(record);
   const fallback = getPreviewUrl(record.id, "working");
   const tone = scoreTone(record.acceptance_score);
 
+  // Only intercept a drag that actually carries a prompt id. A file drop must
+  // still fall through to whatever handles uploads, so the guard is on the
+  // drag *type*, not merely on `onPromptDrop` being present.
+  function handleDragOver(event: DragEvent<HTMLDivElement>) {
+    if (!onPromptDrop || !isPromptDrag(event)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "link";
+    setPromptOver(true);
+  }
+
+  function handleDragLeave() {
+    setPromptOver(false);
+  }
+
+  function handleDrop(event: DragEvent<HTMLDivElement>) {
+    if (!onPromptDrop || !isPromptDrag(event)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    setPromptOver(false);
+    const promptId = readPromptDrag(event);
+    if (promptId) onPromptDrop(record.id, promptId);
+  }
+
   return (
     <div
+      onDragOver={onPromptDrop ? handleDragOver : undefined}
+      onDragLeave={onPromptDrop ? handleDragLeave : undefined}
+      onDrop={onPromptDrop ? handleDrop : undefined}
       className={cn(
         "group relative overflow-hidden rounded-xl border bg-navy-850/50 transition-colors duration-150 ease-swift",
         isSelected
           ? "border-accent-500/70 shadow-glow-sm"
           : "border-navy-700/50 hover:border-navy-600",
+        isPromptOver && "border-accent-400 bg-accent-500/10 shadow-glow",
         isRunning && "opacity-60",
         className
       )}
@@ -72,6 +116,15 @@ export function RecordCard({
         )}
 
         <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-navy-950/90 to-transparent" />
+
+        {isPromptOver ? (
+          <div className="pointer-events-none absolute inset-0 grid place-items-center bg-navy-950/70">
+            <span className="inline-flex items-center gap-1.5 rounded-full border border-accent-400/60 bg-accent-500/20 px-3 py-1 text-[11px] font-semibold text-accent-100">
+              <Sparkles className="h-3 w-3" aria-hidden />
+              Bind prompt
+            </span>
+          </div>
+        ) : null}
 
         {/* Selection toggle — always visible so batch state is never hidden. */}
         <button
@@ -113,6 +166,16 @@ export function RecordCard({
           <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-full border border-accent-500/40 bg-accent-500/20 px-2 py-0.5 text-[10px] font-semibold text-accent-100 backdrop-blur">
             <Lock className="h-3 w-3" aria-hidden />
             Queued
+          </span>
+        ) : null}
+
+        {promptTitle ? (
+          <span
+            className="absolute bottom-2 right-2 inline-flex max-w-[70%] items-center gap-1 rounded-full border border-violet-400/40 bg-violet-500/20 px-2 py-0.5 text-[10px] font-semibold text-violet-100 backdrop-blur"
+            title={`Prompt: ${promptTitle}`}
+          >
+            <Sparkles className="h-3 w-3 shrink-0" aria-hidden />
+            <span className="truncate">{promptTitle}</span>
           </span>
         ) : null}
       </div>

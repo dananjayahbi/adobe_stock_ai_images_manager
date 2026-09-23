@@ -17,6 +17,22 @@ export interface RecordGridProps {
   onInspect: (record: ImageRecord) => void;
   /** Highlighted while a batch is running. */
   runningIds?: string[];
+  /**
+   * Prompt binding, supplied only by the Collector. When present every tile
+   * becomes a drop target for a dragged prompt block.
+   */
+  onPromptDrop?: (recordId: string, promptId: string) => void;
+  /** Resolve the title of the prompt bound to a record, for the tile badge. */
+  promptTitleFor?: (record: ImageRecord) => string | null;
+  /**
+   * A tile rendered **before** the records, always occupying the first cell.
+   *
+   * The Collector uses this for its upload slot: the place images arrive
+   * belongs among the images, so it is a cell in the grid rather than a panel
+   * stacked above it. It renders even when there are no records, which is what
+   * makes the empty state still offer the upload affordance.
+   */
+  leadingSlot?: ReactNode;
   emptyTitle?: string;
   emptyDescription?: string;
   emptyAction?: ReactNode;
@@ -36,6 +52,9 @@ export function RecordGrid({
   onToggleSelect,
   onInspect,
   runningIds,
+  onPromptDrop,
+  promptTitleFor,
+  leadingSlot,
   emptyTitle = "Nothing here yet",
   emptyDescription,
   emptyAction,
@@ -50,7 +69,9 @@ export function RecordGrid({
     );
   }
 
-  if (records.length === 0) {
+  // With a leading slot the grid is never "empty": the slot itself is the
+  // affordance, so the dashed placeholder would duplicate it.
+  if (records.length === 0 && !leadingSlot) {
     return (
       <EmptyState
         icon={<ImageOff className="h-5 w-5" aria-hidden />}
@@ -70,6 +91,7 @@ export function RecordGrid({
         className
       )}
     >
+      {leadingSlot}
       {records.map((record) => (
         <RecordCard
           key={record.id}
@@ -78,6 +100,8 @@ export function RecordGrid({
           isRunning={running.has(record.id)}
           onToggleSelect={onToggleSelect}
           onInspect={onInspect}
+          onPromptDrop={onPromptDrop}
+          promptTitle={promptTitleFor ? promptTitleFor(record) : null}
         />
       ))}
     </div>

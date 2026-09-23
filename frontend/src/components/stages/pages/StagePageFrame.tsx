@@ -16,7 +16,6 @@ import { resetStage, type ImageRecord } from "@/lib/api";
 import { PageShell } from "@/components/shell/PageShell";
 import { cn } from "@/lib/cn";
 import type { BucketSpec, StageMeta } from "@/lib/stageMeta";
-import { formatScore } from "@/lib/stages";
 
 export interface StageStat {
   label: string;
@@ -38,17 +37,75 @@ export interface StagePageFrameProps {
    * re-deriving the bucket filter.
    */
   renderActions: (visible: ImageRecord[]) => ReactNode;
-  /** Optional readouts shown under the header. */
+  /**
+   * Optional readouts shown under the header.
+   *
+   * The Collector deliberately passes none: it is a two-pane workspace, and a
+   * row of metric cards between the header and the split pushed the gallery
+   * down for numbers the operator can already see in the buckets.
+   */
   stats?: StageStat[];
-  /** Optional panels rendered above the grid (e.g. the upscale controls). */
+  /**
+   * Panels rendered above the buckets inside the gallery pane.
+   *
+   * Used by stages whose run needs configuration (the Upscale options). They
+   * sit *inside* the left column so nothing can stack above the split.
+   */
   panels?: ReactNode;
+  /**
+   * A tile pinned to the **first cell of the record grid**.
+   *
+   * The Collector uses this for its upload slot. It is a grid cell rather than
+   * a stacked panel because the place images arrive belongs among the images.
+   */
+  gridLeadingSlot?: ReactNode;
+  /**
+   * Right-hand pane, rendered beside the gallery at a fixed 1/3 of the width.
+   *
+   * The Collector uses this for the Prompt Library: the prompts are the
+   * *source* of the collected images, so the two belong side by side. When
+   * omitted the page stays single-column.
+   */
+  sidePanel?: ReactNode;
+  /**
+   * Controls rendered inside the page header, beside the title.
+   *
+   * The Collector puts its mode switcher here so it reads as page chrome
+   * rather than a band of content competing with the gallery.
+   */
+  headerExtra?: ReactNode;
+  /**
+   * Prompt binding passthrough for the grid. Only the Collector supplies these;
+   * every other stage leaves them undefined and the tiles stay plain.
+   */
+  onPromptDrop?: (recordId: string, promptId: string) => void;
+  promptTitleFor?: (record: ImageRecord) => string | null;
   /** Copy for the empty bucket state. */
   emptyTitle?: string;
   emptyDescription?: string;
   emptyAction?: ReactNode;
   /** Hide the bucket strip for single-bucket pages. */
   hideBuckets?: boolean;
+  /**
+   * Optional overrides for the banner slots.
+   *
+   * A page that owns a second state source (the Collector's Prompt Library)
+   * merges its messages into one banner here instead of rendering two, which
+   * would stack duplicate "something failed" strips.
+   */
+  error?: string | null;
+  notice?: string | null;
+  onClearError?: () => void;
+  onClearNotice?: () => void;
 }
+
+/**
+ * The split ratio: the gallery takes two thirds, the side pane one third.
+ *
+ * Expressed as `fr` tracks with `minmax(0, …)` so a wide image grid cannot
+ * force the side pane narrower than its share.
+ */
+const SPLIT_COLUMNS = "xl:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]";
 
 /**
  * The chrome shared by every stage page.
@@ -65,16 +122,33 @@ export function StagePageFrame({
   renderActions,
   stats,
   panels,
+  gridLeadingSlot,
+  sidePanel,
+  headerExtra,
+  onPromptDrop,
+  promptTitleFor,
   emptyTitle,
   emptyDescription,
   emptyAction,
   hideBuckets = false,
+  error: errorOverride,
+  notice: noticeOverride,
+  onClearError,
+  onClearNotice,
 }: StagePageFrameProps) {
   const [activeBucketId, setActiveBucketId] = useState(buckets[0]?.id ?? "all");
   const [inspectRecord, setInspectRecord] = useState<ImageRecord | null>(null);
   const [previewVersion, setPreviewVersion] = useState(0);
 
-  const { selection, job, error, notice, isBusy, isLoading, load } = controller;
+  const { selection, job, isLoading, load } = controller;
+
+  // A page may supply its own error/notice (and its own dismiss handler) when it
+  // merges in a second state source; otherwise the controller's are used.
+  const error = errorOverride !== undefined ? errorOverride : controller.error;
+  const notice = noticeOverride !== undefined ? noticeOverride : controller.notice;
+  const clearNotice = onClearNotice ?? controller.clearNotice;
+  const clearError = onClearError ?? (() => controller.setError(null));
+  const isBusy = controller.isBusy;
 
   // Partition the pool into buckets. First match wins, so a record is counted
   // exactly once even when two buckets could claim it.
@@ -118,7 +192,6 @@ export function StagePageFrame({
   }, [poolIds, prune]);
 
   // Auto-dismiss transient notices.
-  const clearNotice = controller.clearNotice;
   useEffect(() => {
     if (!notice) return;
     const timer = setTimeout(clearNotice, 5000);
@@ -165,14 +238,17 @@ export function StagePageFrame({
         tagline={meta.tagline}
         icon={<meta.icon className="h-5 w-5" aria-hidden />}
         actions={
-          <button
-            type="button"
-            onClick={() => void load(true)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-navy-700/60 px-3 py-1.5 text-xs font-medium text-navy-200 transition-colors hover:bg-navy-750/60 hover:text-navy-50"
-          >
-            <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} aria-hidden />
-            Refresh
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            {headerExtra}
+            <button
+              type="button"
+              onClick={() => void load(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-navy-700/60 px-3 py-1.5 text-xs font-medium text-navy-200 transition-colors hover:bg-navy-750/60 hover:text-navy-50"
+            >
+              <RefreshCw className={cn("h-3.5 w-3.5", isLoading && "animate-spin")} aria-hidden />
+              Refresh
+            </button>
+          </div>
         }
       />
 
@@ -191,7 +267,7 @@ export function StagePageFrame({
       ) : null}
 
       {error ? (
-        <Banner tone="error" onDismiss={() => controller.setError(null)}>
+        <Banner tone="error" onDismiss={clearError}>
           {error}
         </Banner>
       ) : null}
@@ -202,8 +278,6 @@ export function StagePageFrame({
         </Banner>
       ) : null}
 
-      {panels}
-
       {job ? (
         <StageJobPanel
           job={job}
@@ -212,38 +286,68 @@ export function StagePageFrame({
         />
       ) : null}
 
-      {!hideBuckets ? (
-        <div className="space-y-3">
-          <BucketTabs tabs={tabs} activeId={activeBucketId} onChange={setActiveBucketId} />
-          {activeBucket ? (
-            <p className="text-xs text-navy-400">{activeBucket.hint}</p>
+      {/*
+        * The split *is* the page body: gallery (2/3) on the left, the page's
+        * side pane (1/3) on the right. Everything belonging to the gallery —
+        * its controls, buckets, selection bar and grid — lives inside the left
+        * column, so nothing can stack above the split and break the columns.
+        */}
+      <div
+        className={cn(
+          "space-y-3",
+          sidePanel != null && cn("xl:grid xl:gap-6 xl:space-y-0", SPLIT_COLUMNS)
+        )}
+      >
+        <div className="min-w-0 space-y-3">
+          {panels}
+
+          {!hideBuckets ? (
+            <div className="space-y-3">
+              <BucketTabs
+                tabs={tabs}
+                activeId={activeBucketId}
+                onChange={setActiveBucketId}
+              />
+              {activeBucket ? (
+                <p className="text-xs text-navy-400">{activeBucket.hint}</p>
+              ) : null}
+            </div>
           ) : null}
+
+          <SelectionBar
+            totalCount={visible.length}
+            selectedCount={selection.count}
+            isAllSelected={allVisibleSelected}
+            onSelectAll={() => selection.selectMany(visible.map((record) => record.id))}
+            onClearSelection={selection.clear}
+            actionsDisabled={isBusy || isLoading}
+          >
+            {renderActions(visible)}
+          </SelectionBar>
+
+          <RecordGrid
+            records={visible}
+            isLoading={isLoading}
+            isSelected={selection.isSelected}
+            onToggleSelect={selection.toggle}
+            onInspect={setInspectRecord}
+            runningIds={runningIds}
+            onPromptDrop={onPromptDrop}
+            promptTitleFor={promptTitleFor}
+            leadingSlot={gridLeadingSlot}
+            emptyTitle={emptyTitle ?? `Nothing in ${activeBucket?.label ?? "this bucket"}`}
+            emptyDescription={emptyDescription ?? activeBucket?.hint}
+            emptyAction={emptyAction}
+          />
         </div>
-      ) : null}
 
-      <div className="space-y-3">
-        <SelectionBar
-          totalCount={visible.length}
-          selectedCount={selection.count}
-          isAllSelected={allVisibleSelected}
-          onSelectAll={() => selection.selectMany(visible.map((record) => record.id))}
-          onClearSelection={selection.clear}
-          actionsDisabled={isBusy || isLoading}
-        >
-          {renderActions(visible)}
-        </SelectionBar>
-
-        <RecordGrid
-          records={visible}
-          isLoading={isLoading}
-          isSelected={selection.isSelected}
-          onToggleSelect={selection.toggle}
-          onInspect={setInspectRecord}
-          runningIds={runningIds}
-          emptyTitle={emptyTitle ?? `Nothing in ${activeBucket?.label ?? "this bucket"}`}
-          emptyDescription={emptyDescription ?? activeBucket?.hint}
-          emptyAction={emptyAction}
-        />
+        {sidePanel != null ? (
+          // Sticky on large screens so the prompt library stays reachable while
+          // the operator scrolls a long collection grid.
+          <div className="min-w-0 xl:sticky xl:top-[57px] xl:max-h-[calc(100vh-5rem)]">
+            {sidePanel}
+          </div>
+        ) : null}
       </div>
 
       <StageInspectModal
@@ -257,16 +361,6 @@ export function StagePageFrame({
       />
     </PageShell>
   );
-}
-
-/** Average acceptance score across a record pool, or null when unscored. */
-export function averageScore(records: ImageRecord[]): string {
-  const scored = records.filter(
-    (record) => typeof record.acceptance_score === "number"
-  );
-  if (scored.length === 0) return "—";
-  const total = scored.reduce((sum, record) => sum + (record.acceptance_score ?? 0), 0);
-  return formatScore(total / scored.length);
 }
 
 export default StagePageFrame;

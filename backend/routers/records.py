@@ -19,6 +19,9 @@ USED_FILTERS = ("all", "used", "unused")
 #: ``queued`` sentinel that selects records with no pending stage queue entry.
 QUEUED_NONE_SENTINEL = "none"
 
+#: ``prompt_id`` sentinel that selects records with no bound source prompt.
+PROMPT_NONE_SENTINEL = "none"
+
 
 @router.get("/api/records", response_model=RecordListResponse)
 async def list_records(
@@ -36,6 +39,13 @@ async def list_records(
         description=(
             "Filter by pending stage queue: a stage key, or 'none' for "
             "records that are not queued anywhere."
+        ),
+    ),
+    prompt_id: str | None = Query(
+        default=None,
+        description=(
+            "Filter by the Prompt Library link: a prompt id, or 'none' for "
+            "images with no known source prompt."
         ),
     ),
     limit: int = Query(default=DEFAULT_LIMIT, description="Max records to return."),
@@ -94,6 +104,14 @@ async def list_records(
         else:
             base = base.where(ImageRecord.queued_stage == queued)
             count_stmt = count_stmt.where(ImageRecord.queued_stage == queued)
+
+    if prompt_id:
+        if prompt_id == PROMPT_NONE_SENTINEL:
+            base = base.where(ImageRecord.prompt_id.is_(None))
+            count_stmt = count_stmt.where(ImageRecord.prompt_id.is_(None))
+        else:
+            base = base.where(ImageRecord.prompt_id == prompt_id)
+            count_stmt = count_stmt.where(ImageRecord.prompt_id == prompt_id)
 
     if id_filter:
         base = base.where(ImageRecord.id.in_(id_filter))

@@ -83,6 +83,61 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class PromptStatus(str, enum.Enum):
+    """Lifecycle of a generation prompt in the Prompt Library.
+
+    ``USED`` is deliberately derivable (binding any image marks a prompt used)
+    but also settable by hand, because an operator may know a prompt was
+    consumed elsewhere without collecting its output here.
+    """
+    DRAFT = "DRAFT"
+    USED = "USED"
+    ARCHIVED = "ARCHIVED"
+
+
+class Prompt(Base):
+    """A reusable image-generation prompt.
+
+    Prompts are the *source* of the images collected in Stage 1, so they are
+    first-class records rather than a text field on an image. One prompt can
+    produce many images, which is why the link lives on ``ImageRecord.prompt_id``
+    (many-to-one) instead of storing prompt text per image.
+
+    ``body`` holds the raw prompt text; ``negative_prompt`` is kept separate
+    because most generators take it as a distinct field. ``params`` stores
+    generator-specific settings (model, aspect ratio, seed, …) as free JSON so
+    new generators need no schema change.
+    """
+
+    __tablename__ = "prompts"
+    __table_args__ = (
+        Index("ix_prompts_status", "status"),
+        Index("ix_prompts_title", "title"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    title: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    body: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    negative_prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
+    #: Free-form generator settings, e.g. {"model": "...", "aspect": "1:1"}.
+    params: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    #: Optional grouping label, e.g. "Ayurvedic herbs".
+    tags: Mapped[list | None] = mapped_column(JSON, nullable=True)
+
+    status: Mapped[PromptStatus] = mapped_column(
+        Enum(PromptStatus), default=PromptStatus.DRAFT, nullable=False
+    )
+    #: Set the first time an image is bound, or when marked used manually.
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
 class ImageRecord(Base):
     """Primary database model tracking images through the processing pipeline."""
 
@@ -148,6 +203,11 @@ class ImageRecord(Base):
     # Gallery usage tracking - set once the asset has been consumed/published.
     is_used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    #: The generation prompt this image came from, if it was recorded.
+    #: Nullable because images may be collected without a known prompt, and
+    #: one prompt legitimately produces many images.
+    prompt_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
