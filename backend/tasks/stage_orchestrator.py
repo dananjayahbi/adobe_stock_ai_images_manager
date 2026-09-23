@@ -50,6 +50,16 @@ logger = logging.getLogger(__name__)
 
 SessionFactory = Callable[[], Session]
 
+#: Stages that block Stage 6 metadata generation.
+#:
+#: Deliberately *not* every terminal stage. A below-threshold (``INCOMPATIBLE``)
+#: record is a judgement call the operator may override, and Stage 6 must still
+#: be able to name it. ``OCR_REJECTED`` is a content-policy violation, so it is
+#: excluded from the deliverable pipeline entirely.
+METADATA_BLOCKED_STAGES: frozenset[PipelineStage] = frozenset(
+    {PipelineStage.OCR_REJECTED}
+)
+
 
 # --------------------------------------------------------------------------- #
 # Helpers
@@ -653,9 +663,19 @@ def run_metadata_stage(
             item.status = "running"
             item.started_at = time.time()
 
-            if record.stage in TERMINAL_STAGES:
+            # Only a content-policy rejection blocks metadata generation.
+            #
+            # The acceptance gate is a heuristic, so a below-threshold record is
+            # a *judgement call* the operator is entitled to make - refusing to
+            # even generate a title for it turned the gate into an absolute dead
+            # end. OCR_REJECTED is different in kind: embedded text is a
+            # content-policy violation, not a quality opinion, so it stays blocked.
+            if record.stage in METADATA_BLOCKED_STAGES:
                 item.status = "skipped"
-                item.message = f"Terminal stage ({record.stage.value})."
+                item.message = (
+                    "Embedded text was detected — a content-policy rejection, "
+                    "not a quality judgement."
+                )
                 item.finished_at = time.time()
                 continue
 
@@ -829,20 +849,32 @@ def build_metadata_csv(
     record_ids: list[str] | None = None,
     *,
     only_ready: bool = True,
+    db: Session | None = None,
 ) -> csv_export.CsvBuildResult:
     """Build the Adobe Stock CSV for the given records.
 
     When ``record_ids`` is omitted every eligible record is included, which is
     what the "download the whole batch" action needs.
+
+    ``only_ready`` restricts the set to records whose metadata is ready or which
+    are already published. It is on by default because Adobe matches rows to
+    files by name and only an uploadable asset belongs in the CSV; the caller can
+    turn it off when the operator deliberately exports a selected set that the
+    gate has not yet cleared.
+
+    ``db`` lets an HTTP caller pass the session FastAPI already opened. Without
+    it the function opens its own session from ``db_session_factory``, which in
+    tests means the **real** database rather than the isolated one the request
+    dependency injected — so a record created through the test client was
+    invisible to its own CSV export.
     """
-    db = db_session_factory()
+    owns_session = db is None
+    session = db if db is not None else db_session_factory()
     try:
-        query = db.query(ImageRecord)
+        query = session.query(ImageRecord)
         if record_ids:
             query = query.filter(ImageRecord.id.in_(list(dict.fromkeys(record_ids))))
         if only_ready:
-            # Only assets that can actually be uploaded belong in the CSV, since
-            # Adobe matches rows to files by name.
             query = query.filter(
                 ImageRecord.stage.in_(
                     [PipelineStage.METADATA_READY, PipelineStage.PUBLISHED]
@@ -852,4 +884,6 @@ def build_metadata_csv(
         records = query.order_by(ImageRecord.created_at.asc()).all()
         return csv_export.build_csv(records)
     finally:
-        db.close()
+        # Only close a session this function opened.
+        if owns_session:
+            session.close()

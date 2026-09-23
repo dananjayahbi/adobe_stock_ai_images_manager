@@ -2,6 +2,7 @@
 
 import { CheckCircle2, Circle, Download, Table, Trash2 } from "lucide-react";
 
+import CsvExportActions from "@/components/stages/delivery/CsvExportActions";
 import type { UsageFilter } from "@/lib/api";
 import type { StatusScope } from "./useGalleryRecords";
 
@@ -18,9 +19,12 @@ interface GalleryToolbarProps {
   onClearSelection: () => void;
   onMarkUsed: () => void;
   onMarkUnused: () => void;
-  onDownloadZip: () => void;
   onGenerateTable: () => void;
   onBulkDelete: () => void;
+  /** Ids of the selected records, for the CSV/bundle actions. */
+  selectedIds: string[];
+  onCsvError: (message: string | null) => void;
+  onCsvNotice: (message: string | null) => void;
 }
 
 const USAGE_FILTERS: { key: UsageFilter; label: string }[] = [
@@ -48,9 +52,11 @@ export default function GalleryToolbar({
   onClearSelection,
   onMarkUsed,
   onMarkUnused,
-  onDownloadZip,
   onGenerateTable,
   onBulkDelete,
+  selectedIds,
+  onCsvError,
+  onCsvNotice,
 }: GalleryToolbarProps) {
   const hasSelection = selectedCount > 0;
   const allSelected = visibleCount > 0 && selectedCount >= visibleCount;
@@ -127,12 +133,9 @@ export default function GalleryToolbar({
           disabled={!hasSelection || isBusy}
           onClick={onMarkUnused}
         />
-        <ToolbarAction
-          label="Download ZIP"
-          icon={<Download className="h-3.5 w-3.5" />}
-          disabled={!hasSelection || isBusy}
-          onClick={onDownloadZip}
-        />
+        {/* No plain "Download ZIP" here: the delivery bar below offers
+            "ZIP + CSV", which is a superset. Two ZIP buttons that differ only
+            in whether the CSV is inside would be a coin flip for the operator. */}
         <ToolbarAction
           label="Generate upload table"
           icon={<Table className="h-3.5 w-3.5" />}
@@ -147,6 +150,27 @@ export default function GalleryToolbar({
           onClick={onBulkDelete}
           danger
         />
+      </div>
+
+      {/* CSV / ZIP live in their own bar rather than beside the usage actions:
+          they are the *delivery* step, and the operator reaches for them when
+          the batch is final, not while triaging. The gallery exports published
+          assets, so `onlyReady={false}` keeps the server's ready-only filter
+          from silently emptying the CSV. */}
+      <div className="flex flex-wrap items-center gap-2 rounded-xl border border-navy-800 bg-navy-900/50 px-3 py-2">
+        <span className="text-[11px] font-medium uppercase tracking-wide text-navy-400">
+          Adobe delivery
+        </span>
+        <CsvExportActions
+          selectedIds={selectedIds}
+          onlyReady={false}
+          disabled={isBusy}
+          onError={onCsvError}
+          onNotice={onCsvNotice}
+        />
+        <span className="ml-auto text-[11px] text-navy-500">
+          CSV lists the selected rows; ZIP bundles them with that CSV.
+        </span>
       </div>
     </div>
   );

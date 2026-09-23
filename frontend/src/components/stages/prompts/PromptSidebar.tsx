@@ -3,9 +3,15 @@
 import { Info, ListPlus, Loader2, Search, Sparkles } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import PromptFilterTabs from "@/components/stages/prompts/PromptFilterTabs";
+import PromptLibrarySummary from "@/components/stages/prompts/PromptLibrarySummary";
 import { Button } from "@/components/ui/Button";
 import { Panel } from "@/components/ui/Panel";
 import { cn } from "@/lib/cn";
+import {
+  promptFilterCounts,
+  promptFilterEmptyMessage,
+} from "@/lib/promptFilters";
 import type { Prompt, PromptDraft, PromptFilter } from "@/lib/prompts";
 
 import PromptBlock from "./PromptBlock";
@@ -13,7 +19,14 @@ import PromptComposer from "./PromptComposer";
 
 export interface PromptSidebarProps {
   prompts: Prompt[];
-  totals: { total: number; used: number; unused: number };
+  totals: {
+    total: number;
+    used: number;
+    unused: number;
+    bound: number;
+    unbound: number;
+    archived: number;
+  };
   filter: PromptFilter;
   onFilterChange: (next: PromptFilter) => void;
   isLoading: boolean;
@@ -40,13 +53,6 @@ export interface PromptSidebarProps {
   onToggleUsed: (prompt: Prompt) => void;
 }
 
-const FILTERS: { id: PromptFilter; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "used", label: "Used" },
-  { id: "unused", label: "Unused" },
-  { id: "archived", label: "Archived" },
-];
-
 /**
  * The right-hand Prompt Library pane.
  *
@@ -54,6 +60,9 @@ const FILTERS: { id: PromptFilter; label: string }[] = [
  * the collection grid rather than a sub-panel of it. The search box filters
  * client-side because the library is a single operator's prompt list — a
  * round trip per keystroke would be slower and would fight the poll.
+ *
+ * Filtering is server-side (see `lib/promptFilters.ts` for the two axes); the
+ * counts shown on the tabs come from the same mapping the summary line uses.
  */
 export function PromptSidebar({
   prompts,
@@ -76,6 +85,8 @@ export function PromptSidebar({
   onToggleUsed,
 }: PromptSidebarProps) {
   const [query, setQuery] = useState("");
+
+  const counts = useMemo(() => promptFilterCounts(totals), [totals]);
 
   const visible = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -105,11 +116,7 @@ export function PromptSidebar({
               <h2 className="truncate text-sm font-semibold text-navy-50">
                 Prompt Library
               </h2>
-              <p className="truncate text-[11px] text-navy-400">
-                {totals.total} prompt{totals.total === 1 ? "" : "s"} ·{" "}
-                <span className="text-emerald-300">{totals.used} used</span> ·{" "}
-                {totals.unused} unused
-              </p>
+              <PromptLibrarySummary counts={counts} />
             </div>
           </div>
 
@@ -142,36 +149,20 @@ export function PromptSidebar({
           />
         </div>
 
-        <div
-          role="tablist"
-          aria-label="Prompt filters"
-          className="no-scrollbar -mx-0.5 flex items-center gap-1.5 overflow-x-auto px-0.5"
-        >
-          {FILTERS.map((entry) => (
-            <button
-              key={entry.id}
-              type="button"
-              role="tab"
-              aria-selected={filter === entry.id}
-              onClick={() => onFilterChange(entry.id)}
-              className={cn(
-                "shrink-0 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
-                filter === entry.id
-                  ? "border-accent-500 bg-accent-500/15 text-accent-200"
-                  : "border-navy-700/60 text-navy-300 hover:border-navy-600 hover:text-navy-100"
-              )}
-            >
-              {entry.label}
-            </button>
-          ))}
-        </div>
+        <PromptFilterTabs
+          filter={filter}
+          counts={counts}
+          onFilterChange={onFilterChange}
+        />
 
         <p className="flex items-start gap-1.5 rounded-lg border border-navy-700/40 bg-navy-900/40 px-2.5 py-2 text-[11px] leading-relaxed text-navy-400">
           <Info className="mt-0.5 h-3 w-3 shrink-0 text-accent-400" aria-hidden />
           <span>
             Drag a prompt block onto an image to bind them, or select images and
             use <span className="text-navy-200">Bind</span>. One prompt can be
-            bound to many images.
+            bound to many images. <span className="text-navy-200">Used</span> and{" "}
+            <span className="text-navy-200">Bound</span> are different states —
+            a prompt can be used without being bound.
           </span>
         </p>
       </div>
@@ -198,9 +189,7 @@ export function PromptSidebar({
             <p className="text-xs font-medium text-navy-200">
               {query.trim()
                 ? "No prompts match your search"
-                : filter === "all"
-                  ? "No prompts yet"
-                  : `No ${filter} prompts`}
+                : promptFilterEmptyMessage(filter)}
             </p>
             <p className="mx-auto mt-1 max-w-xs text-[11px] leading-relaxed text-navy-400">
               {query.trim()

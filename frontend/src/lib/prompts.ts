@@ -34,8 +34,16 @@ export interface Prompt {
 export interface PromptListResponse {
   items: Prompt[];
   total: number;
+  /** Status axis: how many prompts have been consumed. */
   used: number;
+  /** Status axis: still a draft, i.e. not consumed yet. */
   unused: number;
+  /** Status axis: filed away. */
+  archived: number;
+  /** Binding axis: how many prompts have at least one image bound. */
+  bound: number;
+  /** Binding axis: how many prompts have no image bound. */
+  unbound: number;
 }
 
 export interface PromptBindResponse {
@@ -46,8 +54,26 @@ export interface PromptBindResponse {
   prompt: Prompt;
 }
 
-/** Filter for the prompt list. `unused` means "no image bound yet". */
-export type PromptFilter = "all" | "draft" | "used" | "unused" | "archived";
+/**
+ * Filter for the prompt list.
+ *
+ * Two *independent* axes, because a prompt can be consumed without being bound
+ * to anything collected here:
+ *
+ * - **status** — `draft` / `used` / `unused` / `archived` read `Prompt.status`.
+ * - **binding** — `bound` / `unbound` read the live binding count.
+ *
+ * `all` matches everything. `unused` is the status twin of `used` (a prompt
+ * that is still a draft), NOT "no image bound" — that is `unbound`.
+ */
+export type PromptFilter =
+  | "all"
+  | "draft"
+  | "used"
+  | "unused"
+  | "bound"
+  | "unbound"
+  | "archived";
 
 export interface PromptDraft {
   title?: string;

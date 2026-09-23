@@ -29,6 +29,12 @@ class RecordResponse(BaseModel):
     generated_title: Optional[str] = None
     generated_description: Optional[str] = None
     generated_keywords: Optional[list[str]] = None
+    #: Operator-chosen upload filename. NULL means "derive it from the title".
+    download_name: Optional[str] = None
+    #: The name this asset is uploaded under — the value the CSV Filename column
+    #: carries. Sent so the UI can show the same name the CSV will contain rather
+    #: than the raw upload filename, which is a different string.
+    upload_filename: Optional[str] = None
     is_used: bool = False
     used_at: Optional[datetime] = None
     created_at: datetime
@@ -368,8 +374,88 @@ class MetadataUpdateRequest(BaseModel):
 
 
 class CsvExportRequest(BaseModel):
-    """Request body for the Adobe Stock CSV export."""
+    """Request body for the Adobe Stock CSV export.
+
+    ``record_ids`` omitted (or null) exports every eligible record; supplying ids
+    exports exactly those rows, which is what "select some and generate the CSV
+    for them" needs. ``only_ready`` controls the eligibility filter: the Gallery
+    legitimately exports *published* assets, and a force-accepted record may not
+    have reached METADATA_READY yet, so the caller can widen it deliberately.
+    """
+
     record_ids: Optional[list[str]] = None
+    #: When true (the default), only records whose metadata is ready are exported.
+    only_ready: bool = True
+
+
+class RenameItemRequest(BaseModel):
+    """One requested filename in a bulk rename."""
+
+    record_id: str
+    name: str
+
+
+class RenameRequest(BaseModel):
+    """Body for renaming one or more assets for the Adobe Stock upload.
+
+    Adobe matches a CSV row to an uploaded file by filename, so the name is part
+    of the deliverable. Names are normalised server-side (slugified, forced to a
+    JPEG extension, truncated to Adobe's 30-character cap) and reported back so
+    the operator sees exactly what will be uploaded.
+    """
+
+    items: list[RenameItemRequest]
+    #: When true, every name is rebuilt from the record's generated title,
+    #: ignoring ``items``. Used by the "rename them all" button.
+    regenerate: bool = False
+
+
+class RenameResultItem(BaseModel):
+    """Per-record outcome of a rename attempt."""
+
+    record_id: str
+    filename: str
+    download_name: Optional[str] = None
+    changed: bool = False
+    error: Optional[str] = None
+
+
+class RenameResponse(BaseModel):
+    """Outcome of a bulk rename."""
+
+    items: list[RenameResultItem]
+    updated: int = 0
+    failed: int = 0
+
+
+class ForcedAcceptRequest(BaseModel):
+    """Body for force-accepting records that the gate flagged.
+
+    ``reason`` is stored with the override, because an override that leaves no
+    trace is indistinguishable from a bug in the gate.
+    """
+
+    record_ids: list[str]
+    reason: str = ""
+
+
+class ForcedAcceptResultItem(BaseModel):
+    """Per-record outcome of a forced acceptance."""
+
+    record_id: str
+    accepted: bool
+    previous_stage: str
+    new_stage: Optional[str] = None
+    score: Optional[float] = None
+    reason: str = ""
+
+
+class ForcedAcceptResponse(BaseModel):
+    """Outcome of a bulk forced acceptance."""
+
+    items: list[ForcedAcceptResultItem]
+    accepted: int = 0
+    refused: int = 0
 
 
 class CategoryResponse(BaseModel):
@@ -489,12 +575,22 @@ class PromptResponse(BaseModel):
 
 
 class PromptListResponse(BaseModel):
-    """All prompts, newest first, with their binding counts."""
+    """All prompts, newest first, with their binding counts.
+
+    ``used``/``unused``/``archived`` count the *status* axis; ``bound``/
+    ``unbound`` count the independent *binding* axis. They are reported
+    separately rather than summed because a prompt can be consumed without any
+    of its images being collected here — "used" and "bound" are different
+    states, and the sidebar labels the two groups accordingly.
+    """
 
     items: list[PromptResponse]
     total: int
     used: int
     unused: int
+    bound: int = 0
+    unbound: int = 0
+    archived: int = 0
 
 
 class PromptCreateRequest(BaseModel):

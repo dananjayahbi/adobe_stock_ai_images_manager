@@ -10,6 +10,9 @@ that make that relationship trustworthy:
 - rebinding an image re-syncs the prompt it left.
 """
 
+import re
+from pathlib import Path
+
 import pytest
 
 
@@ -107,23 +110,93 @@ def test_list_prompts_reports_used_and_unused_totals(client, make_record):
     body = client.get("/api/prompts").json()
 
     assert body["total"] == 2
+    # Binding auto-promotes the prompt to USED, so the status axis sees 1 used
+    # and 1 still-draft — and the binding axis agrees here.
     assert body["used"] == 1
     assert body["unused"] == 1
+    assert body["bound"] == 1
+    assert body["unbound"] == 1
 
 
-def test_list_prompts_used_filter_is_derived_from_bindings(client, make_record):
-    """`used` means an image is bound — not merely that the status says USED."""
+def test_totals_separate_the_used_axis_from_the_bound_axis(client, make_record):
+    """The headline counts must answer both questions independently.
+
+    A prompt consumed elsewhere is `used` but `unbound`; a prompt that produced
+    collected images is both. A single derived number could not express that,
+    which is what the two filter groups exist to fix.
+    """
+    client.post("/api/prompts", json={"body": "consumed elsewhere", "status": "USED"})
     bound = client.post("/api/prompts", json={"body": "bound prompt"}).json()
-    client.post("/api/prompts", json={"body": "flagged but empty", "status": "USED"})
+    client.post("/api/prompts", json={"body": "still a draft"})
+    client.post("/api/prompts", json={"body": "filed away", "status": "ARCHIVED"})
     record_id = make_record()
     client.post(f"/api/prompts/{bound['id']}/bind", json={"record_ids": [record_id]})
 
-    used = client.get("/api/prompts", params={"status": "used"}).json()
-    unused = client.get("/api/prompts", params={"status": "unused"}).json()
+    body = client.get("/api/prompts").json()
 
-    assert [item["id"] for item in used["items"]] == [bound["id"]]
-    assert len(unused["items"]) == 1
-    assert unused["items"][0]["id"] != bound["id"]
+    assert body["total"] == 4
+    assert (body["used"], body["unused"], body["archived"]) == (2, 1, 1)
+    assert (body["bound"], body["unbound"]) == (1, 3)
+    # The axes deliberately do not sum to `total` — they overlap.
+    assert body["used"] + body["unused"] + body["archived"] == body["total"]
+
+
+def test_bound_filter_selects_only_prompts_with_images(client, make_record):
+    prompt = client.post("/api/prompts", json={"body": "herbs"}).json()
+    client.post("/api/prompts", json={"body": "never collected"})
+
+    before = client.get("/api/prompts", params={"status": "bound"}).json()
+    assert before["items"] == []
+
+    record_id = make_record()
+    client.post(f"/api/prompts/{prompt['id']}/bind", json={"record_ids": [record_id]})
+
+    after = client.get("/api/prompts", params={"status": "bound"}).json()
+    assert [item["id"] for item in after["items"]] == [prompt["id"]]
+    assert after["items"][0]["bound_count"] == 1
+
+
+def test_unbound_filter_keeps_a_prompt_that_is_used_but_has_no_images(
+    client, make_record
+):
+    """The case the filter exists for: used, yet nothing collected from it.
+
+    Unbinding must not silently move the prompt onto the binding axis in the
+    other direction either — it stays `used` (the status is real history) while
+    becoming `unbound`.
+    """
+    prompt = client.post("/api/prompts", json={"body": "herbs"}).json()
+    record_id = make_record()
+    client.post(f"/api/prompts/{prompt['id']}/bind", json={"record_ids": [record_id]})
+    client.post(
+        f"/api/prompts/{prompt['id']}/bind",
+        json={"record_ids": [record_id], "unbind": True},
+    )
+
+    unbound = client.get("/api/prompts", params={"status": "unbound"}).json()
+    used = client.get("/api/prompts", params={"status": "used"}).json()
+
+    assert [item["id"] for item in unbound["items"]] == [prompt["id"]]
+    assert [item["id"] for item in used["items"]] == [prompt["id"]]
+    assert unbound["items"][0]["status"] == "USED"
+    assert unbound["items"][0]["bound_count"] == 0
+
+
+def test_bound_filter_composes_with_the_search_side_not_the_status(
+    client, make_record
+):
+    """`bound` reads the binding axis only — an archived bound prompt counts."""
+    prompt = client.post(
+        "/api/prompts", json={"body": "archived but bound", "status": "ARCHIVED"}
+    ).json()
+    record_id = make_record()
+    client.post(f"/api/prompts/{prompt['id']}/bind", json={"record_ids": [record_id]})
+
+    bound = client.get("/api/prompts", params={"status": "bound"}).json()
+
+    assert [item["id"] for item in bound["items"]] == [prompt["id"]]
+    # The binding auto-promote must NOT resurrect an archived prompt.
+    assert bound["items"][0]["status"] == "ARCHIVED"
 
 
 def test_list_prompts_rejects_an_unknown_filter(client):
@@ -392,3 +465,178 @@ def test_normalise_tags_returns_none_when_nothing_survives():
 
     assert prompt_library.normalise_tags(["", "  "]) is None
     assert prompt_library.normalise_tags(None) is None
+
+
+# --------------------------------------------------------------------------- #
+# Filter vocabulary (unit)
+# --------------------------------------------------------------------------- #
+
+class _StubPrompt:
+    """Minimal stand-in: `matches_filter` only reads `status`."""
+
+    def __init__(self, status):
+        self.status = status
+
+
+@pytest.mark.parametrize(
+    ("status", "bound", "key", "expected"),
+    [
+        ("DRAFT", 0, "all", True),
+        ("ARCHIVED", 5, "all", True),
+        # Binding axis — reads the count, ignores the status entirely.
+        ("DRAFT", 0, "bound", False),
+        ("DRAFT", 1, "bound", True),
+        ("ARCHIVED", 2, "bound", True),
+        ("USED", 0, "unbound", True),
+        ("USED", 1, "unbound", False),
+        # Status axis.
+        ("DRAFT", 0, "draft", True),
+        ("USED", 0, "draft", False),
+        # `draft` reads the status only. DRAFT+bound is unreachable through the
+        # API (binding promotes DRAFT→USED), so this case documents that the
+        # filter does not double-guess the status rather than asserting a
+        # defensive rule that does not exist.
+        ("DRAFT", 3, "draft", True),
+        ("DRAFT", 0, "unused", True),
+        ("USED", 0, "unused", False),
+        ("USED", 0, "used", True),
+        ("DRAFT", 0, "used", False),
+        ("ARCHIVED", 0, "archived", True),
+        ("USED", 0, "archived", False),
+    ],
+)
+def test_matches_filter_axes(status, bound, key, expected):
+    from models import PromptStatus
+    from services import prompt_library
+
+    prompt = _StubPrompt(PromptStatus(status))
+    assert prompt_library.matches_filter(prompt, bound, key) is expected
+
+
+def test_matches_filter_rejects_an_unknown_key():
+    """A typo must raise rather than silently matching nothing."""
+    from models import PromptStatus
+    from services import prompt_library
+
+    with pytest.raises(ValueError):
+        prompt_library.matches_filter(_StubPrompt(PromptStatus.DRAFT), 0, "nonsense")
+
+
+def test_matches_filter_is_case_insensitive():
+    from models import PromptStatus
+    from services import prompt_library
+
+    assert prompt_library.matches_filter(_StubPrompt(PromptStatus.USED), 0, "USED")
+
+
+def test_every_list_filter_is_reachable(client):
+    """Guard against a tab that renders but 400s.
+
+    The sidebar renders its tabs from this tuple, so an entry missing here would
+    be a visible dead tab rather than a compile error.
+    """
+    from services import prompt_library
+
+    for key in prompt_library.LIST_FILTERS:
+        response = client.get("/api/prompts", params={"status": key})
+        assert response.status_code == 200, key
+
+    # `bound`/`unbound` must be in the vocabulary the frontend renders.
+    assert {"bound", "unbound"} <= set(prompt_library.LIST_FILTERS)
+
+
+def test_library_totals_are_computed_not_derived_from_one_number(
+    client, make_record, db_session_factory
+):
+    """Totals are counted per axis, so they must not be forced to sum to total."""
+    from services import prompt_library
+
+    bound = client.post("/api/prompts", json={"body": "bound"}).json()
+    client.post("/api/prompts", json={"body": "used only", "status": "USED"})
+    record_id = make_record()
+    client.post(f"/api/prompts/{bound['id']}/bind", json={"record_ids": [record_id]})
+
+    # The shared in-memory engine behind the test client, not the real DB.
+    session = db_session_factory()
+    try:
+        totals = prompt_library.library_totals(session)
+    finally:
+        session.close()
+
+    assert totals["total"] == 2
+    assert totals["bound"] == 1
+    assert totals["unbound"] == 1
+    # Both prompts are USED (one by binding, one by hand) — the axes overlap.
+    assert totals["used"] == 2
+
+
+# --------------------------------------------------------------------------- #
+# Vocabulary drift guard (frontend <-> backend)
+# --------------------------------------------------------------------------- #
+
+PROMPT_FILTERS_MODULE = (
+    Path(__file__).resolve().parent.parent.parent
+    / "frontend"
+    / "src"
+    / "lib"
+    / "promptFilters.ts"
+)
+
+
+def test_frontend_filter_tabs_match_the_backend_vocabulary():
+    """The tab strip and the API's accepted values must not drift apart.
+
+    The sidebar renders its tabs from `PROMPT_FILTERS` in the TypeScript module
+    while the endpoint validates against `prompt_library.LIST_FILTERS`. A tab
+    present in only one of them is either a 400 on click or an unreachable
+    filter — neither of which any type-checker or unit test would catch.
+
+    Accepted keys that the UI does not render must be declared in
+    ``FILTER_ALIASES``; an undeclared extra is a tab-less filter nobody can
+    reach, and a declared one is a deliberate alias.
+    """
+    from services import prompt_library
+
+    if not PROMPT_FILTERS_MODULE.is_file():
+        pytest.skip(f"frontend module not found at {PROMPT_FILTERS_MODULE}")
+
+    source = PROMPT_FILTERS_MODULE.read_text(encoding="utf-8")
+    # The `id:` of each entry in the exported PROMPT_FILTERS array.
+    rendered = set(re.findall(r'id:\s*"([a-z]+)"', source))
+    accepted = set(prompt_library.LIST_FILTERS)
+
+    assert rendered <= accepted, f"tabs with no backend filter: {rendered - accepted}"
+    assert accepted - rendered == set(prompt_library.FILTER_ALIASES), (
+        "every accepted-but-unrendered key must be a declared alias"
+    )
+    assert {"bound", "unbound"} <= rendered
+
+
+def test_filter_aliases_point_at_a_rendered_tab():
+    """An alias must resolve to a real filter, not to another alias."""
+    from services import prompt_library
+
+    for alias, target in prompt_library.FILTER_ALIASES.items():
+        assert alias in prompt_library.LIST_FILTERS
+        assert target in prompt_library.LIST_FILTERS
+        assert target not in prompt_library.FILTER_ALIASES
+
+
+def test_frontend_declares_the_two_axes():
+    """`bound`/`unbound` must be tagged as the binding axis, not the status one.
+
+    The axis tag is what drives the visual grouping in the tab strip; if these
+    two were filed under `status` the UI would present the two independent axes
+    as one, which is the exact confusion the feature removes.
+    """
+    if not PROMPT_FILTERS_MODULE.is_file():
+        pytest.skip(f"frontend module not found at {PROMPT_FILTERS_MODULE}")
+
+    source = PROMPT_FILTERS_MODULE.read_text(encoding="utf-8")
+    for key in ("bound", "unbound"):
+        entry = re.search(
+            r'id:\s*"' + key + r'",\s*label:\s*"[^"]+",\s*axis:\s*"([a-z]+)"',
+            source,
+        )
+        assert entry, f"no axis declared for {key}"
+        assert entry.group(1) == "binding", key

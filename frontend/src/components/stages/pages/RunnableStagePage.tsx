@@ -34,6 +34,17 @@ export interface RunnableStagePageProps {
   onRan?: () => void;
   /** Copy shown in an empty bucket. */
   emptyDescription?: string;
+  /**
+   * Optional overrides for the page's message banner.
+   *
+   * A page that owns a second state source (the Compatibility page's manual
+   * override) merges its messages into the one existing banner instead of
+   * stacking a duplicate strip beneath it.
+   */
+  error?: string | null;
+  notice?: string | null;
+  onClearError?: () => void;
+  onClearNotice?: () => void;
 }
 
 /**
@@ -54,6 +65,10 @@ export function RunnableStagePage({
   hideRun = false,
   onRan,
   emptyDescription,
+  error,
+  notice,
+  onClearError,
+  onClearNotice,
 }: RunnableStagePageProps) {
   const controller = useStagePage();
   const { records, push, removeRecords, startStage, isBusy, isPushing, selection } =
@@ -85,6 +100,10 @@ export function RunnableStagePage({
       emptyDescription={
         emptyDescription ?? "Push images here from the previous stage to get started."
       }
+      error={error}
+      notice={notice}
+      onClearError={onClearError}
+      onClearNotice={onClearNotice}
       renderActions={(visible) => {
         const selected = visible.filter((record) => selection.isSelected(record.id));
         const ids = selected.map((record) => record.id);

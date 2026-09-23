@@ -27,6 +27,13 @@ from models import ImageRecord
 #: Characters that are unsafe in a download filename.
 _UNSAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
 
+#: Runs of separator characters, collapsed to a single hyphen.
+#:
+#: Without this, a title like "trailing --- hyphens" produced
+#: ``trailing-----hyphens``: ugly in the portal and wasteful of Adobe's
+#: 30-character budget, which is counted per character.
+_SEPARATOR_RUN = re.compile(r"[-_]{2,}")
+
 #: Adobe: "Filename | 30 characters maximum". Counted on the whole filename.
 MAX_FILENAME_LENGTH = 30
 
@@ -35,8 +42,15 @@ _DISAMBIGUATOR_ROOM = 7
 
 
 def _slugify(value: str) -> str:
-    """Lower-case, hyphen-separated, filesystem-safe token."""
-    return _UNSAFE_FILENAME.sub("-", value).strip("-").lower()
+    """Lower-case, hyphen-separated, filesystem-safe token.
+
+    Collapses any run of unsafe characters *and* any run of separator characters
+    into a single hyphen, so the result is stable regardless of how the source
+    was punctuated.
+    """
+    cleaned = _UNSAFE_FILENAME.sub("-", value)
+    cleaned = _SEPARATOR_RUN.sub("-", cleaned)
+    return cleaned.strip("-_").lower()
 
 
 def _suffix_for(record: ImageRecord, staged_path: Path | str | None) -> str:
@@ -116,6 +130,11 @@ def build_upload_row(
     disambiguator: str | None = None,
 ) -> dict:
     """Convert a READY record into a single upload-table row."""
+    # Imported here rather than at module scope: `asset_naming` imports from
+    # this module (for the slug rule and the length cap), so a top-level import
+    # would be circular.
+    from services import asset_naming
+
     keywords = [str(keyword) for keyword in (record.generated_keywords or [])]
     thumbnail_url = None
     if record.thumbnail_path:
@@ -124,9 +143,10 @@ def build_upload_row(
 
     return {
         "record_id": record.id,
-        "filename": build_download_name(
-            record, staged_path, disambiguator=disambiguator
-        ),
+        # The upload table is what the operator copies from when pasting into the
+        # portal, so it must show the same name the CSV and ZIP use - including
+        # an operator-chosen override.
+        "filename": asset_naming.effective_download_name(record, staged_path),
         "title": record.generated_title or "",
         "description": record.generated_description or "",
         "keywords": keywords,

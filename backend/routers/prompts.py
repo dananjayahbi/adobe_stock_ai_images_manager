@@ -34,8 +34,8 @@ router = APIRouter(tags=["prompts"])
 #: Maximum records one bind call may touch.
 MAX_BIND_BATCH = 500
 
-#: Accepted ``status`` filters. "all" and "unused" are derived conveniences.
-STATUS_FILTERS = ("all", "draft", "used", "unused", "archived")
+#: Accepted ``status`` filters. See ``services.prompt_library.LIST_FILTERS``.
+STATUS_FILTERS = prompt_library.LIST_FILTERS
 
 
 def _get_prompt_or_404(db: Session, prompt_id: str) -> Prompt:
@@ -83,17 +83,21 @@ async def list_prompts(
     status: str = Query(
         default="all",
         description=(
-            "Filter by library state: 'all', 'draft', 'used', 'unused', or "
-            "'archived'. 'unused' means no image is bound yet."
+            "Filter by library state: 'all', 'draft', 'used', 'unused', "
+            "'bound', 'unbound', or 'archived'. The status filters ('draft', "
+            "'used', 'unused', 'archived') read the stored prompt status; "
+            "'bound'/'unbound' read whether any image is linked to it. A prompt "
+            "can be used without being bound, so the two axes are independent."
         ),
     ),
     db: Session = Depends(get_db),
 ) -> PromptListResponse:
     """Return every prompt newest-first with its binding count.
 
-    The ``used``/``unused`` split is derived from the actual bindings rather
-    than the stored status, so the counts always match what the operator sees
-    on the image side.
+    The ``used``/``unused`` split is derived from the stored status, while
+    ``bound``/``unbound`` is derived from the actual bindings. Keeping them
+    separate is what lets the operator answer two different questions: "have I
+    consumed this prompt?" and "have I collected what it produced?".
     """
     key = (status or "all").lower()
     if key not in STATUS_FILTERS:
@@ -110,13 +114,7 @@ async def list_prompts(
     items: list[PromptResponse] = []
     for prompt in prompts:
         bound = counts.get(prompt.id, 0)
-        if key == "draft" and prompt.status != PromptStatus.DRAFT:
-            continue
-        if key == "archived" and prompt.status != PromptStatus.ARCHIVED:
-            continue
-        if key == "used" and bound == 0:
-            continue
-        if key == "unused" and bound > 0:
+        if not prompt_library.matches_filter(prompt, bound, key):
             continue
         items.append(
             PromptResponse.model_validate(
@@ -124,13 +122,8 @@ async def list_prompts(
             )
         )
 
-    used = sum(1 for prompt in prompts if counts.get(prompt.id, 0) > 0)
-    return PromptListResponse(
-        items=items,
-        total=len(prompts),
-        used=used,
-        unused=len(prompts) - used,
-    )
+    totals = prompt_library.library_totals(db)
+    return PromptListResponse(items=items, **totals)
 
 
 @router.get("/api/prompts/{prompt_id}", response_model=PromptResponse)

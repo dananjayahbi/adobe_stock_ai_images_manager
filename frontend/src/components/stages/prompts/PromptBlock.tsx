@@ -3,6 +3,8 @@
 import { Check, GripVertical, ImageIcon, Pencil, Trash2 } from "lucide-react";
 import type { DragEvent } from "react";
 
+import PromptCopyButton from "@/components/stages/prompts/PromptCopyButton";
+import PromptStateBadges from "@/components/stages/prompts/PromptStateBadges";
 import { cn } from "@/lib/cn";
 import { writePromptDrag } from "@/lib/promptDrag";
 import type { Prompt } from "@/lib/prompts";
@@ -43,7 +45,11 @@ export function PromptBlock({
   onToggleUsed,
   onSelect,
 }: PromptBlockProps) {
-  const isUsed = prompt.bound_count > 0 || prompt.status === "USED";
+  // The two axes are read from their own fields and never derived from each
+  // other. `isUsed` is the *status* (consumed); `isBound` is the *binding*
+  // count. A prompt can be used and unbound at the same time.
+  const isUsed = prompt.status === "USED";
+  const isBound = prompt.bound_count > 0;
   const isArchived = prompt.status === "ARCHIVED";
 
   function handleDragStart(event: DragEvent<HTMLDivElement>) {
@@ -79,19 +85,22 @@ export function PromptBlock({
             >
               {prompt.title || "Untitled prompt"}
             </p>
-            {isUsed ? (
-              <span
-                className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-500/40 bg-emerald-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-200"
-                title="Used — bound to at least one image"
-              >
-                <Check className="h-2.5 w-2.5" aria-hidden />
-                Used
-              </span>
-            ) : (
-              <span className="shrink-0 rounded-full border border-navy-600/60 bg-navy-800/70 px-1.5 py-0.5 text-[10px] font-semibold text-navy-300">
-                Unused
-              </span>
-            )}
+            <div className="flex shrink-0 items-center gap-1.5">
+              {/* The copy control sits beside the title so it is reachable
+                  without hovering the action row — copying is the most
+                  frequent action on a prompt block. */}
+              <PromptCopyButton
+                value={prompt.body}
+                label={`Copy prompt text for ${prompt.title}`}
+                suffix={
+                  prompt.negative_prompt
+                    ? `Negative prompt: ${prompt.negative_prompt}`
+                    : null
+                }
+                isBusy={isBusy}
+              />
+              <PromptStateBadges prompt={prompt} />
+            </div>
           </div>
 
           <p className="mt-1 line-clamp-3 whitespace-pre-wrap text-[11px] leading-relaxed text-navy-300">
@@ -108,13 +117,18 @@ export function PromptBlock({
             <span
               className={cn(
                 "inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[10px] font-medium tabular-nums",
-                prompt.bound_count > 0
+                isBound
                   ? "bg-accent-500/15 text-accent-200"
                   : "bg-navy-800/70 text-navy-400"
               )}
+              title={
+                isBound
+                  ? `${prompt.bound_count} image(s) bound to this prompt`
+                  : "No image bound to this prompt"
+              }
             >
               <ImageIcon className="h-2.5 w-2.5" aria-hidden />
-              {prompt.bound_count} image{prompt.bound_count === 1 ? "" : "s"}
+              {prompt.bound_count} bound
             </span>
 
             {(prompt.tags ?? []).slice(0, 3).map((tag) => (
@@ -152,12 +166,22 @@ export function PromptBlock({
 
         <button
           type="button"
-          disabled={isBusy}
+          // A bound prompt is used by definition (the backend enforces it), so
+          // the toggle would be a no-op. Disabling it with the reason beats a
+          // button that appears to work and silently changes nothing.
+          disabled={isBusy || isBound}
           onClick={(event) => {
             event.stopPropagation();
             onToggleUsed(prompt);
           }}
-          className="inline-flex items-center gap-1 rounded-md border border-navy-700/60 bg-navy-800/60 px-2 py-1 text-[10px] font-medium text-navy-200 transition-colors hover:bg-navy-750 disabled:opacity-50"
+          title={
+            isBound
+              ? `Bound to ${prompt.bound_count} image(s), so it stays used. Unbind first.`
+              : isUsed
+                ? "Mark this prompt as unused (back to draft)"
+                : "Mark this prompt as used"
+          }
+          className="inline-flex items-center gap-1 rounded-md border border-navy-700/60 bg-navy-800/60 px-2 py-1 text-[10px] font-medium text-navy-200 transition-colors hover:bg-navy-750 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Check className="h-2.5 w-2.5" aria-hidden />
           {isUsed ? "Mark unused" : "Mark used"}

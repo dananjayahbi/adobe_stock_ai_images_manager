@@ -40,6 +40,18 @@ export interface ImageRecord {
   generated_title: string | null;
   generated_description: string | null;
   generated_keywords: string[] | null;
+  /**
+   * Operator-chosen upload filename, including the extension.
+   *
+   * `null` means "derive it from the generated title". Adobe matches a CSV row
+   * to an uploaded image by filename, so this is a deliverable, not a label.
+   */
+  download_name: string | null;
+  /**
+   * The name this asset is uploaded under — the value the CSV Filename column
+   * carries. Distinct from `filename`, which is the original upload's name.
+   */
+  upload_filename: string | null;
   is_used: boolean;
   used_at: string | null;
   created_at: string;

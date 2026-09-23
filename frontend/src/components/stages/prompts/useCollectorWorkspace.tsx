@@ -116,16 +116,19 @@ export function useCollectorWorkspace({
   }
 
   function handleToggleUsed(prompt: Prompt) {
-    const isUsed = prompt.bound_count > 0 || prompt.status === "USED";
-    if (isUsed && prompt.bound_count > 0) {
-      // Bound prompts are used by definition — the backend enforces this, so
-      // the button would be a no-op. Say so instead of silently doing nothing.
+    // A bound prompt is used by definition — the backend enforces it — so the
+    // toggle would be a no-op. The block disables the button in that state, but
+    // the guard stays here too so a keyboard/scripted path gets the same answer.
+    if (prompt.bound_count > 0) {
       library.setError(
         `“${prompt.title}” has ${prompt.bound_count} bound image(s), so it stays marked used. Unbind them first.`
       );
       return;
     }
-    void library.setPromptStatus(prompt.id, isUsed ? "DRAFT" : "USED");
+    void library.setPromptStatus(
+      prompt.id,
+      prompt.status === "USED" ? "DRAFT" : "USED"
+    );
   }
 
   const activePrompt = library.prompts.find((prompt) => prompt.id === activePromptId);

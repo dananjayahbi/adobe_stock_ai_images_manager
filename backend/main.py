@@ -54,6 +54,7 @@ from routers.queues import router as queues_router
 from routers.autofix import router as autofix_router
 from routers.settings import router as settings_router
 from routers.prompts import router as prompts_router
+from routers.delivery import router as delivery_router
 
 app.include_router(upload_router)
 app.include_router(records_router)
@@ -65,6 +66,7 @@ app.include_router(queues_router)
 app.include_router(autofix_router)
 app.include_router(settings_router)
 app.include_router(prompts_router)
+app.include_router(delivery_router)
 
 # Serve generated thumbnails to the frontend grid.
 create_data_directories()

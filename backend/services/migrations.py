@@ -33,6 +33,9 @@ ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     # Prompt Library link (Stage 1). Nullable: an image may be collected
     # without a known prompt, and one prompt binds to many images.
     ("image_records", "prompt_id", "VARCHAR(36)"),
+    # Operator-chosen upload filename (Stage 6). NULL means "derive it from the
+    # title", so existing rows keep their current names with no backfill.
+    ("image_records", "download_name", "VARCHAR(255)"),
 ]
 
 # Rows that already reached READY under the old two-column model are already

@@ -20,6 +20,7 @@ from schemas import (
     UploadTableResponse,
     UsedRequest,
 )
+from services import asset_naming
 from services.storage import delete_record_files, resolve_ready_path
 from services.upload_table import build_download_name, build_upload_row
 
@@ -170,7 +171,7 @@ async def download_record(record_id: str, db: Session = Depends(get_db)):
     return FileResponse(
         path=str(path),
         media_type="image/jpeg",
-        filename=build_download_name(record, path, disambiguator=record.id),
+        filename=asset_naming.effective_download_name(record, path),
     )
 
 
@@ -208,10 +209,12 @@ async def download_records_zip(request: DeleteRequest, db: Session = Depends(get
                 if path is None:
                     logger.warning("Skipping unstaged record %s in ZIP", record.id)
                     continue
-                # The disambiguator keeps two long, similarly-titled assets from
-                # collapsing to the same 30-character name. The set below is a
-                # belt-and-braces guard in case two ids ever slugify identically.
-                name = build_download_name(record, path, disambiguator=record.id)
+                # The archive must name each file exactly as the CSV does, or
+                # Adobe will not match the row to the uploaded image. The
+                # resolver honours the operator's chosen name and falls back to
+                # the derived one; the set below is a belt-and-braces guard in
+                # case two names ever collide.
+                name = asset_naming.effective_download_name(record, path)
                 if name in used_names:
                     stem_budget = max(len(name) - len(path.suffix) - 9, 1)
                     name = f"{name[:stem_budget]}-{record.id[:8]}{path.suffix.lower()}"

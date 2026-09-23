@@ -578,7 +578,7 @@ async def preview_csv(
     before uploading the file to Adobe.
     """
     result = stage_orchestrator.build_metadata_csv(
-        SessionLocal, request.record_ids, only_ready=True
+        SessionLocal, request.record_ids, only_ready=True, db=db
     )
     return {
         "csv_text": result.csv_text,

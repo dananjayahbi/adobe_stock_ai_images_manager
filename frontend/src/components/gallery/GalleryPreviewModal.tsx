@@ -3,6 +3,7 @@
 import { CheckCircle2, Circle, Download, Trash2, X } from "lucide-react";
 import { useEffect } from "react";
 
+import MetadataCopyList from "@/components/gallery/MetadataCopyList";
 import { getDownloadUrl, getThumbnailUrl, type ImageRecord } from "@/lib/api";
 
 interface GalleryPreviewModalProps {
@@ -133,6 +134,11 @@ export default function GalleryPreviewModal({
               </div>
             </div>
           )}
+
+          {/* Per-field copy controls. The bulk CSV covers the normal path, but
+              one field for one image is a routine need and rebuilding a whole
+              CSV to copy a single title is disproportionate. */}
+          <MetadataCopyList record={record} />
 
           <div className="mt-auto flex flex-col gap-2 pt-2">
             <button

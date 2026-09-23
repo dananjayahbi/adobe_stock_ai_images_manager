@@ -38,9 +38,9 @@ from dataclasses import dataclass, field
 
 from config import settings
 from models import ImageRecord
+from services import asset_naming
 from services.adobe_categories import DEFAULT_CATEGORY, resolve_category
 from services.storage import resolve_ready_path
-from services.upload_table import build_download_name
 
 logger = logging.getLogger(__name__)
 
@@ -138,13 +138,15 @@ def build_row(record: ImageRecord) -> tuple[list[str], list[str]]:
     """
     warnings: list[str] = []
 
-    # The CSV must name the file exactly as the operator will upload it, so it
-    # uses the same slugified name the ZIP/download endpoints produce - including
-    # the staged file's extension, which may differ from the original upload.
-    # The record id is passed as a disambiguator because Adobe's 30-character
-    # cap can otherwise make two long titles collide.
+    # The CSV must name the file exactly as the operator will upload it, so an
+    # explicit `download_name` wins over the derived one. The derivation remains
+    # the fallback so records the operator never renamed keep working.
+    #
+    # Read through the record's own `upload_filename` property: that is the same
+    # value the API reports to the UI and the ZIP writes as an entry name, so the
+    # CSV, the archive and the preview modal cannot disagree.
     staged_path = resolve_ready_path(record)
-    filename = build_download_name(record, staged_path, disambiguator=record.id)
+    filename = record.upload_filename
 
     raw_title = (record.generated_title or "").strip()
     if not raw_title:
@@ -254,6 +256,18 @@ def build_csv(records: list[ImageRecord]) -> CsvBuildResult:
         rows.append(row)
         row_ids.append(record.id)
         warnings.extend(row_warnings)
+
+    # Adobe matches rows to files by name, so two identical Filename values would
+    # make one of them unreachable (and one asset silently un-described). Names
+    # are de-duplicated across the whole document, not per row, because the
+    # collision only exists in the context of the batch being uploaded.
+    unique_names = asset_naming.deduplicate([row[0] for row in rows])
+    for row, name in zip(rows, unique_names):
+        if row[0] != name:
+            warnings.append(
+                f"{row[0]}: renamed to {name} to keep filenames unique in this CSV."
+            )
+            row[0] = name
 
     # Enforce the 1 MB ceiling by dropping whole rows from the tail. Each probe
     # re-renders, which is cheap relative to the network round trip that a

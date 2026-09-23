@@ -29,6 +29,43 @@ MAX_TITLE_LENGTH = 200
 #: Collapse any run of whitespace so a multi-line prompt yields one clean title.
 _WHITESPACE = re.compile(r"\s+")
 
+#: Filter vocabulary for ``GET /api/prompts``, in the order the tabs render.
+#:
+#: Two *independent* axes are exposed, because a prompt can be consumed without
+#: being linked to anything collected here:
+#:
+#: - **status axis** — has the prompt been consumed? ``draft`` / ``used`` /
+#:   ``archived`` read ``Prompt.status``.
+#: - **binding axis** — is it linked to collected images? ``bound`` / ``unbound``
+#:   read the live binding count.
+#:
+#: ``unused`` is the status-axis counterpart of ``used`` (a prompt that is still
+#: a draft). ``all`` matches everything.
+LIST_FILTERS: tuple[str, ...] = (
+    "all",
+    "draft",
+    "used",
+    "unused",
+    "bound",
+    "unbound",
+    "archived",
+)
+
+#: Filters that read ``Prompt.status`` rather than the binding count.
+STATUS_FILTERS: dict[str, PromptStatus] = {
+    "draft": PromptStatus.DRAFT,
+    "used": PromptStatus.USED,
+    "archived": PromptStatus.ARCHIVED,
+}
+
+#: Accepted keys that the UI deliberately does not render as its own tab.
+#:
+#: ``draft`` is the *API* name for the state the sidebar labels **Unused**;
+#: rendering both would put two tabs on one state. It stays accepted so an
+#: existing caller does not start getting 400s, but it is an alias rather than a
+#: distinct filter, and ``test_prompts_api`` pins that this is the only one.
+FILTER_ALIASES: dict[str, str] = {"draft": "unused"}
+
 
 def derive_title(body: str, fallback: str = "Untitled prompt") -> str:
     """Build a readable title from a prompt body's first line.
@@ -82,6 +119,50 @@ def binding_counts(db: Session) -> Counter[str]:
         .group_by(ImageRecord.prompt_id)
     ).all()
     return Counter({prompt_id: count for prompt_id, count in rows})
+
+
+def matches_filter(prompt: Prompt, bound_count: int, key: str) -> bool:
+    """Whether a prompt satisfies one list filter.
+
+    Kept here rather than inline in the router so the *rules* — in particular
+    the difference between ``used`` (consumed) and ``bound`` (linked to images
+    collected here) — are pinned by unit tests instead of only by HTTP tests.
+    """
+    key = (key or "all").lower()
+    if key in ("all", ""):
+        return True
+    if key == "bound":
+        return bound_count > 0
+    if key == "unbound":
+        return bound_count == 0
+    if key == "unused":
+        # "Not consumed yet" — the twin of `used` on the status axis.
+        return prompt.status == PromptStatus.DRAFT
+
+    wanted = STATUS_FILTERS.get(key)
+    if wanted is None:
+        raise ValueError(key)
+    return prompt.status == wanted
+
+
+def library_totals(db: Session) -> dict[str, int]:
+    """Counts for the whole library, so the filter tabs can show numbers.
+
+    The two axes are counted separately on purpose: summing them would be
+    meaningless (a prompt can be used *and* unbound), and the sidebar labels
+    them by axis.
+    """
+    counts = binding_counts(db)
+    prompts = list(db.execute(select(Prompt)).scalars().all())
+    bound = sum(1 for prompt in prompts if counts.get(prompt.id, 0) > 0)
+    return {
+        "total": len(prompts),
+        "used": sum(1 for p in prompts if p.status == PromptStatus.USED),
+        "unused": sum(1 for p in prompts if p.status == PromptStatus.DRAFT),
+        "bound": bound,
+        "unbound": len(prompts) - bound,
+        "archived": sum(1 for p in prompts if p.status == PromptStatus.ARCHIVED),
+    }
 
 
 def apply_binding_status(prompt: Prompt, bound_count: int) -> None:

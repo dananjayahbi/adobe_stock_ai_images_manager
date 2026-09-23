@@ -199,6 +199,14 @@ class ImageRecord(Base):
     generated_title: Mapped[str | None] = mapped_column(String(500), nullable=True)
     generated_description: Mapped[str | None] = mapped_column(Text, nullable=True)
     generated_keywords: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    #: Operator-chosen upload filename, including the extension.
+    #:
+    #: Adobe matches a CSV row to an uploaded image **by filename**, so the name
+    #: is a real deliverable, not a display detail. When NULL the name is derived
+    #: from the generated title (see ``services/asset_naming``); when set it wins
+    #: everywhere - the CSV Filename column, the download, and the ZIP entry - so
+    #: the three can never disagree.
+    download_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Gallery usage tracking - set once the asset has been consumed/published.
     is_used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -216,3 +224,22 @@ class ImageRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
     )
+
+    @property
+    def upload_filename(self) -> str:
+        """The name this asset is uploaded to Adobe under.
+
+        **The single source of truth for the delivered filename.** The CSV's
+        Filename column, the ZIP entry, the download's Content-Disposition and
+        the preview modal all read this property, so they cannot disagree — and a
+        disagreement is not cosmetic: Adobe matches a CSV row to an uploaded file
+        *by name*, so a mismatch means the metadata silently never lands.
+
+        Returns the operator's explicit ``download_name`` when set, otherwise the
+        title-derived name. The import is deferred because ``services`` imports
+        this module, so a top-level import would be circular.
+        """
+        from services.asset_naming import effective_download_name
+
+        return effective_download_name(self)
+

@@ -23,9 +23,23 @@ import {
  * The hook owns the *library*; binding is exposed as a callback so the page can
  * refresh its record list from a single place.
  */
+export interface PromptLibraryTotals {
+  total: number;
+  /** Status axis: consumed. */
+  used: number;
+  /** Status axis: still a draft. */
+  unused: number;
+  /** Status axis: filed away. */
+  archived: number;
+  /** Binding axis: at least one image bound. */
+  bound: number;
+  /** Binding axis: no image bound (may still be used). */
+  unbound: number;
+}
+
 export interface UsePromptLibraryResult {
   prompts: Prompt[];
-  totals: { total: number; used: number; unused: number };
+  totals: PromptLibraryTotals;
   filter: PromptFilter;
   setFilter: (next: PromptFilter) => void;
   isLoading: boolean;
@@ -53,6 +67,15 @@ export interface UsePromptLibraryResult {
 
 const POLL_INTERVAL_MS = 8000;
 
+const EMPTY_TOTALS: PromptLibraryTotals = {
+  total: 0,
+  used: 0,
+  unused: 0,
+  archived: 0,
+  bound: 0,
+  unbound: 0,
+};
+
 /**
  * @param enabled When false the library is inert: no fetch, no polling. The
  *   Collector mounts this hook unconditionally (hooks cannot be called
@@ -61,7 +84,7 @@ const POLL_INTERVAL_MS = 8000;
  */
 export function usePromptLibrary(enabled = true): UsePromptLibraryResult {
   const [prompts, setPrompts] = useState<Prompt[]>([]);
-  const [totals, setTotals] = useState({ total: 0, used: 0, unused: 0 });
+  const [totals, setTotals] = useState<PromptLibraryTotals>(EMPTY_TOTALS);
   const [filter, setFilter] = useState<PromptFilter>("all");
   const [isLoading, setLoading] = useState(true);
   const [busyPromptId, setBusyPromptId] = useState<string | null>(null);
@@ -86,10 +109,16 @@ export function usePromptLibrary(enabled = true): UsePromptLibraryResult {
         const listing = await fetchPrompts(filterRef.current);
         if (id !== requestId.current) return;
         setPrompts(listing.items);
+        // Both axes are stored as reported. Never derive one from the other:
+        // `used` counts the status and `bound` counts the bindings, and they
+        // legitimately disagree.
         setTotals({
           total: listing.total,
           used: listing.used,
           unused: listing.unused,
+          archived: listing.archived,
+          bound: listing.bound,
+          unbound: listing.unbound,
         });
         setError(null);
       } catch (err) {

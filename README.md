@@ -93,8 +93,34 @@ cd backend
 | `GET` | `/api/records/{id}/download` | Download the staged, metadata-tagged file (READY only). |
 | `POST` | `/api/records/download-zip` | ZIP archive of staged files (max 50 per request). |
 | `POST` | `/api/upload-table` | Build copy/paste metadata rows for the selected records. |
+| `POST` | `/api/assets/rename` | Set the Adobe upload filename for one or more records (blank clears the override). |
+| `POST` | `/api/assets/rename-suggest` | Propose filenames derived from the generated titles, without writing. |
+| `POST` | `/api/assets/force-accept` | Force records past the acceptance gate, recording the reason. |
+| `POST` | `/api/assets/csv` | Download the Adobe Stock CSV for a selection (`only_ready` defaults true). |
+| `POST` | `/api/assets/csv/preview` | CSV text plus warnings, without downloading. |
+| `POST` | `/api/assets/bundle` | ZIP the selected images **and** their CSV together. |
+| `GET` | `/api/prompts` | List generation prompts. Filters: `status` (`all`/`used`/`unused`/`bound`/`unbound`/`archived`, alias `draft`). |
+| `POST` | `/api/prompts` | Create a prompt (title derived from the body when blank). |
+| `GET` | `/api/prompts/{id}` | Fetch one prompt with its binding count. |
+| `PATCH` | `/api/prompts/{id}` | Partial update; also marks a prompt used/draft/archived by hand. |
+| `DELETE` | `/api/prompts/{id}` | Delete a prompt, keeping and unbinding its images. |
+| `POST` | `/api/prompts/{id}/bind` | Bind images to a prompt, or unbind (`{"record_ids": [...], "unbind": true}`). |
 | `GET` | `/thumbnails/{filename}` | Static thumbnail images. |
 | `GET` | `/health` | Liveness probe. |
+
+### Prompt filters: two independent axes
+A prompt's *consumed* state and its *binding* state are different things — a
+prompt can be used elsewhere without anything being collected here. The list
+endpoint reports both, and they legitimately disagree:
+
+| Axis | Filters | Reads |
+| --- | --- | --- |
+| Status | `used`, `unused`, `archived` | `Prompt.status` |
+| Binding | `bound`, `unbound` | live count of linked `image_records` |
+
+`unused` is the status twin of `used` (still a draft); "no image bound" is
+`unbound`. `GET /api/prompts` returns `used`/`unused`/`archived` **and**
+`bound`/`unbound` as separate totals, so they must not be summed.
 
 ## Pages
 
@@ -103,6 +129,34 @@ cd backend
 | `/` | Pipeline dashboard: upload, live QC status, batch approve. |
 | `/gallery` | Masonry gallery of staged assets — usage filters, multi-select, ZIP download, bulk delete, and "Generate upload table". |
 | `/upload-table` | Copy/paste-ready title/description/keyword rows with image previews, opened in a new tab from the gallery. |
+
+## Delivery: filenames, forced acceptance, CSV & ZIP
+
+From **Metadata & CSV** onward the job changes from *processing* images to
+*delivering* them, so the same three controls follow the record wherever it sits
+— including the Gallery's published view:
+
+| Control | Why it exists |
+| --- | --- |
+| **Filenames** | Adobe matches each CSV row to an uploaded file **by filename**. Names are normalised to Adobe's rules (lower-case, hyphens, JPEG, ≤30 chars) and can be rebuilt in bulk from the generated titles. |
+| **Force accept** | The acceptance gate is a heuristic and the score is a *ranking* signal. The operator can override it; the **score and the scorer's issues are preserved** and the override is recorded with a reason, so it is never mistaken for a pass. |
+| **CSV / ZIP + CSV** | Generated from the *current selection*. The ZIP contains the images **and** the CSV that names them, so the two cannot drift apart. |
+
+Two rules the code enforces rather than trusting:
+
+- **One name, everywhere.** `ImageRecord.upload_filename` is the single source of
+  truth, read by the CSV, the ZIP entry, the download and the UI. `download_name`
+  stores an operator override; when unset the name is derived from the title.
+- **A CSV row must name a file that is actually delivered.** The bundle builds its
+  CSV from the *staged* records, so an unpublished selection cannot produce a row
+  for a file that is not in the archive.
+- **Publishing stages the pipeline's quality copy** (`working_path` — the
+  refined/upscaled output), falling back to the inbox original only when no
+  working copy exists. Staging the raw upload would silently discard every
+  stage's work.
+- **Metadata generation is allowed below the threshold.** Only an `OCR_REJECTED`
+  record is blocked, because embedded text is a content-policy violation rather
+  than a quality judgement.
 
 ## Pipeline
 

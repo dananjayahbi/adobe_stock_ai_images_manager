@@ -1,9 +1,11 @@
 "use client";
 
-import { ArrowRight, Download, PencilLine, Play, Table2 } from "lucide-react";
+import { ArrowRight, PencilLine, Play, Tags } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
-import CsvPanel from "@/components/stages/CsvPanel";
+import CsvExportActions from "@/components/stages/delivery/CsvExportActions";
+import ForceAcceptControl from "@/components/stages/delivery/ForceAcceptControl";
+import RenamePanel from "@/components/stages/delivery/RenamePanel";
 import MetadataEditorPanel from "@/components/stages/MetadataEditorPanel";
 import StageDeleteButton from "@/components/stages/StageDeleteButton";
 import StagePageFrame, { type StageStat } from "@/components/stages/pages/StagePageFrame";
@@ -18,9 +20,18 @@ const META = STAGE_META.metadata;
 /**
  * Stage 6 — Metadata & CSV.
  *
+ * This is where the operator stops *processing* images and starts *delivering*
+ * them, so the page carries three delivery concerns alongside the run action:
+ *
+ * * **Naming** — Adobe matches CSV rows to uploaded files by filename, so the
+ *   name is part of the deliverable and must be fixable in bulk.
+ * * **Forced acceptance** — the gate is a heuristic; the operator can override
+ *   it, and the override is recorded rather than hidden.
+ * * **CSV / ZIP** — generated from the current *selection*, never the whole
+ *   stage, because an operator uploads a chosen batch.
+ *
  * Unlike the other stages this page needs per-record editing, so it drives
- * `StagePageFrame` directly instead of the generic runnable page: the editor
- * panel and the CSV export both hang off the *current selection*.
+ * `StagePageFrame` directly instead of the generic runnable page.
  */
 export default function MetadataPage() {
   const controller = useStagePage();
@@ -29,7 +40,11 @@ export default function MetadataPage() {
 
   const [categories, setCategories] = useState<AdobeCategory[]>([]);
   const [editing, setEditing] = useState<ImageRecord | null>(null);
-  const [showCsv, setShowCsv] = useState(false);
+  const [showRename, setShowRename] = useState(false);
+  // Delivery messages are merged into the frame's single banner rather than
+  // stacking a second one next to it.
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const pool = useMemo(() => poolFor(records, "metadata"), [records]);
 
@@ -49,12 +64,14 @@ export default function MetadataPage() {
   const stats: StageStat[] = useMemo(() => {
     const draft = pool.filter((record) => record.queued_stage === "metadata").length;
     const ready = pool.filter((record) => record.stage === "METADATA_READY").length;
-    const withTitle = pool.filter((record) => Boolean(record.generated_title)).length;
+    // Surfacing the named count makes it obvious how many assets still need a
+    // deliberate upload filename before the CSV is trustworthy.
+    const named = pool.filter((record) => Boolean(record.download_name)).length;
 
     return [
       { label: "Draft", value: draft, hint: "No metadata yet", tone: "accent" },
       { label: "Metadata ready", value: ready, hint: "Title + keywords set", tone: "success" },
-      { label: "Titled", value: withTitle, hint: "Across this page" },
+      { label: "Named", value: named, hint: "Explicit upload filenames" },
       { label: "Total", value: pool.length },
     ];
   }, [pool]);
@@ -70,6 +87,10 @@ export default function MetadataPage() {
         pool={pool}
         buckets={META.buckets}
         stats={stats}
+        error={error ?? controller.error}
+        notice={notice ?? controller.notice}
+        onClearError={() => setError(null)}
+        onClearNotice={() => setNotice(null)}
         emptyTitle="Nothing in this bucket"
         emptyDescription="Push compatible images here, then generate titles, descriptions and keywords."
         renderActions={(visible) => {
@@ -103,29 +124,52 @@ export default function MetadataPage() {
                   isLoading={isBusy}
                   onClick={() => void startStage({ stageKey: "metadata", recordIds: ids })}
                   icon={isBusy ? undefined : <Play className="h-3.5 w-3.5" aria-hidden />}
+                  title="Generate metadata for the selection — allowed even below the acceptance threshold"
                 >
                   {META.action} ({selected.length})
                 </Button>
               ) : null}
 
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => setShowCsv(true)}
-                icon={<Table2 className="h-3.5 w-3.5" aria-hidden />}
-              >
-                Preview CSV
-              </Button>
-
+              {/* Naming is only meaningful once there is a selection to name. */}
               {selected.length > 0 ? (
                 <Button
                   size="sm"
-                  variant="ghost"
-                  onClick={() => setShowCsv(true)}
-                  icon={<Download className="h-3.5 w-3.5" aria-hidden />}
+                  variant="secondary"
+                  disabled={isBusy}
+                  onClick={() => setShowRename((current) => !current)}
+                  icon={<Tags className="h-3.5 w-3.5" aria-hidden />}
+                  title="Set the upload filenames Adobe will match against the CSV"
                 >
-                  Export {selected.length} row{selected.length === 1 ? "" : "s"}
+                  Filenames ({selected.length})
                 </Button>
+              ) : null}
+
+              {/* CSV/ZIP follow the selection and do NOT require the metadata
+                  gate to have passed: a force-accepted record still needs a
+                  CSV, and `onlyReady={false}` is what lets it through. */}
+              <CsvExportActions
+                selectedIds={ids}
+                onlyReady={false}
+                disabled={isBusy}
+                onError={setError}
+                onNotice={setNotice}
+              />
+
+              {/* The override is only offered where it can actually do
+                  something, so the button never promises a no-op. */}
+              {selected.some(
+                (record) =>
+                  record.stage === "INCOMPATIBLE" || record.stage === "COLLECTED"
+              ) ? (
+                <ForceAcceptControl
+                  records={selected}
+                  disabled={isBusy}
+                  onError={setError}
+                  onNotice={setNotice}
+                  onAccepted={async () => {
+                    await controller.load();
+                  }}
+                />
               ) : null}
 
               {processedIds.length > 0 ? (
@@ -151,6 +195,20 @@ export default function MetadataPage() {
         }}
       />
 
+      {showRename && selectedRecords.length > 0 ? (
+        <div className="px-1">
+          <RenamePanel
+            records={selectedRecords}
+            onError={setError}
+            onNotice={setNotice}
+            onSaved={async () => {
+              await controller.load();
+            }}
+            onClose={() => setShowRename(false)}
+          />
+        </div>
+      ) : null}
+
       {editing ? (
         <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-navy-950/85 p-4 backdrop-blur-sm">
           <div className="my-6 w-full max-w-3xl rounded-xl border border-navy-700/60 bg-navy-900 shadow-raised">
@@ -169,13 +227,6 @@ export default function MetadataPage() {
             </div>
           </div>
         </div>
-      ) : null}
-
-      {showCsv ? (
-        <CsvPanel
-          recordIds={selectedIds.length > 0 ? selectedIds : undefined}
-          onClose={() => setShowCsv(false)}
-        />
       ) : null}
     </>
   );

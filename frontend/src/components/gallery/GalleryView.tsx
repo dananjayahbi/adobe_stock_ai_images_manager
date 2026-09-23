@@ -21,6 +21,9 @@ export default function GalleryView() {
   const selection = useGallerySelection();
   const [previewRecord, setPreviewRecord] = useState<ImageRecord | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete | null>(null);
+  // Delivery messages reuse the existing banner instead of stacking a second one.
+  const [deliveryError, setDeliveryError] = useState<string | null>(null);
+  const [deliveryNotice, setDeliveryNotice] = useState<string | null>(null);
 
   const { prune } = selection;
   useEffect(() => {
@@ -63,10 +66,6 @@ export default function GalleryView() {
     []
   );
 
-  const handleDownloadZip = useCallback(() => {
-    void gallery.downloadZip(selection.selectedIds);
-  }, [gallery, selection.selectedIds]);
-
   const confirmDelete = useCallback(async () => {
     if (!pendingDelete) return;
     if (pendingDelete.kind === "one") {
@@ -89,6 +88,26 @@ export default function GalleryView() {
 
   return (
     <div className="space-y-5">
+      {deliveryError && (
+        <Banner
+          tone="error"
+          onDismiss={() => setDeliveryError(null)}
+          icon={<AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />}
+        >
+          {deliveryError}
+        </Banner>
+      )}
+
+      {deliveryNotice && (
+        <Banner
+          tone="success"
+          onDismiss={() => setDeliveryNotice(null)}
+          icon={<CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />}
+        >
+          {deliveryNotice}
+        </Banner>
+      )}
+
       {gallery.error && (
         <Banner
           tone="error"
@@ -122,9 +141,11 @@ export default function GalleryView() {
         onClearSelection={selection.clear}
         onMarkUsed={() => void gallery.markUsed(selection.selectedIds, true)}
         onMarkUnused={() => void gallery.markUsed(selection.selectedIds, false)}
-        onDownloadZip={handleDownloadZip}
         onGenerateTable={handleGenerateTable}
         onBulkDelete={() => setPendingDelete({ kind: "many" })}
+        selectedIds={selection.selectedIds}
+        onCsvError={setDeliveryError}
+        onCsvNotice={setDeliveryNotice}
       />
 
       <GalleryMasonryGrid
