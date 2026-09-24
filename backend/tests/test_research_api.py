@@ -124,6 +124,141 @@ class TestResearchSettings:
         payload = client.get("/api/research/settings").json()
         assert "not a measurement" in payload["disclaimer"]
 
+    def test_the_target_average_is_served(self, client):
+        """Served so the card's verdict and the agent's instruction quote the same
+        number rather than two copies that can drift."""
+        from services.research import validity
+
+        payload = client.get("/api/research/settings").json()
+        assert payload["target_average"] == validity.TARGET_AVERAGE
+
+
+class TestPrioritySources:
+    """The upload/download surface for the operator's own source list.
+
+    The file *is* the interface the operator edits, so the server is the only thing
+    that decides validity — a client-side parse would turn a format error into a
+    silent no-op.
+    """
+
+    def test_nothing_uploaded_reports_an_empty_list(self, client):
+        payload = client.get("/api/research/sources").json()
+        assert payload["sources"] == []
+        assert payload["filename"] == ""
+
+    def test_the_template_downloads_as_a_file(self, client):
+        response = client.get("/api/research/sources/template")
+        assert response.status_code == 200
+        assert "attachment" in response.headers["content-disposition"]
+        assert "research-priority-sources.json" in response.headers["content-disposition"]
+
+    def test_the_template_is_valid_json_that_the_uploader_accepts(self, client):
+        """The point of a downloadable template is that it can be uploaded back
+        unchanged — that is what makes it a specification rather than a sketch."""
+        template = client.get("/api/research/sources/template").text
+        response = client.post(
+            "/api/research/sources",
+            json={"content": template, "filename": "template.json"},
+        )
+        assert response.status_code == 200, response.text
+        assert len(response.json()["sources"]) >= 3
+
+    def test_an_uploaded_file_is_stored_and_read_back(self, client):
+        body = {
+            "version": 1,
+            "sources": [
+                {"url": "https://stock.adobe.com/search", "name": "Adobe Stock"},
+                {"url": "https://www.shutterstock.com/search", "priority": 2},
+            ],
+        }
+        response = client.post(
+            "/api/research/sources",
+            json={"content": json.dumps(body), "filename": "mine.json"},
+        )
+        assert response.status_code == 200
+        assert response.json()["filename"] == "mine.json"
+
+        stored = client.get("/api/research/sources").json()
+        assert len(stored["sources"]) == 2
+        assert stored["sources"][0]["name"] == "Adobe Stock"
+        assert stored["filename"] == "mine.json"
+
+    def test_a_bad_file_is_refused_with_the_reason(self, client):
+        """A file that uploads and silently does nothing is indistinguishable from
+        the feature being broken."""
+        response = client.post(
+            "/api/research/sources",
+            json={"content": "this is not json", "filename": "bad.json"},
+        )
+        assert response.status_code == 400
+        assert "JSON" in response.json()["detail"]
+
+    def test_a_refused_upload_leaves_the_previous_list_working(self, client):
+        """Validated before anything is written, so a mistake cannot wipe a list the
+        operator spent time on."""
+        good = {"sources": [{"url": "https://stock.adobe.com/search"}]}
+        client.post("/api/research/sources", json={"content": json.dumps(good)})
+        client.post("/api/research/sources", json={"content": "{ broken"})
+        assert len(client.get("/api/research/sources").json()["sources"]) == 1
+
+    def test_a_non_url_entry_is_refused(self, client):
+        response = client.post(
+            "/api/research/sources",
+            json={"content": json.dumps(["javascript:alert(1)"])},
+        )
+        assert response.status_code == 400
+
+    def test_deleting_removes_the_list(self, client):
+        body = {"sources": [{"url": "https://stock.adobe.com/search"}]}
+        client.post("/api/research/sources", json={"content": json.dumps(body)})
+        response = client.delete("/api/research/sources")
+        assert response.status_code == 200
+        assert response.json()["sources"] == []
+        assert client.get("/api/research/sources").json()["sources"] == []
+
+    def test_a_stored_file_reaches_the_run_request(self, client, monkeypatch):
+        """The end-to-end claim: an uploaded file changes what the agent is sent."""
+        from services.research import source_store
+
+        body = {
+            "sources": [
+                {"url": "https://stock.adobe.com/search", "name": "Adobe Stock search"}
+            ]
+        }
+        client.post("/api/research/sources", json={"content": json.dumps(body)})
+
+        captured: list = []
+
+        def _run(request):  # noqa: ANN001
+            captured.append(request)
+            yield event_module.event(event_module.RUN_FINISHED, status="completed")
+
+        monkeypatch.setattr(agent_module, "run", _run)
+        client.post(
+            "/api/research/runs",
+            json={"message": "x", "mode": "static", "stream_first": False},
+        )
+        assert captured, "the agent was never run"
+        assert captured[0].priority_sources is not None
+        assert captured[0].priority_sources.sources[0].name == "Adobe Stock search"
+        # And it is cleared again so later tests are not affected.
+        source_store.clear()
+
+    def test_no_file_means_no_priority_sources_on_the_request(self, client, monkeypatch):
+        """A run without a file must behave exactly as it did before the feature."""
+        captured: list = []
+
+        def _run(request):  # noqa: ANN001
+            captured.append(request)
+            yield event_module.event(event_module.RUN_FINISHED, status="completed")
+
+        monkeypatch.setattr(agent_module, "run", _run)
+        client.post(
+            "/api/research/runs",
+            json={"message": "x", "mode": "static", "stream_first": False},
+        )
+        assert captured[0].priority_sources is None
+
 
 class TestCreateRun:
     def test_a_run_is_created_and_its_answer_stored(self, client, stub_agent):
@@ -160,6 +295,70 @@ class TestCreateRun:
             "/api/research/runs", json={"message": "x", "mode": "static"}
         ).json()
         assert payload["result"]["thinking"] == "Thinking about it."
+
+    def test_the_context_report_is_persisted(self, client, stub_agent):
+        """A replayed conversation must show the same indicator the live one did;
+        a reloaded thread with an empty bar reads as "no data"."""
+        stub_agent(
+            events=[
+                event_module.event(event_module.RUN_STARTED, mode="static"),
+                event_module.event(
+                    event_module.CONTEXT,
+                    used_tokens=1234,
+                    window_tokens=200_000,
+                    level="ok",
+                    compacted=False,
+                ),
+                event_module.event(
+                    event_module.RUN_FINISHED, status="completed", answer="done"
+                ),
+            ],
+            answer="done",
+        )
+        created = client.post(
+            "/api/research/runs", json={"message": "x", "mode": "static"}
+        ).json()
+        stored = client.get(f"/api/research/runs/{created['id']}").json()
+        assert stored["result"]["context"]["used_tokens"] == 1234
+        assert stored["result"]["context"]["window_tokens"] == 200_000
+
+    def test_the_settings_expose_the_context_window_and_thresholds(self, client):
+        """The bar's thresholds and the backend's folding decision must not drift,
+        so both come from the same place."""
+        payload = client.get("/api/research/settings").json()
+        assert payload["context_window"] > 0
+        assert payload["keep_recent_turns"] >= 1
+        assert 0 < payload["compact_at_share"] < payload["warn_at_share"] <= 1
+
+    def test_a_folded_history_is_reported_to_the_client(self, client, monkeypatch):
+        """The operator has to know the conversation was compacted: a summary that
+        silently dropped a finding would make the model reason from a hole."""
+        captured: list[agent_module.RunRequest] = []
+
+        def _run(request):  # noqa: ANN001
+            captured.append(request)
+            yield event_module.event(
+                event_module.CONTEXT,
+                used_tokens=10,
+                window_tokens=20_000,
+                compacted=True,
+                folded_turns=7,
+                level="ok",
+            )
+            yield event_module.event(
+                event_module.RUN_FINISHED, status="completed", answer="done"
+            )
+
+        monkeypatch.setattr(agent_module, "run", _run)
+        created = client.post(
+            "/api/research/runs", json={"message": "x", "mode": "static"}
+        ).json()
+        stored = client.get(f"/api/research/runs/{created['id']}").json()
+        assert stored["result"]["context"]["folded_turns"] == 7
+        assert stored["result"]["context"]["compacted"] is True
+        # The request carried the resolved window, which is what enables folding:
+        # a zero window disables it entirely.
+        assert captured[0].context_window > 0
 
     def test_an_invalid_mode_is_rejected(self, client):
         response = client.post(

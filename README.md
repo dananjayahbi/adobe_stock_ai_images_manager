@@ -114,6 +114,10 @@ cd backend
 | `GET` | `/api/research/runs/{id}/stream` | Continue a thread, streamed as Server-Sent Events. |
 | `POST` | `/api/research/runs/{id}/accept` | Push accepted prompts into the Prompt Library as drafts. |
 | `DELETE` | `/api/research/runs/{id}` | Delete a thread; prompts already accepted are kept. |
+| `GET` | `/api/research/sources` | The uploaded priority-source list. |
+| `POST` | `/api/research/sources` | Upload a priority-source file (the raw text, validated server-side). |
+| `DELETE` | `/api/research/sources` | Remove it, returning research to general search only. |
+| `GET` | `/api/research/sources/template` | Download the exact JSON format as a file. |
 | `GET` | `/thumbnails/{filename}` | Static thumbnail images. |
 | `GET` | `/health` | Liveness probe. |
 
@@ -162,7 +166,7 @@ The agent is a small tool-using loop, not a single prompt:
 | `market_overview` | How heavily a niche is already supplied — marketplace share and the catalogue figure printed on a marketplace page. |
 | `check_restrictions` | Screen wording against Adobe's known-restrictions list. |
 | `check_prompt_similarity` | Flag drafted prompts too alike to be worth generating separately. |
-| `assess_validity` | Record the two confidence scores; the collective average is computed. |
+| `assess_validity` | Record the confidence scores **and the idea they describe**; the collective average is computed. |
 | `list_categories` | Adobe Stock category codes. |
 
 ### The validity check
@@ -172,16 +176,86 @@ offering *Continue with these confidence rates* or *Research a better idea or
 niche*. Both buttons send an ordinary chat message, so a button press and a typed
 sentence take exactly the same path.
 
-Two things are deliberate:
+Four things are deliberate:
 
-* **The gate suppresses prompt generation.** Asking for prompts while also asking
-  the agent to stop and await a decision is a contradiction; the model resolves it
-  badly. With the gate on there is no output-format block and no similarity tool,
-  because nothing has been drafted yet.
+* **The gate suppresses prompt generation — until you release it.** Asking for
+  prompts while also asking the agent to stop and await a decision is a
+  contradiction; the model resolves it badly. With the gate on there is no
+  output-format block and no similarity tool, because nothing has been drafted yet.
+  Pressing *Continue* is what releases it: the agent recognises that message
+  (`prompts.is_release_message`) and switches to the JSON prompt contract. Without
+  that release the gate was **one-way** — the operator's decision to proceed could
+  never turn prompts back on, so Continue produced a second assessment instead of
+  the prompts. That was the reported *"the agent didn't provide the prompt at the
+  end"*.
+* **The scorecard names the idea it assessed.** `assess_validity` requires a
+  `subject`, and the card renders it above the numbers. Without it, a *"research a
+  better idea"* turn showed three scores and a rationale with no statement of
+  *which* idea they were about — the operator could not tell the replacement from
+  the idea they had just rejected.
+* **The agent keeps looking until the idea clears 80%.** Finding a better idea is
+  the whole point of asking for one, so a below-target score is not an answer. The
+  prompt says so, but a prompt is a request, not a guarantee: measured live, a run
+  researched a replacement and returned **53%** — below the 72% of the idea the
+  operator had just rejected — and presented it as the answer. The loop now
+  compares the score to `validity.TARGET_AVERAGE` and sends the agent back for a
+  different candidate, bounded by `MAX_TARGET_ATTEMPTS`. The tool's own reply
+  states the shortfall, so the model sees it too. Nothing is *hidden*: if no
+  candidate reaches the target the run reports the best it found with its real
+  score.
 * **The scores are labelled as a judgement, not a measurement.** Nothing in this
   app has access to keyword volume, download counts or sales data, and search
   results show what *already exists* rather than how many customers would buy it.
   The disclaimer is rendered with the scorecard, not hidden in a tooltip.
+
+### Priority sources
+
+The general search is a fallback chain, and a chain fails as a unit: when the
+primary provider is rate-limited or serves an anti-bot page the agent gets
+editorial coverage instead of catalogue pages. Measured live, a research run
+returned Google News articles for *every* query and reported "0 of 16 stock
+marketplaces" — which reads as an empty market but is really a search that never
+reached one.
+
+The **Priority sources** section (collapsed by default, above the composer) lets
+the operator upload a JSON list of sites that carry the evidence:
+
+```json
+{
+  "version": 1,
+  "sources": [
+    {
+      "url": "https://stock.adobe.com/search",
+      "name": "Adobe Stock search",
+      "priority": 1,
+      "notes": "The results header shows the catalogue count.",
+      "tags": ["marketplace", "catalogue"]
+    }
+  ]
+}
+```
+
+Every field but `url` is optional, and a bare list of URLs is also valid — a format
+that rejects the operator's first instinct is a format they will not use. **Download
+template** gives the exact file, and the template is uploadable *unchanged*, which
+is what makes it a specification rather than a sketch.
+
+Four decisions worth stating:
+
+* **The file is parsed on the server, never in the client.** The upload sends the
+  file's *text*; a client-side parse would turn a format error into a silent no-op
+  that looks like a successful upload.
+* **A bad file is refused with the reason, and never replaces a working list.**
+  Validation happens before anything is written, so a mistake cannot wipe a list
+  the operator spent time on.
+* **The section states behaviour, not just a list of sites.** Naming the hosts is
+  not enough — the agent's default behaviour (search, read the snippets, answer) is
+  exactly what misses them. It is told to restrict its query with the `site:`
+  operator, to open a listed page with `fetch_page` rather than trust a snippet
+  (catalogue counts live on the page), and that **an unreachable source is not an
+  empty one**.
+* **Only `http`/`https` URLs are accepted.** They are handed to the fetch tool, so
+  the scheme allow-list is a security boundary rather than a formatting preference.
 
 ### The JSON output contract
 
@@ -234,6 +308,128 @@ because the validity gate makes `wants_prompts` false, and an earlier version ti
 the streaming decision to that flag — so the flagship mode streamed its raw
 `<tool_call>{…` markup as the agent's answer.
 
+**A prompt-mode run cannot finish empty.** The instructions state that the answer
+is parsed and that a reply in the wrong shape is discarded, and if a run still
+answers in prose the agent is told nothing could be read and asked to resend — up
+to twice, then its prose is accepted. Without that guard a research run could
+write a perfectly readable summary, parse to zero prompts, and be reported as a
+clean success: a run that visibly did work and delivered nothing.
+
+### Tool calls: written so they cannot go wrong
+
+The gateway has no native tool calling, so the model *writes* each call as text and
+a wrong argument name makes it unusable. Three defences, in order:
+
+1. **The instruction block states the protocol precisely** — exact `name`, exact
+   argument names, no nesting, real values (never `""`, `null`, `"value"` or a
+   placeholder), one tool per turn, and the call in its own turn with no prose
+   beside it.
+2. **Every tool is listed with a literal call template**, built from the registry
+   so it cannot drift from the tool it describes. A model copies a shape far more
+   reliably than it assembles one from a list of parameter names.
+3. **Arguments are validated before the tool runs.** A missing or blank required
+   argument is rejected with a correction that names it, shows the exact JSON to
+   resend, and states that the message is not evidence about the subject — and the
+   rejected call is **not** charged to the budget, so a retry cannot burn a run.
+   Measured live before this: a `market_overview` call arrived with an empty
+   `niche`, the tool answered "No niche given", and the turn was spent.
+
+**The parser is tolerant of how the model *closes* the call, because it does not
+reliably use the shape it was asked for.** Captured live from `deepseek-v4.1-flash`,
+a call arrives like this:
+
+```text
+<tool_call>{"name": "market_overview", "arguments": {"niche": "…"}}</｜｜DSML｜｜ parameter>
+```
+
+The JSON is **complete and valid**; only the closing tag is wrong — the model
+switches to its native DSML markup mid-envelope. A parser keyed on `</tool_call>`
+reads that turn as a final answer, so the call is never executed and the run ends
+with nothing to show. That is the operator's *"the agent suddenly stops without
+providing the prompts"*, and it is a parser fault, not a model fault: the arguments
+were all there. Three consequences are handled explicitly:
+
+* **Envelope scanning is boundary-based.** The body ends at whichever comes first:
+  a proper `</tool_call>`, any DSML tag, or the next `<tool_call>` opener. The JSON
+  is located by **brace counting**, so a brace or quote inside a query string cannot
+  truncate the arguments.
+* **A DSML call that nests its arguments under one `arguments` parameter is
+  unwrapped**, otherwise a correct call arrives as `{"arguments": {"query": …}}` —
+  with no `query` of its own — and is rejected as malformed.
+* **A malformed call is not an empty reply.** They get separate counters
+  (`MAX_MALFORMED_REPLIES` / `MAX_EMPTY_REPLIES`) and separate corrections. Counting
+  the first as the second ended a live run after two hybrids — with four good tool
+  results already gathered — under the message "the model stopped producing usable
+  output", which was not what had happened.
+
+The same tolerance applies to stripping: a `</tool_call>`-keyed stripper leaves the
+*malformed* envelopes in the prose, which is exactly the text that then reaches the
+transcript as the agent's own words.
+
+### Long conversations: folding and the context indicator
+
+A research thread grows with every tool call, and a tool result can be thousands
+of characters of page text. When it outgrows the window the provider truncates the
+request **from the front**, which removes the system prompt and leaves the model
+with no instructions — which is what a run "stopping for no reason" looks like.
+
+`services/research/context.py` measures the conversation and folds it before that
+can happen, in **two places**, because a conversation can outgrow the window in two
+different ways:
+
+| When it folds | What it fits |
+| --- | --- |
+| At the start of a run | the **stored** history of the thread (`summarise_history`) |
+| After each tool round | the **running** conversation of this turn (`compact_live_messages`) |
+
+The second one matters more than it looks. A single turn can add many large tool
+results, so a run that began comfortably inside the window can push *itself* out of
+it. Measured live with a 4k window before this was wired: the final report sat at
+**100% of the window** — the next request would have been truncated, losing the
+system prompt. With in-run compaction the same probe finishes at 84.5%.
+
+| Decision | Where it comes from |
+| --- | --- |
+| When to fold | 70% of the window (`COMPACT_AT_SHARE`) |
+| How much room folding must leave | 25% (`DIGEST_RESERVE_SHARE`) |
+| What survives verbatim | the **most recent 5 turns** (`KEEP_RECENT_TURNS`) |
+| What is folded | everything older, into one digest |
+| When the bar warns | 85% of the window (`WARN_AT_SHARE`) |
+
+Six things are deliberate:
+
+* **The recent turns are never paraphrased.** They are what a follow-up refers to
+  ("that second idea", "yes, continue"), and a summary of the idea you were just
+  given is exactly what makes a follow-up ambiguous.
+* **Folding leaves room for the digest.** Folding down to *exactly* the threshold is
+  not enough: the digest is spliced into the same request as the turns that are
+  kept, so a conversation folded to the threshold still overflows once the digest is
+  added. The reserve is what makes the measured percentage actually come *down*.
+* **Five turns is a target, not a guarantee.** A tool result can be the whole text of
+  a web page, so five of them can exceed a small window on their own — and keeping
+  all five would leave the conversation exactly as full as before folding. The
+  retention walks down from the newest turn until the kept turns fit, always keeping
+  at least one, because a digest with no verbatim anchor cannot be acted on.
+* **The system prompt and the current question are pinned.** The first carries the
+  instructions, the second is what the run is answering. Neither is ever folded, in
+  either place.
+* **Folding cannot fail.** If the summariser is unreachable the digest falls back
+  to a bounded local excerpt, and either way the operator is told. A silent failure
+  here would leave the request overflowing — the very thing being fixed.
+* **The digest must preserve figures.** It is instructed to keep every catalogue
+  count, marketplace name, blocked search and operator decision, and is told not
+  to add advice of its own. Verified live against the gateway: a real conversation
+  folded into 729 characters that kept the catalogue figure, the 16/17 marketplace
+  share, the blocked fetch and the operator's "no pills" constraint.
+
+The **context bar** above the composer is fed by a `context` event the agent emits
+when the run starts, again whenever it compacts mid-run, and again when it finishes,
+so the indicator describes the request that was actually sent. It reports the system
+prompt separately from the conversation, because that is the part the operator never
+sees and cannot trim — knowing it costs a tenth of the window explains why a
+short-looking thread is already full. Thresholds come from the backend, so the bar
+cannot promise room the backend is about to compact away.
+
 ### Watching a run
 
 A research turn can legitimately take a minute, so a bare spinner is not enough.
@@ -247,6 +443,28 @@ Two details are worth knowing if you change this code:
 * **The turn being streamed has no assistant message yet.** It is created only
   when the turn finishes, so live activity must render outside the message list.
   Rendering it only inside an assistant message hid the whole first turn.
+* **Every turn's activity is kept, not just the last one.** The event stream is a
+  single flat list across the conversation, so attributing a tool step to a
+  specific turn needs a boundary — and the backend provides one, because every turn
+  ends with its own `run_finished`. The reducer segments on that, so each assistant
+  message is shown with the reasoning and tool calls that produced it. Attaching
+  them only to the last turn meant reopening a finished conversation showed answers
+  with no trace of how they were reached.
+* **A turn that ends without writing an answer still shows its work.** The
+  transcript renders one assistant bubble per stored *message* and attaches the
+  n-th turn's activity to it, so a turn with no message has nowhere to attach —
+  and the reasoning the operator was reading disappeared the moment the run
+  stopped. `orphanedTurn` returns that trailing activity and the transcript renders
+  it explicitly, labelled as a turn that ended without an answer. This is why the
+  activity is **not** promoted back into the live buffers on `run_finished`: a
+  promoted buffer is archived again by the next turn's `run_started`, which showed
+  one turn as two.
+* **Closing a turn is idempotent, and that matters.** A failed turn emits *both*
+  `error` and `run_finished` — the backend's error path yields the error and then
+  the terminal event. `closeTurn` returns the live buffers **cleared**, so the
+  second close appends nothing. Spreading `...state` instead of the cleared result
+  was a real bug: it left the buffers live and the error path archived the same
+  reasoning twice.
 * **A silent turn is retried, then finalised — not discarded.** A reasoning model
   routinely emits a thinking-only turn, and a run that already gathered evidence
   must not be thrown away because the final phrasing turn misbehaved. If nothing

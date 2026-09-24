@@ -103,6 +103,19 @@ export default function ConfidenceCard({ validity, className }: ConfidenceCardPr
         </span>
       </header>
 
+      {/*
+        What was assessed. Rendered above the numbers because they are meaningless
+        without it: on a "research a better idea" turn the operator must be able to
+        tell which idea the scores describe — the one they rejected, or its
+        replacement.
+      */}
+      {validity.subject ? (
+        <p className="text-xs leading-relaxed text-navy-200">
+          <span className="text-navy-400">Assessed idea: </span>
+          <span className="font-medium">{validity.subject}</span>
+        </p>
+      ) : null}
+
       <div className="space-y-3">
         <ScoreBar
           label="Customer download confidence"
@@ -121,6 +134,31 @@ export default function ConfidenceCard({ validity, className }: ConfidenceCardPr
           emphasis
         />
       </div>
+
+      {/*
+        The bar the idea is judged against. Shown as a verdict rather than only as
+        a number, because "72%" reads as a pass to anyone who does not know the
+        target — and 72 is below the 80 the operator asked for.
+
+        Keyed on an explicit `false` rather than on falsiness: the backend derives
+        `meets_target` in `validity.describe`, and a payload that omitted it would
+        otherwise render "Below the undefined% target" — a wrong verdict in
+        confident language. An unknown verdict says so instead.
+      */}
+      <p
+        className={cn(
+          "rounded-lg border px-2.5 py-2 text-xs leading-relaxed",
+          validity.meets_target === true && "border-emerald-500/30 bg-emerald-500/5 text-emerald-200",
+          validity.meets_target === false && "border-amber-500/30 bg-amber-500/5 text-amber-200",
+          validity.meets_target == null && "border-navy-700/40 bg-navy-900/40 text-navy-400"
+        )}
+      >
+        {validity.meets_target === true
+          ? `Reaches the ${validity.target_average}% target.`
+          : validity.meets_target === false
+            ? `Below the ${validity.target_average}% target — keep researching for a stronger idea.`
+            : "This assessment did not report whether it reached the target."}
+      </p>
 
       {validity.reasoning ? (
         <div>

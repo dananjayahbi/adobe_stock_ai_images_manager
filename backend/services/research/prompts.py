@@ -21,6 +21,26 @@ the rule that says a blocked search must be reported.
 
 from __future__ import annotations
 
+#: The collective average an idea must reach, rendered into the objective text.
+#:
+#: Read from :mod:`services.research.validity` so the instruction the agent reads,
+#: the tool that records the score and the card the operator sees cannot disagree
+#: about the bar. Imported lazily inside :func:`_objective`'s callers rather than
+#: at module scope: ``validity`` imports nothing from here, but keeping the
+#: constant as a string at module scope would freeze it at import time and make a
+#: changed target invisible to a long-running server.
+def _target_text() -> str:
+    from services.research import validity
+
+    return f"{validity.TARGET_AVERAGE:g}%"
+
+
+def _candidates_text() -> str:
+    from services.research import validity
+
+    return str(validity.MAX_CANDIDATES)
+
+
 #: The operator's reference prompt, used as the default style instruction.
 #:
 #: Kept verbatim: it is the standard the generated prompts are measured against,
@@ -68,17 +88,31 @@ STYLE_NOTE = (
 
 #: The working rules for the agent itself. Deliberately NOT operator-editable:
 #: they are what keep a run honest and terminating.
+#:
+#: Contains ``__TOOL_LIST__`` and ``__ANSWER_FORMAT__`` markers, substituted by
+#: :func:`_fill_markers` rather than ``str.format`` (the text contains literal
+#: JSON braces, which ``str.format`` would read as fields).
 RESEARCH_INSTRUCTION = """You are a stock-photography research agent inside a production tool that prepares
 images for Adobe Stock. You help the operator choose a niche and write the generation
 prompts for it.
 
-HOW YOU WORK
-- You act by calling tools. To call one, reply with ONLY this and nothing else:
-  <tool_call>{"name": "tool_name", "arguments": {"argument": "value"}}</tool_call>
-- Call ONE tool per turn. After the result comes back, decide whether to call
-  another tool or to answer.
-- When you have enough to answer, reply in plain prose with no tool call at all.
-  That is how you finish. Do not write a tool call inside an answer.
+TOOL CALL PROTOCOL — read this carefully; a malformed call is discarded
+- You act by calling tools. To call one, reply with EXACTLY this and nothing else:
+  <tool_call>{"name": "tool_name", "arguments": {"argument_name": "value"}}</tool_call>
+- `name` must be one of the tool names listed below, spelled exactly.
+- `arguments` must use the argument names listed for that tool, spelled exactly.
+  Do not invent argument names, do not rename them, and do not nest them.
+- Every required argument must carry a REAL value from the operator's request. Never
+  send an empty string, `null`, `""`, `"value"`, `"..."` or a placeholder. A call
+  with a missing or empty required argument is rejected and does nothing.
+- Call ONE tool per turn. Wait for its result before deciding what to do next.
+- Put the tool call in its OWN turn. Never mix a tool call with prose or with the
+  final answer: text written alongside a call is discarded.
+- Do NOT describe a call you are about to make. Do not write "I will search for…"
+  or "let me check…" and then stop. Either emit the call, or answer.
+- If a call is rejected, the rejection message tells you exactly what was missing
+  and shows the exact shape to resend. Read it and resend correctly. A rejected
+  call costs you a turn but not a tool-call slot.
 - Never invent tool output. If you did not read it from a tool result, do not
   present it as a fact.
 
@@ -96,6 +130,22 @@ EVIDENCE RULES — these matter more than sounding confident
 - It is better to answer "the evidence is thin" than to produce a confident
   answer the evidence does not support.
 
+FINISHING — the single most important rule
+- You finish by writing your ANSWER in the exact format below. The format is not
+  optional and it is not a style preference: the tool parses your reply, and a
+  reply in the wrong shape is DISCARDED. The operator then sees a run that stopped
+  with no result, and your work is lost.
+- Your final reply must contain NO tool-call markup at all. No `<tool_call>`, no
+  `<DSML>` tags, no fenced JSON example. Markup anywhere in the final answer makes
+  the whole answer unparseable.
+- Answer as soon as you can answer well. Do not stop part-way to narrate, and do
+  not announce that you are about to finish — just finish.
+- If the evidence is thin, still deliver the answer in the required format and say
+  in it that the evidence is thin. An incomplete answer in the right format is
+  usable; a complete answer in the wrong format is thrown away.
+
+__ANSWER_FORMAT__
+
 WRITING PROMPTS
 - A prompt must be one self-contained paragraph an image generator can use
   directly, not a list of instructions to a person.
@@ -108,25 +158,44 @@ WRITING PROMPTS
 - Be specific and physical. "A wide shot of a warehouse" is useless; name the
   machines, surfaces, materials, colour temperature and what is happening."""
 
+#: What the agent must do when the run is *not* asked for prompts. Stated as a
+#: format block for the same reason the JSON contract is: the alternative — leaving
+#: "how to finish" implicit for these modes — is a model that narrates and stops.
+PROSE_ANSWER_FORMAT = """ANSWER FORMAT
+Write your answer as plain prose. It must contain no tool-call markup, no
+`<tool_call>` tags and no DSML tags. Nothing parses your prose, so write it for
+the operator to read: lead with the conclusion, then the evidence behind it."""
+
 
 def tool_list_text(specs: list[dict]) -> str:
     """Render a tool registry as the bulleted list the agent reads.
 
     Built from the registry rather than written by hand so a new tool cannot be
     added without the agent being told about it.
+
+    Each entry carries a **literal call template** in addition to the prose
+    description. That is deliberate: a model reproduces a shape it can copy far
+    more reliably than one it has to assemble from a list of parameter names, and
+    a wrong argument name makes the call unparseable or the tool unusable.
     """
+    from services.research import toolcall
+
     lines: list[str] = []
     for spec in specs:
         params = spec.get("parameters") or {}
         required = set(params.get("required") or [])
         described: list[str] = []
         for name, meta in (params.get("properties") or {}).items():
-            marker = " (required)" if name in required else ""
+            marker = " (REQUIRED)" if name in required else " (optional)"
             description = (meta or {}).get("description", "")
-            described.append(f"{name}{marker}: {description}".strip())
-        argument_text = "; ".join(described) if described else "no arguments"
+            described.append(f"        {name}{marker}: {description}".rstrip())
         lines.append(f"- {spec['name']} — {spec.get('description', '')}")
-        lines.append(f"    arguments: {argument_text}")
+        if described:
+            lines.append("    arguments:")
+            lines.extend(described)
+        else:
+            lines.append("    arguments: none")
+        lines.append(f"    call it exactly like this: {toolcall.format_call_shape(spec['name'], params)}")
     return "\n".join(lines)
 
 
@@ -141,6 +210,82 @@ def _fill_tool_list(template: str, tool_list: str) -> str:
     return template.replace("__TOOL_LIST__", tool_list)
 
 
+def _fill_markers(template: str, tool_list: str, answer_format: str) -> str:
+    """Substitute both markers in the instruction block.
+
+    ``__ANSWER_FORMAT__`` states the exact shape of the final reply, which differs
+    by mode: a prompt run must end with the JSON contract, everything else with
+    prose. Leaving it implicit is what let a research run answer in prose, parse to
+    zero prompts, and report success with nothing in it.
+    """
+    return (
+        template.replace("__TOOL_LIST__", tool_list)
+        .replace("__ANSWER_FORMAT__", answer_format)
+    )
+
+
+def is_release_message(message: str) -> bool:
+    """Whether this turn releases the prompt gate on a validity-gated run.
+
+    A validity-gated run deliberately does **not** ask for prompts: the agent
+    scores the idea and stops so the operator can decide. The "Continue with these
+    confidence rates" button then has to tell the agent that prompts are wanted
+    *now* — and the agent cannot infer that from the words alone, because
+    :attr:`RunRequest.wants_prompts` is computed from the mode and the gate, not
+    from the message.
+
+    Measured live: pressing Continue sent the canned message, the run re-ran with
+    the gate still on, `wants_prompts` stayed False, no ANSWER FORMAT block was
+    substituted, the objective still said "Do NOT write the prompts yet" — and the
+    operator received a second assessment instead of the prompts. That is the
+    reported "the agent didn't provide the prompt at the end".
+
+    Recognised by the **shared constant** rather than a substring, so the wording
+    lives in one place: :data:`services.research.validity.CONTINUE_MESSAGE` is what
+    the button sends and what this matches.
+    """
+    from services.research import validity
+
+    normalised = " ".join((message or "").split()).casefold()
+    if not normalised:
+        return False
+    if normalised == " ".join(validity.CONTINUE_MESSAGE.split()).casefold():
+        return True
+    # A typed equivalent, for an operator who does not use the button. Deliberately
+    # narrow: it must not fire on "continue researching", which asks for more work.
+    return normalised in _RELEASE_PHRASES
+
+
+#: Typed equivalents of the Continue button, matched exactly (after normalisation)
+#: so ordinary prose that happens to contain "continue" cannot release the gate.
+_RELEASE_PHRASES = frozenset(
+    {
+        "continue",
+        "continue with this idea",
+        "continue and generate the prompts",
+        "generate the prompts",
+        "write the prompts",
+        "yes, generate the prompts",
+        "go ahead and write the prompts",
+    }
+)
+
+
+def answer_format_block(*, wants_prompts: bool, count: int = 1) -> str:
+    """The answer-format section for a run.
+
+    For a prompt run this is the JSON contract (from
+    :func:`services.research.synthesis.prompt_format_instruction`); otherwise the
+    prose block. Kept here so the system prompt and the user turn cannot disagree
+    about what the model is being asked to emit.
+    """
+    if not wants_prompts:
+        return PROSE_ANSWER_FORMAT
+    from services.research import synthesis
+
+    return synthesis.prompt_format_instruction(max(1, count)).strip()
+
+
 def compose_system_prompt(
     *,
     tool_specs: list[dict],
@@ -148,57 +293,101 @@ def compose_system_prompt(
     mode: str,
     validity_check: bool,
     max_tools: int,
+    wants_prompts: bool = True,
+    count: int = 1,
+    released: bool = False,
+    source_guidance: str = "",
 ) -> str:
     """Build the full system prompt for one run.
 
     Assembled per run (rather than being one constant) because the tool list, the
-    operator's style instruction, and the mode's objective all change what the
-    agent should do, and a stale tool list is how an agent ends up calling a tool
-    that no longer exists.
+    operator's style instruction, the mode's objective, and the required answer
+    format all change what the agent should do. A stale tool list is how an agent
+    ends up calling a tool that no longer exists; a missing answer format is how it
+    ends up answering in a shape nothing can parse.
+
+    ``released`` is the operator having pressed Continue on a validity-gated run,
+    which is the one case where that mode *does* want the JSON prompt contract.
+
+    ``source_guidance`` is the operator's priority-source section, rendered by
+    :func:`services.research.sources.guidance`. Empty when no source file is
+    uploaded, in which case the prompt is byte-identical to one from before the
+    feature existed.
     """
     sections = [
-        _fill_tool_list(RESEARCH_INSTRUCTION, tool_list_text(tool_specs)),
+        _fill_markers(
+            RESEARCH_INSTRUCTION,
+            tool_list_text(tool_specs),
+            answer_format_block(wants_prompts=wants_prompts, count=count),
+        ),
         "",
         "OBJECTIVE FOR THIS RUN",
-        _objective(mode, validity_check),
+        _objective(mode, validity_check, released=released),
         "",
         f"You have at most {max_tools} tool calls. Use fewer if the evidence is "
-        "already sufficient, and always finish with a written answer.",
-        "",
-        STYLE_NOTE,
-        "",
-        "STYLE INSTRUCTION (the operator's house standard):",
-        style_instruction.strip(),
-        "",
-        HOUSE_RULES,
+        "already sufficient, and always finish with the answer described above.",
     ]
+    if source_guidance.strip():
+        # Placed before the style rules because it changes *where the agent looks*,
+        # and the operator's house style has no bearing on that.
+        sections.extend(["", source_guidance.strip()])
+    sections.extend(
+        [
+            "",
+            STYLE_NOTE,
+            "",
+            "STYLE INSTRUCTION (the operator's house standard):",
+            style_instruction.strip(),
+            "",
+            HOUSE_RULES,
+        ]
+    )
     return "\n".join(sections)
 
 
-def _objective(mode: str, validity_check: bool) -> str:
+def _objective(mode: str, validity_check: bool, released: bool = False) -> str:
     """The mode-specific instruction block.
 
-    Every prompt-producing objective states that the JSON contract in the user
-    turn is mandatory. Saying it in one place only is how a model ends up
-    answering in prose while the parser waits for a schema.
+    Every prompt-producing objective states that the JSON contract is mandatory.
+    Saying it in one place only is how a model ends up answering in prose while
+    the parser waits for a schema — which is the silent-drop failure the operator
+    sees as "the agent stopped without giving me prompts".
+
+    ``released`` is the operator having pressed Continue on a gated run, which is
+    the one case where a gated research run *does* want prompts.
     """
     if mode == "static":
         return (
             "The operator gave you a hint and wants refined generation prompts for "
             "it. You do not need to research unless the hint is ambiguous; the "
             "operator's hint is the authority on the subject. Produce the requested "
-            "number of prompts, each describing a different image. Answer in the "
-            "JSON contract given in the operator's message — nothing else."
+            "number of prompts, each describing a different image. Your FINAL reply "
+            "must be the JSON object from ANSWER FORMAT — nothing before it, "
+            "nothing after it."
         )
     if mode == "batch":
         return (
             "The operator described a niche and asked for a set of prompts. Produce "
             "exactly the requested number, each describing a clearly different "
             "image inside that niche: vary the subject, setting, activity, time of "
-            "day and camera position so no two would produce similar frames. "
-            "Answer in the JSON contract given in the operator's message — nothing "
-            "else. The non-similarity requirement is the point of this mode: a set "
-            "of near-identical frames is a failed batch."
+            "day and camera position so no two would produce similar frames. Your "
+            "FINAL reply must be the JSON object from ANSWER FORMAT. The "
+            "non-similarity requirement is the point of this mode: a set of "
+            "near-identical frames is a failed batch."
+        )
+    # Checked BEFORE the gated branch: that branch matches on `validity_check`
+    # alone, so a released run would otherwise fall into "Do NOT write the prompts
+    # yet" and the operator's Continue press would be ignored.
+    if mode == "research" and validity_check and released:
+        return (
+            "The operator has reviewed your confidence assessment and asked you to "
+            "proceed.\n"
+            "1. Research anything further you still need with the tools. You do not "
+            "need to re-score an idea you already assessed.\n"
+            "2. Produce the requested number of prompts for the idea that was "
+            "assessed, each describing a different image.\n"
+            "Your FINAL reply must be the JSON object from ANSWER FORMAT — nothing "
+            "before it, nothing after it."
         )
     if mode == "research" and validity_check:
         return (
@@ -207,20 +396,28 @@ def _objective(mode: str, validity_check: bool) -> str:
             "exists, how crowded it is, and what the evidence actually supports.\n"
             "2. Call `assess_validity` with your findings to record the scores. That "
             "tool is the ONLY place the confidence numbers come from — do not state "
-            "numbers it did not return.\n"
-            "3. Then answer in prose: summarise what you found, give the operator a "
-            "clear recommendation, and offer the two options — continue with this "
-            "idea, or research a better one. Do NOT write the prompts yet: the "
-            "operator decides first, and may ask for a different idea."
+            "numbers it did not return. Always pass `subject`: the exact idea the "
+            "scores describe.\n"
+            f"3. If the collective average is below {_target_text()}, do NOT present "
+            "that idea as the answer. Research a *different* candidate and score it "
+            "too, until one reaches the target or you have tried "
+            f"{_candidates_text()} candidates. Then report the best one with its real "
+            "score and say plainly whether it reached the target.\n"
+            "4. Answer in the prose format from ANSWER FORMAT: name the idea you "
+            "assessed, summarise what you found, give the operator a clear "
+            "recommendation, and offer the two options — continue with this idea, "
+            "or research a better one.\n"
+            "Do NOT write the prompts yet: the operator decides first, and may ask "
+            "for a different idea."
         )
     if mode == "research":
         return (
             "The operator wants researched prompts for an idea or niche, with no "
             "validity gate. Research it with the tools so the prompts reflect what "
             "already exists and are genuinely differentiated, then produce the "
-            "requested number of prompts, each describing a different image. "
-            "Answer in the JSON contract given in the operator's message — nothing "
-            "else."
+            "requested number of prompts, each describing a different image. Your "
+            "FINAL reply must be the JSON object from ANSWER FORMAT — nothing "
+            "before it, nothing after it."
         )
     if mode == "ideas":
         return (

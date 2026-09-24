@@ -21,6 +21,8 @@ Event types
 ``sources``       the web sources gathered so far (drives the sources panel).
 ``prompts``       the finished prompts (drives the prompt cards).
 ``validity``      the confidence assessment, when the validity check ran.
+``context``       how full the model's context window is, and whether the
+                  conversation was compacted to fit it (drives the live bar).
 ``notice``        something the operator must know (a degraded search, a
                   truncated reply). Rendered distinctly from the answer.
 ``error``         the run failed; carries a message.
@@ -48,6 +50,7 @@ TOOL_RESULT = "tool_result"
 SOURCES = "sources"
 PROMPTS = "prompts"
 VALIDITY = "validity"
+CONTEXT = "context"
 NOTICE = "notice"
 ERROR = "error"
 RUN_FINISHED = "run_finished"
@@ -65,6 +68,7 @@ ALL_TYPES = (
     SOURCES,
     PROMPTS,
     VALIDITY,
+    CONTEXT,
     NOTICE,
     ERROR,
     RUN_FINISHED,
@@ -135,6 +139,7 @@ class EventAccumulator:
         self.sources: list[dict] = []
         self.prompts: list[dict] = []
         self.validity: dict | None = None
+        self.context: dict | None = None
         self.notices: list[str] = []
         self.error: str = ""
         self.run_id: str = ""
@@ -166,6 +171,10 @@ class EventAccumulator:
             self.prompts = list(payload.get("prompts") or [])
         elif event_type == VALIDITY:
             self.validity = payload.get("validity")
+        elif event_type == CONTEXT:
+            # Latest wins: the report is a measurement of the conversation as it
+            # stands, so the final one describes the completed run.
+            self.context = {key: value for key, value in payload.items() if key != "type"}
         elif event_type == NOTICE:
             text = payload.get("text", "")
             if text and text not in self.notices:
@@ -219,6 +228,11 @@ class EventAccumulator:
             "sources": self.sources,
             "prompts": self.prompts,
             "validity": self.validity,
+            # The final measurement of the window, so a replayed conversation
+            # shows the same indicator the live one did. Without it a reloaded
+            # thread would render the bar empty, which reads as "no data" rather
+            # than "this run's context position".
+            "context": self.context,
             "notices": self.notices,
             "error": self.error,
         }

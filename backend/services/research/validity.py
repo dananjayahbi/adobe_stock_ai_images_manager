@@ -24,7 +24,7 @@ looks empirical and is not.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 #: Score bands. Named rather than bare numbers so the UI, the recommendation and
 #: the tests share one definition of "promising".
@@ -39,6 +39,27 @@ _BANDS: tuple[tuple[float, str], ...] = (
     (45.0, BAND_MODERATE),
     (0.0, BAND_WEAK),
 )
+
+#: The collective average an idea must reach before it is worth pursuing.
+#:
+#: The operator's own instruction, and the reason "research a better idea" exists:
+#: the point of that request is to find something *better*, so a replacement idea
+#: that scores no higher than the rejected one has not answered it. Measured live:
+#: a run researched a replacement and returned a collective average of **53%**
+#: (below the 72% of the idea it replaced) and presented it as the answer.
+#:
+#: This is a **target for the agent to search against**, not a gate on the run.
+#: The scores are a judgement over web evidence (see :data:`DISCLAIMER`), so
+#: refusing to report an idea because it scored 78 would hide the very evidence
+#: the operator needs to decide. The run always reports what it found; what the
+#: target changes is that the agent keeps looking until it reaches the target or
+#: demonstrably cannot.
+TARGET_AVERAGE = 80.0
+
+#: How many distinct candidate ideas the agent may research in one turn before it
+#: must report the best it has. Bounded because each candidate costs tool calls,
+#: and an unbounded search for an 80% idea could run until the budget is gone.
+MAX_CANDIDATES = 4
 
 #: The one-sentence meaning of each band, shown beside the score.
 BAND_LABELS: dict[str, str] = {
@@ -97,7 +118,20 @@ class ValidityView:
     recommendation: str
     reasoning: str
     evidence: list[str]
+    #: **What was actually assessed.** Without it the scorecard showed three
+    #: numbers and a rationale with no statement of their subject, so on a
+    #: "research a better idea" turn the operator could not tell which idea the
+    #: numbers described — the one they rejected, or its replacement. Measured
+    #: live: a replacement idea was scored and the card named nothing at all.
+    subject: str = ""
+    #: The average the idea is being judged against (:data:`TARGET_AVERAGE`).
+    target_average: float = TARGET_AVERAGE
     disclaimer: str = DISCLAIMER
+
+    @property
+    def meets_target(self) -> bool:
+        """Whether this idea reaches the bar the operator set."""
+        return self.collective_average >= self.target_average
 
     def to_dict(self) -> dict:
         return {
@@ -111,6 +145,9 @@ class ValidityView:
             "recommendation": self.recommendation,
             "reasoning": self.reasoning,
             "evidence": self.evidence,
+            "subject": self.subject,
+            "target_average": self.target_average,
+            "meets_target": self.meets_target,
             "disclaimer": self.disclaimer,
         }
 
@@ -138,7 +175,12 @@ def describe(assessment: dict | None) -> ValidityView | None:
     collective = expected if abs(expected - collective) > 0.05 else collective
 
     collective_band = band_for(collective)
-    return ValidityView(
+    try:
+        target = float(assessment.get("target_average", TARGET_AVERAGE))
+    except (TypeError, ValueError):
+        target = TARGET_AVERAGE
+
+    view = ValidityView(
         customer_download_confidence=download,
         adobe_acceptance_confidence=acceptance,
         collective_average=collective,
@@ -152,7 +194,22 @@ def describe(assessment: dict | None) -> ValidityView | None:
             for item in (assessment.get("evidence") or [])
             if str(item).strip()
         ],
+        subject=str(assessment.get("subject") or "").strip(),
+        target_average=target,
     )
+    # A result below the operator's target gets a recommendation that says so,
+    # rather than the generic band advice. "Strong" starts at 70, so an idea at 72
+    # would otherwise be described as supporting a decision it misses by 8 points.
+    if not view.meets_target:
+        view = replace(
+            view,
+            recommendation=(
+                f"This idea scores {collective}%, below the {target:g}% bar. "
+                "Research a better idea, or ask for a sharper variation of this one, "
+                "before generating anything."
+            ),
+        )
+    return view
 
 
 #: The two choices offered after an assessment, so the buttons and the system
@@ -160,20 +217,72 @@ def describe(assessment: dict | None) -> ValidityView | None:
 CONTINUE_ACTION = "continue"
 RESEARCH_AGAIN_ACTION = "research_again"
 
+#: The message a "continue" press sends in a mode that writes prompts. Exported
+#: because the agent has to *recognise* it to release the prompt gate (see
+#: :func:`services.research.prompts.is_release_message`), and a second copy of the
+#: wording in the agent would drift from this one the moment either changed.
+CONTINUE_MESSAGE = "Continue with this idea and generate the prompts we discussed."
+
+#: The "continue" message for a mode that never writes prompts.
+#:
+#: Measured live in "Find ideas": the card offered "Continue with these confidence
+#: rates", whose message says *generate the prompts*. The mode forbids prompts
+#: unconditionally, so the button promised an outcome the run could not produce —
+#: the operator pressed it and got a second opinion instead of the prompts they had
+#: just been told to expect. The decision the operator is making is the same in both
+#: modes ("yes, this idea"), only its consequence differs, so the wording differs
+#: and the *gate* is deliberately not released.
+CONTINUE_IDEA_MESSAGE = (
+    "Continue with this idea. Confirm the figures you assessed are the ones you "
+    "stand behind, and restate the strongest idea in one line so I can act on it."
+)
+
+#: The message a "research a better idea" press sends.
+RESEARCH_AGAIN_MESSAGE = (
+    "Do not use that idea. Research and propose a better idea or niche "
+    f"instead, and check its validity too. The collective average must be at "
+    f"least {TARGET_AVERAGE:g}%."
+)
+
+RESEARCH_AGAIN_ACTION_BUTTON: dict[str, str] = {
+    "id": RESEARCH_AGAIN_ACTION,
+    "label": "Research a better idea or niche",
+    "message": RESEARCH_AGAIN_MESSAGE,
+}
+
+#: The prompt-writing default. Kept as the module constant so existing callers and
+#: tests keep a single source of truth for the common case; a mode that cannot
+#: write prompts must call :func:`follow_up_actions` instead.
 FOLLOW_UP_ACTIONS: tuple[dict[str, str], ...] = (
     {
         "id": CONTINUE_ACTION,
         "label": "Continue with these confidence rates",
-        "message": (
-            "Continue with this idea and generate the prompts we discussed."
-        ),
+        "message": CONTINUE_MESSAGE,
     },
-    {
-        "id": RESEARCH_AGAIN_ACTION,
-        "label": "Research a better idea or niche",
-        "message": (
-            "Do not use that idea. Research and propose a better idea or niche "
-            "instead, and check its validity too."
-        ),
-    },
+    RESEARCH_AGAIN_ACTION_BUTTON,
 )
+
+
+def follow_up_actions(*, can_produce_prompts: bool) -> tuple[dict[str, str], ...]:
+    """The post-assessment buttons for a mode.
+
+    ``can_produce_prompts`` is a property of the *mode*, not of this turn: a gated
+    research run reports ``wants_prompts`` as false (that is what the gate means)
+    and still writes prompts the moment the operator continues. Keying on
+    ``wants_prompts`` here would give a gated research run the no-prompts wording
+    and make the Continue button look like it did nothing.
+
+    Taking a boolean rather than the mode name keeps this module free of an import
+    of the agent, which imports it.
+    """
+    if can_produce_prompts:
+        return FOLLOW_UP_ACTIONS
+    return (
+        {
+            "id": CONTINUE_ACTION,
+            "label": "Continue with this idea",
+            "message": CONTINUE_IDEA_MESSAGE,
+        },
+        RESEARCH_AGAIN_ACTION_BUTTON,
+    )
+

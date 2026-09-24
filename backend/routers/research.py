@@ -15,6 +15,10 @@ Endpoints:
 * ``GET    /api/research/runs/{id}/stream``    - continue it, streamed (SSE)
 * ``POST   /api/research/runs/{id}/accept``    - push prompts into the library
 * ``DELETE /api/research/runs/{id}``           - delete the thread
+* ``GET    /api/research/sources``             - the uploaded priority sources
+* ``POST   /api/research/sources``             - upload a priority-source file
+* ``DELETE /api/research/sources``             - remove it
+* ``GET    /api/research/sources/template``    - download the exact JSON format
 
 Why both a buffered and a streaming way to continue a conversation
 ------------------------------------------------------------------
@@ -32,7 +36,7 @@ import logging
 from typing import Iterator
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from sqlalchemy.orm import Session
 
 import database
@@ -48,12 +52,16 @@ from schemas import (
     ResearchRunSummary,
     ResearchSettingsResponse,
 )
+from services import app_settings
 from services.research import (
     agent,
+    context as context_module,
     events as event_module,
     inflight,
     prompts,
     runs,
+    source_store,
+    sources,
     validity,
 )
 from services.research.agent import DEFAULT_MAX_TOOL_CALLS, RunRequest
@@ -250,6 +258,17 @@ def _build_request(
         validity_check=resolved_validity,
         history=history,
         max_tool_calls=DEFAULT_MAX_TOOL_CALLS,
+        # Resolved per request, so changing the window in Settings takes effect on
+        # the next turn without a restart — the same contract the LLM client has.
+        context_window=app_settings.resolve().context_window,
+        # The operator pressing "Continue with these confidence rates" is what
+        # releases a validity-gated run's prompt gate. Derived from the message
+        # rather than a separate flag so the button and a typed equivalent behave
+        # identically, and so an older client cannot release the gate by accident.
+        released=prompts.is_release_message(message),
+        # Read here rather than in the agent so a run is reproducible in a test and
+        # a file replaced mid-turn cannot change a request already in flight.
+        priority_sources=source_store.load(),
     )
 
 
@@ -303,6 +322,7 @@ def _finish(db: Session, run, accumulated: dict, emitted: list[dict]) -> None:
             "prompts": accumulated.get("prompts") or [],
             "sources": accumulated.get("sources") or [],
             "validity": validity_view.to_dict() if validity_view else None,
+            "context": accumulated.get("context") or None,
             "notices": accumulated.get("notices") or [],
             "tool_calls": accumulated.get("tool_calls") or [],
             "thinking": accumulated.get("thinking") or "",
@@ -379,6 +399,90 @@ async def research_settings() -> ResearchSettingsResponse:
         max_prompts=MAX_PROMPTS,
         max_tool_calls=DEFAULT_MAX_TOOL_CALLS,
         disclaimer=validity.DISCLAIMER,
+        # Served rather than hard-coded in the UI so the bar's thresholds and the
+        # backend's folding decision cannot drift apart.
+        context_window=app_settings.resolve().context_window,
+        keep_recent_turns=context_module.KEEP_RECENT_TURNS,
+        compact_at_share=context_module.COMPACT_AT_SHARE,
+        warn_at_share=context_module.WARN_AT_SHARE,
+        # The confidence target, served for the same reason: the card's verdict
+        # and the agent's instruction must quote the same number.
+        target_average=validity.TARGET_AVERAGE,
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Priority sources
+# --------------------------------------------------------------------------- #
+
+def _source_payload() -> dict:
+    """The stored source list, in the shape the panel renders."""
+    stored = source_store.load()
+    if stored is None:
+        return {
+            "sources": [],
+            "warnings": [],
+            "filename": "",
+            "template_version": sources.SCHEMA_VERSION,
+        }
+    return {
+        **stored.to_dict(),
+        "filename": source_store.stored_filename(),
+        "template_version": sources.SCHEMA_VERSION,
+    }
+
+
+@router.get("/api/research/sources")
+async def get_priority_sources() -> dict:
+    """The operator's uploaded priority sources, if any.
+
+    A plain dict rather than a response model: the payload is a pass-through of a
+    file the operator wrote, and pinning it to a schema would make a new optional
+    field in their file a 500 instead of something the agent can use.
+    """
+    return _source_payload()
+
+
+@router.post("/api/research/sources")
+async def upload_priority_sources(payload: dict) -> dict:
+    """Validate and store an uploaded source file.
+
+    Takes the raw text rather than a parsed structure: the file *is* the interface
+    the operator works in, so the server must be the thing that reads it — a client
+    that parsed it first would let a format error become a silent no-op.
+    """
+    text = str(payload.get("content") or "")
+    filename = str(payload.get("filename") or "")
+    try:
+        parsed = source_store.save(text, filename=filename)
+    except sources.SourceFileError as exc:
+        # 400 with the reason: the operator is editing a file, so the message has
+        # to say what is wrong with it rather than "invalid request".
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {**parsed.to_dict(), "filename": source_store.stored_filename()}
+
+
+@router.delete("/api/research/sources")
+async def delete_priority_sources() -> dict:
+    """Remove the stored source list, returning the run to its default behaviour."""
+    source_store.clear()
+    return _source_payload()
+
+
+@router.get("/api/research/sources/template")
+async def download_source_template() -> Response:
+    """Download the exact JSON format the upload endpoint accepts.
+
+    A downloadable file rather than documentation: the operator asked to be able to
+    see the exact format, and a template that can be uploaded *unchanged* is a
+    better specification than a description of one — it proves the format works.
+    """
+    return Response(
+        content=sources.template_json(),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": 'attachment; filename="research-priority-sources.json"'
+        },
     )
 
 
@@ -446,6 +550,12 @@ async def create_research_run(
         validity_check=validity_check,
         history=[],
         max_tool_calls=DEFAULT_MAX_TOOL_CALLS,
+        # Resolved here as well as in `_build_request`: this path builds its own
+        # request, and a request with a zero window silently disables context
+        # folding — so the opening turn of a long run would overflow where the
+        # follow-up turns would not.
+        context_window=app_settings.resolve().context_window,
+        priority_sources=source_store.load(),
     )
 
     emitted, accumulated = _collect_with_session(agent_request)

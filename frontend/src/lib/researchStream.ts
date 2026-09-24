@@ -16,6 +16,7 @@
 
 import type {
   FollowUpAction,
+  ResearchContextReport,
   ResearchEvent,
   ResearchPrompt,
   ResearchSource,
@@ -32,6 +33,26 @@ export interface ToolStep {
   result?: { summary: string; ok: boolean; durationSeconds?: number };
 }
 
+/**
+ * One assistant turn's own activity, kept so it survives the turn ending.
+ *
+ * The event stream is a single flat list across the whole conversation, so
+ * attributing a tool step to a turn means segmenting it. The backend marks the
+ * boundary: every turn is followed by its own `run_finished`, so the next
+ * `run_started` (or the end of the list) closes the previous segment.
+ *
+ * Without this, only the *last* turn's thinking and steps were rendered, so
+ * reopening a finished conversation showed an answer with no trace of how it was
+ * reached — the operator could not inspect earlier work at all.
+ */
+export interface TurnActivity {
+  /** 0-based index of the assistant turn this activity belongs to. */
+  turn: number;
+  thinking: string;
+  message: string;
+  steps: ToolStep[];
+}
+
 export interface ResearchStreamState {
   /** The model's reasoning, streamed live and rendered collapsed. */
   thinking: string;
@@ -45,6 +66,8 @@ export interface ResearchStreamState {
   /** The model's own one-line statement of what it produced, from the JSON. */
   promptSummary: string;
   validity: ResearchValidity | null;
+  /** The latest context-window measurement, or null before the first one. */
+  context: ResearchContextReport | null;
   followUpActions: FollowUpAction[];
   notices: string[];
   error: string;
@@ -56,6 +79,13 @@ export interface ResearchStreamState {
   mode: string;
   tools: string[];
   maxToolCalls: number;
+  /**
+   * Per-turn activity, so a completed conversation stays fully inspectable.
+   *
+   * `thinking`/`steps` above remain the *current* turn's, which is what the live
+   * view renders; this list is the durable history of every turn's work.
+   */
+  turns: TurnActivity[];
 }
 
 export function initialState(): ResearchStreamState {
@@ -68,6 +98,7 @@ export function initialState(): ResearchStreamState {
     prompts: [],
     promptSummary: "",
     validity: null,
+    context: null,
     followUpActions: [],
     notices: [],
     error: "",
@@ -76,6 +107,7 @@ export function initialState(): ResearchStreamState {
     mode: "",
     tools: [],
     maxToolCalls: 0,
+    turns: [],
   };
 }
 
@@ -99,17 +131,66 @@ function mergeSources(
   return merged;
 }
 
+/**
+ * Close the current turn's activity into the durable list.
+ *
+ * Called on every turn boundary. A turn that produced nothing (no reasoning and
+ * no tool calls) is not recorded, so the list stays a list of *work*, not of
+ * request round-trips.
+ *
+ * The live buffers are returned **cleared**, which makes this idempotent. That
+ * matters because a failed turn emits *both* `error` and `run_finished` — the
+ * backend's error path yields the error and then the terminal event — so calling
+ * this twice must not append the same activity as two turns.
+ */
+function closeTurn(state: ResearchStreamState): Pick<
+  ResearchStreamState,
+  "turns" | "thinking" | "message" | "steps"
+> {
+  if (!state.thinking && state.steps.length === 0) {
+    return { turns: state.turns, thinking: "", message: "", steps: [] };
+  }
+  return {
+    turns: [
+      ...state.turns,
+      {
+        turn: state.turns.length,
+        thinking: state.thinking,
+        message: state.message,
+        steps: state.steps,
+      },
+    ],
+    thinking: "",
+    message: "",
+    steps: [],
+  };
+}
+
+/**
+ * The activity the *last* archived turn holds, or ``null``.
+ *
+ * Exported for a caller that wants to restate what the agent was doing (a
+ * "stopped" banner, for example) without reading `turns.at(-1)` itself.
+ */
+export function lastArchived(state: ResearchStreamState): TurnActivity | null {
+  return state.turns.at(-1) ?? null;
+}
+
 export function reduceEvent(
   state: ResearchStreamState,
   event: ResearchEvent
 ): ResearchStreamState {
   switch (event.type) {
     case "run_started":
+      // A new turn begins. Any activity still in the live buffers belongs to the
+      // *previous* turn, so it is archived before the buffers are cleared —
+      // otherwise a multi-turn conversation lost every earlier turn's reasoning.
       return {
         ...state,
         mode: event.mode ?? state.mode,
         tools: event.tools ?? state.tools,
         maxToolCalls: event.max_tool_calls ?? state.maxToolCalls,
+        ...closeTurn(state),
       };
 
     case "thinking":
@@ -171,26 +252,81 @@ export function reduceEvent(
         followUpActions: event.follow_up_actions ?? state.followUpActions,
       };
 
+    case "context": {
+      // Latest wins: each report measures the conversation as it stands, so the
+      // final one describes the completed run. `type` is the discriminant, so it
+      // is dropped rather than carried into the report's own shape.
+      const { type: _type, ...report } = event;
+      return { ...state, context: report };
+    }
+
     case "notice":
       // Deduplicated: a repeated notice would stack the same banner.
       return state.notices.includes(event.text)
         ? state
         : { ...state, notices: [...state.notices, event.text] };
 
-    case "error":
-      return { ...state, error: event.text, finished: true, isStreaming: false };
-
-    case "run_finished":
+    case "error": {
+      // Spread `closed`, not `state`: `closeTurn` returns the buffers *cleared*,
+      // and spreading `state` would keep the thinking and steps live — so the
+      // `run_finished` that follows would archive the same activity a second time
+      // and the transcript would show one turn as two.
+      const closed = closeTurn(state);
       return {
         ...state,
+        ...closed,
+        error: event.text,
+        finished: true,
+        isStreaming: false,
+      };
+    }
+
+    case "run_finished": {
+      // The final turn's activity is closed into `turns`. It is deliberately NOT
+      // promoted back into the live buffers: a promoted buffer would be archived
+      // again by the next turn's `run_started`, duplicating the turn.
+      //
+      // Visibility for a turn that ended without an assistant message is handled
+      // by `orphanedTurn`, which the transcript renders explicitly — measured
+      // live, a run whose last turn stopped without writing an answer lost the
+      // reasoning the operator was reading the moment it finished.
+      const closed = closeTurn(state);
+      return {
+        ...state,
+        ...closed,
         answer: event.answer?.trim() || state.message.trim(),
         isStreaming: false,
         finished: true,
       };
+    }
 
     default:
       return state;
   }
+}
+
+/**
+ * The trailing turn's activity, when no assistant message exists for it.
+ *
+ * The transcript renders one assistant bubble per stored message and attaches
+ * `turns[n]` to the n-th one. A turn that ended without producing a message — a
+ * stopped run, a truncated reply, a spent tool budget — has activity but no
+ * message, so its thinking and steps have nothing to attach to and vanish. This
+ * returns that orphaned activity so the transcript can render it explicitly.
+ *
+ * Only the *last* turn can be orphaned: every earlier turn is followed by the
+ * next turn's assistant message, which the operator can see.
+ */
+export function orphanedTurn(
+  state: ResearchStreamState,
+  assistantMessages: number
+): TurnActivity | null {
+  if (state.isStreaming) return null;
+  const index = state.turns.length - 1;
+  if (index < 0 || index < assistantMessages) return null;
+  const turn = state.turns[index];
+  if (!turn || (!turn.thinking && turn.steps.length === 0)) return null;
+  return turn;
 }
 
 /** Fold a whole event list. Used when replaying a stored conversation. */

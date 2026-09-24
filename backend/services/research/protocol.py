@@ -42,11 +42,6 @@ from dataclasses import dataclass, field
 TOOL_CALL_OPEN = "<tool_call>"
 TOOL_CALL_CLOSE = "</tool_call>"
 
-_ENVELOPE = re.compile(
-    rf"{re.escape(TOOL_CALL_OPEN)}(?P<body>.*?){re.escape(TOOL_CALL_CLOSE)}",
-    re.S | re.I,
-)
-
 #: ```json … ``` wrapper, which several models add unconditionally.
 _FENCE = re.compile(r"```(?:json)?\s*(?P<body>.*?)```", re.S | re.I)
 
@@ -92,20 +87,27 @@ MAX_CALLS_PER_REPLY = 4
 _TRAILING_SPACE = re.compile(r"[ \t]+$")
 _BLANK_RUN = re.compile(r"\n{3,}")
 
-#: A complete call envelope, JSON body included. A *truncated* envelope — an open
-#: tag whose body never parses — must still be removed from the prose, or the
-#: leftover markup becomes the run's answer and the prompt parser then offers it
-#: as a prompt. Measured live: the model began a call, switched mid-stream to
-#: DeepSeek's native DSML markup, and emitted a malformed hybrid. The reply had no
-#: parseable call, so the loop treated it as the final answer and the UI presented
-#: `<tool_call>{"name": …` as a prompt.
-_COMPLETE_CALL = re.compile(
-    rf"{re.escape(TOOL_CALL_OPEN)}.*?{re.escape(TOOL_CALL_CLOSE)}",
-    re.S | re.I,
-)
-#: An unterminated envelope: from an open tag to the end of the reply.
+#: A *malformed* envelope — an open tag closed by something other than
+#: ``</tool_call>``, or not closed at all — must still be removed from the prose,
+#: or the leftover markup becomes the run's answer. Measured live: the model began
+#: a call, switched mid-stream to DeepSeek's native DSML markup, and emitted a
+#: malformed hybrid; the reply had no parseable call, so the loop treated it as the
+#: final answer and the UI presented `<tool_call>{"name": …` as a prompt.
+#:
+#: Removal is done by :func:`_scan_open_envelopes`, which understands both the
+#: proper closer and the malformed ones. This pattern is the fallback for an
+#: envelope left open at the end of the reply.
 _UNTERMINATED_CALL = re.compile(
     rf"{re.escape(TOOL_CALL_OPEN)}.*\Z", re.S | re.I
+)
+
+#: Where an envelope body must have ended, whether or not the model wrote a
+#: ``</tool_call>``. The body is always JSON, so the first DSML tag or any
+#: subsequent ``<tool_call>`` opener is past its end. Matched with
+#: :func:`_scan_open_envelopes`, which prefers a real closer when there is one.
+_BODY_BOUNDARY = re.compile(
+    rf"</?{_DSML_SEP}DSML{_DSML_SEP}[^>]*>|{re.escape(TOOL_CALL_OPEN)}",
+    re.S | re.I,
 )
 
 
@@ -185,24 +187,165 @@ def _from_object(payload: object) -> ToolCall | None:
 
 
 def _parse_dsml(text: str) -> list[ToolCall]:
-    """Recover calls written in DeepSeek's ``DSML`` markup."""
+    """Recover calls written in DeepSeek's ``DSML`` markup.
+
+    Two shapes reach here from the live gateway. The documented one names each
+    argument directly::
+
+        <｜｜DSML｜｜ parameter name="query" string="true">warehouse robots</｜｜DSML｜｜ parameter>
+
+    The other wraps the whole argument object in a *single* parameter named
+    ``arguments``, whose value is JSON rather than a string::
+
+        <｜｜DSML｜｜ parameter name="arguments" string="false">{"query": "…"}</｜｜DSML｜｜ parameter>
+
+    Captured live: without handling the second shape the tool received
+    ``{"arguments": {"query": …}}``, so a correct call arrived with no ``query``
+    of its own and was rejected as malformed.
+    """
     calls: list[ToolCall] = []
     for match in _DSML_INVOKE.finditer(text):
         arguments: dict = {}
         for param in _DSML_PARAM.finditer(match.group("body")):
+            name = param.group("name").strip()
             raw_value = param.group("value").strip()
             # The value arrives as text; unwrap a JSON scalar so numbers and
             # arrays reach the tool as their real types.
             try:
-                arguments[param.group("name")] = json.loads(raw_value)
+                value: object = json.loads(raw_value)
             except json.JSONDecodeError:
-                arguments[param.group("name")] = raw_value
+                value = raw_value
+            if name == "arguments" and isinstance(value, dict):
+                # The whole argument object arrived under one parameter.
+                arguments.update(value)
+                continue
+            arguments[name] = value
         calls.append(
             ToolCall(name=match.group("name").strip(), arguments=arguments, raw=match.group(0))
         )
         if len(calls) >= MAX_CALLS_PER_REPLY:
             break
     return calls
+
+
+def _scan_open_envelopes(text: str) -> list[tuple[int, int, str]]:
+    """Find every ``<tool_call>`` opener, tolerant of a *wrong* closer.
+
+    The gateway does not reliably emit the closer the prompt asks for. Captured
+    live from ``deepseek-v4.1-flash``: the model writes a **complete and valid**
+    JSON body, then closes it with DeepSeek's native DSML tags instead of
+    ``</tool_call>`` —
+
+    .. code-block:: text
+
+        <tool_call>{"name": "market_overview", "arguments": {"niche": "…"}}</｜｜DSML｜｜ parameter>
+
+    A regex requiring ``</tool_call>`` cannot match that, so the call was not
+    parsed, the loop read the turn as a final answer, and the run ended with no
+    tool executed. That is the operator's "the agent suddenly stops without
+    providing the prompts", and it is a parser fault, not a model fault: the
+    arguments are all there and valid.
+
+    Returns ``(span_start, body_start, body_end, span)`` for each opener:
+    ``span`` is the whole envelope as it appeared, ``span_start`` is where it
+    begins in the text (so the prose can be rebuilt around it), and
+    ``text[body_start:body_end]`` is the JSON to parse. The four values are
+    returned rather than recomputed by the callers because ``span_start`` and
+    ``body_start`` differ by the length of the opener, and conflating them made
+    the strip delete the wrong slice of the reply.
+    """
+    spans: list[tuple[int, int, int, str]] = []
+    cursor = 0
+    while True:
+        start = text.find(TOOL_CALL_OPEN, cursor)
+        if start == -1:
+            return spans
+        body_start = start + len(TOOL_CALL_OPEN)
+        cursor = body_start
+
+        # Preferred: a proper closer.
+        close = text.find(TOOL_CALL_CLOSE, body_start)
+        # The JSON body always begins with `{` or `[`. Any of these markers means
+        # the body has ended, whether or not a `</tool_call>` followed.
+        boundary = _BODY_BOUNDARY.search(text, body_start)
+        if close != -1 and (boundary is None or close <= boundary.start()):
+            end = close + len(TOOL_CALL_CLOSE)
+            spans.append((start, body_start, close, text[start:end]))
+            cursor = end
+            continue
+        if boundary is not None:
+            spans.append(
+                (start, body_start, boundary.start(), text[start : boundary.start()])
+            )
+            cursor = boundary.start()
+            continue
+        # Nothing but the body, truncated at the end of the reply.
+        spans.append((start, body_start, len(text), text[start:]))
+        return spans
+
+
+def _balanced_json(text: str, start: int) -> str | None:
+    """The balanced ``{…}`` or ``[…]`` starting at ``start``, if there is one.
+
+    Brace counting rather than a regex, so a brace inside a JSON *string* (a
+    query containing ``"`` or ``{``) cannot end the object early.
+    """
+    if start >= len(text) or text[start] not in "{[":
+        return None
+    opener = text[start]
+    closer = "}" if opener == "{" else "]"
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(text)):
+        char = text[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == opener:
+            depth += 1
+        elif char == closer:
+            depth -= 1
+            if depth == 0:
+                return text[start : index + 1]
+    return None
+
+
+def _calls_from_body(body: str) -> list[ToolCall]:
+    """Parse the JSON object(s) in an envelope body into calls."""
+    candidates: list[ToolCall] = []
+    trimmed = _strip_fences(body).strip()
+    if not trimmed:
+        return candidates
+
+    decoded: object | None = None
+    try:
+        decoded = json.loads(trimmed)
+    except json.JSONDecodeError:
+        # The body may be followed by trailing markup the boundary scan could not
+        # see, so fall back to the balanced object at the front of it.
+        balanced = _balanced_json(trimmed, trimmed.find("{") if "{" in trimmed else 0)
+        if balanced:
+            try:
+                decoded = json.loads(balanced)
+            except json.JSONDecodeError:
+                return candidates
+        else:
+            return candidates
+
+    items = decoded if isinstance(decoded, list) else [decoded]
+    for item in items:
+        call = _from_object(item)
+        if call is not None:
+            candidates.append(call)
+    return candidates
 
 
 def parse_tool_calls(text: str) -> list[ToolCall]:
@@ -216,20 +359,13 @@ def parse_tool_calls(text: str) -> list[ToolCall]:
 
     calls: list[ToolCall] = []
 
-    # 1. The requested envelope. The body may hold either one object or an
-    #    array of them.
-    for match in _ENVELOPE.finditer(text):
-        body = _strip_fences(match.group("body"))
-        try:
-            payload = json.loads(body)
-        except json.JSONDecodeError:
-            continue
-        candidates = payload if isinstance(payload, list) else [payload]
-        for candidate in candidates:
-            call = _from_object(candidate)
-            if call is not None:
-                call.raw = match.group(0)
-                calls.append(call)
+    # 1. The requested envelope, tolerant of how the model closed it. The body may
+    #    hold either one object or an array of them.
+    for _span_start, body_start, body_end, span in _scan_open_envelopes(text):
+        for call in _calls_from_body(text[body_start:body_end]):
+            call.raw = span
+            calls.append(call)
+    calls = calls[:MAX_CALLS_PER_REPLY]
 
     # 2. A fenced JSON object with a tool-shaped body, for a model that ignored
     #    the envelope but still fenced its output.
@@ -270,9 +406,23 @@ def strip_tool_calls(text: str) -> str:
     if not text:
         return ""
 
-    # Remove complete envelopes first, then any unterminated one (a truncated
-    # call leaves an open tag with no close, so the first pattern cannot match).
-    cleaned = _COMPLETE_CALL.sub(" ", text)
+    # Remove every envelope, using the same tolerant scan the parser uses. A
+    # regex keyed on `</tool_call>` alone leaves the *malformed* envelopes in the
+    # prose — and those are the ones that matter most, because they are exactly
+    # the turns that failed to parse as calls. Captured live: the model closed a
+    # JSON body with `</｜｜DSML｜｜ parameter>`, and the leftover tags were
+    # streamed to the operator as the agent's own words.
+    #
+    # Rebuilt by offset rather than by `str.replace`: the same envelope text can
+    # legitimately appear twice (a model repeating itself, or a JSON *string* that
+    # contains the markup), and `replace` would then delete the wrong occurrence —
+    # or, if the text no longer matched, silently delete nothing.
+    cleaned = text
+    for span_start, _body_start, _body_end, span in reversed(_scan_open_envelopes(text)):
+        end = span_start + len(span)
+        if cleaned[span_start:end] == span:
+            cleaned = cleaned[:span_start] + " " + cleaned[end:]
+    # Anything still open (a truncated call at the very end of the reply).
     cleaned = _UNTERMINATED_CALL.sub(" ", cleaned)
 
     # Unwrap DSML elements from the inside out, then drop any leftover tags.
@@ -299,17 +449,23 @@ def strip_tool_calls(text: str) -> str:
     return _BLANK_RUN.sub("\n\n", joined).strip()
 
 
-def format_tool_result(name: str, payload: object) -> str:
+def format_tool_result(name: str, payload: object, *, error: bool = False) -> str:
     """Render a tool's output as the message the model reads next.
 
     The envelope is explicit and labelled with the tool name so a model that
     called two tools in one turn can still tell the results apart.
+
+    ``error=True`` marks a *failure* rather than an empty success. The distinction
+    matters: a result envelope that looks ordinary invites the model to treat "no
+    data" as "nothing exists", which is exactly the wrong conclusion to draw from
+    a call that was rejected before it ran.
     """
     if isinstance(payload, str):
         body = payload
     else:
         body = json.dumps(payload, ensure_ascii=False, indent=2)
-    return f"<tool_result name=\"{name}\">\n{body}\n</tool_result>"
+    attribute = ' error="true"' if error else ""
+    return f"<tool_result name=\"{name}\"{attribute}>\n{body}\n</tool_result>"
 
 
 def format_call_error(name: str, message: str, known: list[str]) -> str:

@@ -33,8 +33,13 @@ from dataclasses import dataclass, field
 from typing import Callable, Iterator
 
 from services.llm_client import LLMError, LLMTruncatedError, stream_chat
+from services.research import context as context_module
 from services.research import events as event_module
-from services.research import protocol, synthesis, tools
+from services.research import protocol, synthesis, toolcall, tools
+# Imported as a module because ``validity`` is also a key on a tool outcome; a
+# by-name import of ``TARGET_AVERAGE`` would read as if it belonged to the outcome.
+from services.research import sources as sources_module
+from services.research import validity as validity_module
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +54,33 @@ MAX_IDENTICAL_CALLS = 2
 #: (an empty reply). Prevents an empty reply from ending the run as "success".
 MAX_EMPTY_REPLIES = 2
 
+#: How many times a reply may contain tool-call markup that does not parse before
+#: the run is finalised instead of being corrected again.
+#:
+#: Counted **separately** from :data:`MAX_EMPTY_REPLIES` because they are different
+#: faults with different corrections. Captured live: the model alternated between a
+#: correct call and a malformed hybrid (`<tool_call>{…}` closed with DSML tags), and
+#: the malformed ones incremented the *empty* counter. After two of them the run was
+#: finalised as "the model stopped producing usable output" — with four good tool
+#: results already gathered — even though every one of those turns was a parse
+#: failure that the correction prompt can fix.
+MAX_MALFORMED_REPLIES = 2
+
+#: How many times a gated run may be sent back to research a *stronger* candidate
+#: before its answer is accepted as-is.
+#:
+#: The operator's instruction is that the collective average must clear the target,
+#: because finding a better idea is the whole point of asking for one. The prompt
+#: says so, but a prompt is a request, not a guarantee: measured live, a run
+#: researched a replacement idea and returned **53%** — below the 72% of the idea
+#: the operator had just rejected — and presented it as the answer, because nothing
+#: in the loop compared the score to the target.
+#:
+#: Bounded because each attempt costs tool calls: a model that cannot find an 80%
+#: idea would otherwise search until its budget was gone. When the attempts are
+#: spent the run reports the best it found, with its real score.
+MAX_TARGET_ATTEMPTS = 2
+
 #: How many times a research run may be told "you announced research but did not
 #: perform any" before its prose is accepted anyway.
 #:
@@ -58,6 +90,18 @@ MAX_EMPTY_REPLIES = 2
 #: final answer — but the run had done no research at all. Nothing in the protocol
 #: forces a tool call before an answer, so a *research* run needs the guard below.
 MAX_TOOL_NUDGES = 2
+
+#: How many times a *prompt-producing* run may be told "you did not return the
+#: prompts" before its prose is accepted anyway.
+#:
+#: This is the fix for the operator's "the agent suddenly stops without providing
+#: the prompts, especially in research mode". A prompt run has a hard requirement
+#: the other modes do not: its answer must be the JSON contract, because that is
+#: what the parser reads. Measured: with the instruction text saying "reply in
+#: plain prose with no tool call at all. That is how you finish", a research run
+#: would write a readable summary, parse to ZERO prompts, and be reported as a
+#: clean success — a run that visibly did work and delivered nothing.
+MAX_PROMPT_NUDGES = 2
 
 #: Modes that produce prompts, and therefore get the format instruction and the
 #: similarity tool.
@@ -83,6 +127,22 @@ class RunRequest:
     history: list[dict] = field(default_factory=list)
     max_tool_calls: int = DEFAULT_MAX_TOOL_CALLS
     temperature: float = 0.3
+    #: The model's declared context window, used to decide when to fold the
+    #: history. 0 disables folding, which is what a unit test wants.
+    context_window: int = 0
+    #: Set when this turn is the operator releasing the validity gate by pressing
+    #: "Continue with these confidence rates".
+    #:
+    #: Needed because :attr:`wants_prompts` is otherwise computed from the mode and
+    #: the gate alone, so a gated run could never be asked for prompts at all — the
+    #: Continue button produced a second assessment instead of the prompts the
+    #: operator had just asked for.
+    released: bool = False
+    #: The operator's priority sources, as a parsed
+    #: :class:`services.research.sources.SourceSet` (or ``None``). Carried on the
+    #: request rather than read from disk in the agent so a run is reproducible in
+    #: a test and a mid-run file change cannot alter a turn already in flight.
+    priority_sources: "sources_module.SourceSet | None" = None
 
     @property
     def wants_prompts(self) -> bool:
@@ -100,14 +160,30 @@ class RunRequest:
         because it could not satisfy both. Gating here makes the two instructions
         agree: no format block, and no similarity tool, until the operator
         continues and prompts are actually wanted.
+
+        ``released`` is that continuation. Without it the gate was one-way: the
+        operator's decision to proceed could never turn prompts back on.
         """
         if self.mode not in PROMPT_MODES or self.mode == "ideas":
             return False
+        if self.released:
+            return True
         return not self.validity_check
 
 
-def _initial_messages(request: RunRequest, tool_specs: list[dict]) -> list[dict]:
-    """Build the conversation the model starts from."""
+def _initial_messages(
+    request: RunRequest, tool_specs: list[dict]
+) -> tuple[list[dict], context_module.FoldedHistory]:
+    """Build the conversation the model starts from, and fold it if it is too big.
+
+    Returns ``(messages, folded)`` so the caller can report what was compacted.
+    The history is passed through :func:`services.research.context.summarise_history`
+    rather than sliced blindly: a fixed ``history[-12:]`` cannot know how large the
+    turns are, and a dozen tool results can be far larger than the window. A
+    conversation that overflows is truncated *from the front* by the provider,
+    which removes the system prompt and leaves the model with no instructions —
+    the failure the operator experiences as a run that stopped for no reason.
+    """
     from services.research import prompts as prompt_module
 
     system = prompt_module.compose_system_prompt(
@@ -116,23 +192,24 @@ def _initial_messages(request: RunRequest, tool_specs: list[dict]) -> list[dict]
         mode=request.mode,
         validity_check=request.validity_check,
         max_tools=request.max_tool_calls,
+        wants_prompts=request.wants_prompts,
+        count=request.count,
+        released=request.released,
+        source_guidance=sources_module.guidance(request.priority_sources),
+    )
+
+    folded = context_module.summarise_history(
+        request.history, window_tokens=request.context_window
     )
 
     messages: list[dict] = [{"role": "system", "content": system}]
-
-    # A bounded slice of the transcript: enough for the operator to say "that
-    # second idea" or "yes, continue", not enough to crowd out the system prompt.
-    for turn in request.history[-12:]:
-        role = turn.get("role")
-        content = str(turn.get("content") or "").strip()
-        if role in ("user", "assistant") and content:
-            messages.append({"role": role, "content": content})
+    messages.extend(folded.messages)
 
     user_text = (request.message or "").strip()
     if request.wants_prompts and request.count > 0:
         user_text += synthesis.prompt_format_instruction(request.count)
     messages.append({"role": "user", "content": user_text})
-    return messages
+    return messages, folded
 
 
 def _final_answer_prompt(reason: str) -> dict:
@@ -217,13 +294,47 @@ def run(request: RunRequest) -> Iterator[dict]:
         max_tool_calls=request.max_tool_calls,
     )
 
-    messages = _initial_messages(request, tool_specs)
+    messages, folded = _initial_messages(request, tool_specs)
+
+    # Announce the context position up front, and again whenever it is measured,
+    # so the operator can see how close the run is to the window instead of
+    # discovering the limit by hitting it. Reported *after* folding, because that
+    # is the size of the request actually being sent.
+    context_report = context_module.window_report(
+        messages, request.context_window, folded=folded
+    )
+    if folded.folded_turns:
+        yield event_module.event(
+            event_module.NOTICE,
+            text=(
+                f"This conversation had grown past the context window, so its "
+                f"oldest {folded.folded_turns} turns were compacted into a "
+                "summary. The most recent turns are kept in full."
+            ),
+        )
+    if folded.note:
+        yield event_module.event(event_module.NOTICE, text=folded.note)
+    yield event_module.event(event_module.CONTEXT, **context_report.to_dict())
+
     accumulator = event_module.EventAccumulator()
     calls_made = 0
     call_counts: dict[str, int] = {}
     empty_replies = 0
+    malformed_replies = 0
     tool_nudges = 0
+    prompt_nudges = 0
+    target_attempts = 0
     truncated = False
+
+    #: The best collective average recorded by an `assess_validity` call so far,
+    #: or ``None`` when nothing has been scored. Tracked so the loop can tell
+    #: whether the answer it is about to accept actually clears the operator's
+    #: target — the prompt asks the model to keep searching, but only the loop can
+    #: *enforce* it.
+    best_average: float | None = None
+    #: The subject of that best assessment, reported back to the operator when the
+    #: attempts are spent so they know which idea the number belongs to.
+    best_subject = ""
 
     #: A prompt-producing run answers in the JSON contract, so its content deltas
     #: are a machine payload, not prose. Streaming them would print raw JSON with
@@ -238,6 +349,44 @@ def run(request: RunRequest) -> Iterator[dict]:
     prose = ""
 
     while True:
+        # --- keep the turn inside the window --------------------------------- #
+        # A single turn can add many large tool results, so a run that started
+        # comfortably inside the window can push itself out of it. Measured live
+        # with a small window: the final measurement reached 100%, and the next
+        # request would have been truncated at the provider — losing the system
+        # prompt, which is the failure this whole mechanism exists to prevent.
+        messages, live_folded = context_module.compact_live_messages(
+            messages, window_tokens=request.context_window
+        )
+        if live_folded.folded_turns:
+            # Carry the in-run folding into the run's own history so the final
+            # report describes the whole run, not just its opening turn.
+            folded = context_module.FoldedHistory(
+                messages=messages,
+                summary=live_folded.summary,
+                folded_turns=folded.folded_turns + live_folded.folded_turns,
+                note=live_folded.note,
+                degraded=folded.degraded or live_folded.degraded,
+            )
+            yield event_module.event(
+                event_module.NOTICE,
+                text=(
+                    "This turn grew past the context window, so its earlier tool "
+                    f"results ({live_folded.folded_turns} turns) were compacted "
+                    "into a summary to make room. The most recent results are kept "
+                    "in full."
+                ),
+            )
+            live_report = context_module.window_report(
+                messages, request.context_window, folded=folded
+            )
+            accumulator.add(
+                event_module.event(event_module.CONTEXT, **live_report.to_dict())
+            )
+            yield event_module.event(event_module.CONTEXT, **live_report.to_dict())
+        if live_folded.note:
+            yield event_module.event(event_module.NOTICE, text=live_folded.note)
+
         # --- stream one turn ------------------------------------------------ #
         thinking_buffer: list[str] = []
         content_buffer: list[str] = []
@@ -325,13 +474,25 @@ def run(request: RunRequest) -> Iterator[dict]:
 
         if not calls:
             if not prose.strip():
-                # A turn with no usable prose is retried before it is treated as a
-                # fault. The threshold is deliberately above one: a reasoning model
-                # routinely emits a thinking-only turn, and failing the whole run on
-                # the first one is what produced "The model stopped producing any
-                # output" after the agent had already gathered its evidence.
-                empty_replies += 1
-                if empty_replies > MAX_EMPTY_REPLIES:
+                # Two different faults reach this branch, and they need different
+                # counters. A reply with *no* markup is a genuinely empty turn (a
+                # reasoning model routinely emits one); a reply with markup that did
+                # not parse is a malformed call, which the correction prompt below
+                # can fix. Counting the second as the first is what ended a live run
+                # after two malformed hybrids, with four good tool results already
+                # gathered, under the message "the model stopped producing usable
+                # output" — which was not what had happened.
+                malformed = _looks_like_payload(reply)
+                if malformed:
+                    malformed_replies += 1
+                else:
+                    empty_replies += 1
+                exhausted = (
+                    malformed_replies > MAX_MALFORMED_REPLIES
+                    if malformed
+                    else empty_replies > MAX_EMPTY_REPLIES
+                )
+                if exhausted:
                     # Do NOT discard the run. By this point the agent may have
                     # already gathered its evidence, and an earlier version
                     # returned an error here — throwing away a completed research
@@ -343,8 +504,9 @@ def run(request: RunRequest) -> Iterator[dict]:
                         event_module.NOTICE,
                         text=(
                             "The model stopped producing usable output after "
-                            f"{empty_replies} attempts. Showing what was gathered "
-                            "before it stopped. Retrying the request usually works."
+                            f"{empty_replies + malformed_replies} attempts. Showing "
+                            "what was gathered before it stopped. Retrying the "
+                            "request usually works."
                         ),
                     )
                     recovered = _last_prose(accumulator, messages)
@@ -389,12 +551,18 @@ def run(request: RunRequest) -> Iterator[dict]:
                     {
                         "role": "user",
                         "content": (
-                            "Your last reply contained a tool call that could not be "
-                            "parsed, so it was discarded. Reply with either exactly "
-                            'this shape — <tool_call>{"name": "tool_name", '
-                            '"arguments": {"argument": "value"}}</tool_call> — or with '
-                            "plain prose and no tool markup at all."
-                            if _looks_like_payload(reply)
+                            "Your last reply contained tool-call markup that could not "
+                            "be read, so nothing was executed and the turn was wasted. "
+                            "The most common cause is mixing two formats: opening a "
+                            "`<tool_call>` and closing it with something else.\n\n"
+                            "Send the call again in EXACTLY this shape, on its own, "
+                            "with nothing before it and nothing after it:\n"
+                            '<tool_call>{"name": "tool_name", "arguments": '
+                            '{"argument": "value"}}</tool_call>\n\n'
+                            "Do not use DSML tags. Do not wrap it in a fence. Do not "
+                            "add commentary. If you would rather stop researching, "
+                            "reply with plain prose and no markup at all."
+                            if malformed
                             else "Your last reply was empty. Please answer."
                         ),
                     }
@@ -408,9 +576,18 @@ def run(request: RunRequest) -> Iterator[dict]:
             # recording any confidence scores." and stopped, announcing research it
             # never performed. The prose is a valid final answer as far as the
             # protocol is concerned, so the guard has to live here.
+            #
+            # **Only on the opening turn.** `calls_made` counts this turn's calls,
+            # but "you have no evidence" is a property of the whole conversation:
+            # on a follow-up ("continue with this idea") the history already holds
+            # every tool result from the earlier turns, so answering immediately is
+            # correct. Firing here told the agent it had "only your own recall"
+            # when it had a full transcript, and cost a turn correcting a model
+            # that had done nothing wrong.
             if (
                 request.mode in RESEARCH_MODES
                 and calls_made == 0
+                and not request.history
                 and tool_nudges < MAX_TOOL_NUDGES
             ):
                 tool_nudges += 1
@@ -431,6 +608,99 @@ def run(request: RunRequest) -> Iterator[dict]:
                             "research. Call `web_search` or `market_overview` now, "
                             "and only answer once you have results to reason from. "
                             "Do not describe what you are about to do; do it."
+                        ),
+                    }
+                )
+                continue
+
+            # A gated run whose best score is below the operator's target has not
+            # answered the question it was asked. The prompt tells the model to keep
+            # searching, but a prompt is a request: measured live, a run researched a
+            # replacement idea, scored it **53%** — below the 72% of the idea the
+            # operator had just rejected — and presented it as the answer, because
+            # nothing in the loop compared the score to the target.
+            #
+            # Only enforced when the gate is on and *not* released: a released run is
+            # writing prompts for an idea the operator already accepted, so its score
+            # is no longer the deciding question.
+            if (
+                request.validity_check
+                and not request.wants_prompts
+                and best_average is not None
+                and best_average < validity_module.TARGET_AVERAGE
+                and target_attempts < MAX_TARGET_ATTEMPTS
+            ):
+                target_attempts += 1
+                yield event_module.event(
+                    event_module.NOTICE,
+                    text=(
+                        f"The best idea so far scores {best_average:g}%, below the "
+                        f"{validity_module.TARGET_AVERAGE:g}% target. Asking the agent "
+                        "to research a stronger candidate."
+                    ),
+                )
+                messages.append({"role": "assistant", "content": reply})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            f"The best idea you have assessed scores {best_average:g}%, "
+                            f"which is below the {validity_module.TARGET_AVERAGE:g}% "
+                            "target the operator set. Finding an idea that clears the "
+                            "target is the whole point of this request.\n\n"
+                            "Research a *different* candidate idea — a different "
+                            "subject, setting or commercial use, not a rewording of "
+                            "this one — and score it with `assess_validity` too, "
+                            "including its `subject`. Keep going until one reaches the "
+                            f"{validity_module.TARGET_AVERAGE:g}% target or you have "
+                            f"tried {validity_module.MAX_CANDIDATES} distinct "
+                            "candidates.\n\n"
+                            "Do not invent a higher score to satisfy this. If no "
+                            "candidate genuinely reaches the target, say so plainly, "
+                            "report the best one with its real score, and explain what "
+                            "the evidence is missing."
+                        ),
+                    }
+                )
+                continue
+
+            # A *prompt-producing* run whose reply does not parse into prompts has
+            # delivered nothing, however good it reads. This is the fix for "the
+            # agent suddenly stops without providing the prompts": the run
+            # completed, the transcript looked like work, and the prompt list was
+            # empty because the answer was not the JSON contract.
+            #
+            # Checked here rather than after finalisation because the *reason* has
+            # to reach the model while it can still act on it. A run that already
+            # produced prompts is not nudged.
+            if (
+                request.wants_prompts
+                and prompt_nudges < MAX_PROMPT_NUDGES
+                and not synthesis.parse_prompts(prose)[0]
+            ):
+                prompt_nudges += 1
+                yield event_module.event(
+                    event_module.NOTICE,
+                    text=(
+                        "The agent answered without returning the prompts in the "
+                        "required format, so nothing could be read from it. Asking "
+                        "it to resend them."
+                    ),
+                )
+                messages.append({"role": "assistant", "content": reply})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your reply did not contain the prompts in the required "
+                            "format, so NOTHING could be read from it and the operator "
+                            "received no prompts at all.\n\n"
+                            "Reply again with ONLY the JSON object described in ANSWER "
+                            "FORMAT. It must start with `{` and end with `}`. No prose "
+                            "before it, no prose after it, no markdown fence, no "
+                            "`<tool_call>` markup, no commentary about what you did.\n\n"
+                            "If you already gathered the evidence you need, write the "
+                            "JSON now. Do not call another tool."
                         ),
                     }
                 )
@@ -518,6 +788,33 @@ def run(request: RunRequest) -> Iterator[dict]:
                 )
                 continue
 
+            # Validate *before* running, so an incomplete call is corrected rather
+            # than executed against nothing. Measured live: a `market_overview`
+            # call arrived with an empty `niche`, the tool answered "No niche
+            # given", and the turn was spent — the model had "done the search" and
+            # reasoned on from a result that said nothing about the subject.
+            validation = toolcall.validate_arguments(
+                call.name,
+                call.arguments,
+                tool_registry[call.name].parameters,
+            )
+            if not validation.ok:
+                result_texts.append(
+                    protocol.format_tool_result(call.name, validation.text, error=True)
+                )
+                yield event_module.event(
+                    event_module.TOOL_RESULT,
+                    name=call.name,
+                    summary=(
+                        "Rejected — missing "
+                        + ", ".join(validation.missing)
+                    ),
+                    ok=False,
+                )
+                # Deliberately NOT counted against the budget: the call never ran,
+                # and charging for it would let a model burn a run on retries.
+                continue
+
             calls_made += 1
             started = time.time()
             outcome = tools.call_tool(tool_registry, call.name, call.arguments)
@@ -536,15 +833,35 @@ def run(request: RunRequest) -> Iterator[dict]:
             if outcome.sources:
                 yield event_module.event(event_module.SOURCES, sources=outcome.sources)
             if outcome.validity:
+                # Presented through the SAME builder the stored result uses.
+                # The tool returns the raw assessment (scores + subject + target),
+                # which has no `meets_target`, `collective_band`, `recommendation`
+                # or `disclaimer`. Measured live: the streaming card read
+                # "Reaches the 80% target." for an idea scoring 73.5, because an
+                # absent `meets_target` is falsy-but-`undefined` and the card's
+                # `undefined ? … : …` fell through to the below-target wording while
+                # `target_average` rendered as `undefined%` — and the recommendation
+                # and the mandatory disclaimer rendered as *nothing at all*.
+                presented = _present_validity(outcome.validity)
+                # Tracked from the PRESENTED average, so the target-seeking nudge
+                # below compares the same number the operator was just shown.
+                try:
+                    scored = float(presented.get("collective_average"))
+                except (TypeError, ValueError):
+                    scored = None
+                if scored is not None and (best_average is None or scored > best_average):
+                    best_average = scored
+                    best_subject = str(presented.get("subject") or "").strip()
                 yield event_module.event(
                     event_module.VALIDITY,
-                    validity=outcome.validity,
-                    follow_up_actions=list(_follow_up_actions()),
+                    validity=presented,
+                    follow_up_actions=list(_follow_up_actions(request.mode)),
                 )
 
         messages.append({"role": "user", "content": "\n\n".join(result_texts)})
 
-    # --- finish ------------------------------------------------------------- #    # Always re-strip: `prose` is assigned per turn, and a turn that produced
+    # --- finish ------------------------------------------------------------- #
+    # Always re-strip: `prose` is assigned per turn, and a turn that produced
     # tool calls keeps its markup in that variable. Without this the raw
     # `<tool_call>{…}</tool_call>` text is persisted as the run's answer and
     # rendered in the transcript.
@@ -559,6 +876,15 @@ def run(request: RunRequest) -> Iterator[dict]:
         accumulator.add(payload)
         yield payload
 
+    # Re-measure now that every tool result is in the conversation, so the
+    # indicator reflects the size of the request that was actually sent rather
+    # than its opening size.
+    final_report = context_module.window_report(
+        messages, request.context_window, folded=folded
+    )
+    accumulator.add(event_module.event(event_module.CONTEXT, **final_report.to_dict()))
+    yield event_module.event(event_module.CONTEXT, **final_report.to_dict())
+
     yield event_module.event(
         event_module.RUN_FINISHED,
         status="completed",
@@ -566,15 +892,45 @@ def run(request: RunRequest) -> Iterator[dict]:
         thinking=accumulator.thinking,
     )
 
-def _follow_up_actions() -> tuple[dict, ...]:
+
+def _present_validity(assessment: dict) -> dict:
+    """The assessment as the operator's card needs it, or the raw dict as a fallback.
+
+    The tool returns the *raw* assessment. Everything the card displays beyond the
+    two numbers — `meets_target`, `collective_band`, `collective_label`,
+    `recommendation` and the mandatory `disclaimer` — is derived by
+    :func:`services.research.validity.describe`, which the storage path already
+    calls. Building the event from the raw dict instead meant the live card and the
+    reopened card disagreed: measured live, a streaming card showed no
+    recommendation and no disclaimer at all.
+
+    Falls back to the raw assessment so a malformed one degrades to "the numbers
+    still arrive" rather than losing the event entirely.
+    """
+    from services.research import validity as validity_module
+
+    view = validity_module.describe(assessment)
+    return view.to_dict() if view is not None else assessment
+
+
+def _follow_up_actions(mode: str) -> tuple[dict, ...]:
     """The post-assessment choices, from the validity module.
 
     Imported lazily to keep the agent module free of a module-level cycle
     through the tool registry.
-    """
-    from services.research.validity import FOLLOW_UP_ACTIONS
 
-    return FOLLOW_UP_ACTIONS
+    ``mode`` decides the wording, not this turn's ``wants_prompts``: a gated
+    research run reports ``wants_prompts`` false *because of the gate*, and would
+    otherwise be offered the no-prompts button even though continuing is exactly
+    what turns its prompts on.
+
+    The predicate deliberately mirrors the first clause of
+    :attr:`RunRequest.wants_prompts` so the two cannot disagree about which modes
+    write prompts.
+    """
+    from services.research.validity import follow_up_actions
+
+    return follow_up_actions(can_produce_prompts=mode in PROMPT_MODES and mode != "ideas")
 
 
 def _last_prose(accumulator: event_module.EventAccumulator, messages: list[dict]) -> str:
@@ -591,6 +947,12 @@ def _last_prose(accumulator: event_module.EventAccumulator, messages: list[dict]
 #: check runs on the turn's content *so far* and the streaming loop holds back a
 #: tail of this length before releasing text.
 _MARKUP_MARKERS = ("<tool_call", "dsml")
+#: An opener that is *incomplete* at the end of the buffer: ``<tool`` is the start
+#: of ``<tool_call>``, and treating it as prose streams half a marker. Captured
+#: live: the model wrote ``<tool_call>{"name": "market_overview", …`` and then
+#: closed it with DSML tags, so the hold-back released the opening brace and the
+#: operator saw `name": "market_overview", "arguments": …` as the agent's answer.
+_PARTIAL_MARKERS = ("<tool", "<tool_", "<tool_c", "<tool_ca", "<tool_cal", "dsm", "ds")
 _MARKUP_TAIL = 32
 
 
@@ -601,11 +963,24 @@ def _markup_index(text: str) -> int | None:
     before the marker and discard only the markup. Dropping the whole buffer would
     lose a sentence the operator was already reading — "Let me look at the market
     data. <tool_call>…" would arrive with its first sentence missing.
+
+    A *partial* marker counts. An earlier version only matched complete markers, so
+    a reply whose opener never completed (`<tool_call>{"name": …` followed by DSML
+    tags) had its brace-and-quote released into the transcript as prose.
     """
     lowered = text.lower()
     found = [lowered.find(marker) for marker in _MARKUP_MARKERS]
     positions = [position for position in found if position != -1]
-    return min(positions) if positions else None
+    if positions:
+        return min(positions)
+
+    # Only a *trailing* partial marker is one: a `ds` in the middle of a word is
+    # prose ("inside", "handsets"), but a `ds` at the very end may be the start of
+    # `dsml` arriving in the next delta.
+    for marker in _PARTIAL_MARKERS:
+        if lowered.endswith(marker):
+            return len(text) - len(marker)
+    return None
 
 
 def _has_markup(text: str) -> bool:

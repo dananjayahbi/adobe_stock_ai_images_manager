@@ -38,6 +38,37 @@ export interface ResearchSettings {
   max_prompts: number;
   max_tool_calls: number;
   disclaimer: string;
+  /** The resolved context window, and the thresholds the live bar uses. */
+  context_window: number;
+  keep_recent_turns: number;
+  compact_at_share: number;
+  warn_at_share: number;
+  /** The collective average an idea must reach, quoted by the card's verdict. */
+  target_average: number;
+}
+
+/**
+ * How full the model's context window is.
+ *
+ * Reported by the backend rather than estimated in the browser: the backend
+ * knows the system prompt, the folded history and the tool results, and it is
+ * the side that decides when to compact. Two estimates of the same number would
+ * eventually disagree, and the one the operator sees would be the wrong one.
+ */
+export interface ResearchContextReport {
+  used_tokens: number;
+  window_tokens: number;
+  system_tokens: number;
+  history_tokens: number;
+  message_tokens: number;
+  remaining_tokens: number;
+  percent: number;
+  level: "ok" | "warn" | "critical";
+  turns: number;
+  compacted: boolean;
+  folded_turns: number;
+  degraded: boolean;
+  note: string;
 }
 
 export type ResearchRunStatus = "RUNNING" | "COMPLETED" | "FAILED" | "CANCELLED";
@@ -80,6 +111,25 @@ export interface ResearchValidity {
   recommendation: string;
   reasoning: string;
   evidence: string[];
+  /**
+   * The idea these scores describe.
+   *
+   * Without it the card showed three numbers and a rationale with no statement of
+   * their subject, so on a "research a better idea" turn the operator could not
+   * tell the replacement from the idea they had just rejected.
+   */
+  subject: string;
+  /** The average the idea is judged against. */
+  target_average: number;
+  /**
+   * Whether the idea reached that target.
+   *
+   * Optional because the backend *derives* it in `validity.describe`, and the
+   * live event and the stored result must agree. When it is absent the card says
+   * the verdict is unknown rather than rendering "Below the undefined% target" —
+   * a wrong verdict stated with full confidence.
+   */
+  meets_target?: boolean | null;
   /** Always present: states the scores are a judgement, not a measurement. */
   disclaimer: string;
 }
@@ -115,6 +165,7 @@ export type ResearchEvent =
   | { type: "sources"; sources: ResearchSource[] }
   | { type: "prompts"; prompts: ResearchPrompt[]; summary?: string; duplicate_pairs?: unknown[]; saveable?: string[] }
   | { type: "validity"; validity: ResearchValidity; follow_up_actions?: FollowUpAction[] }
+  | ({ type: "context" } & ResearchContextReport)
   | { type: "notice"; text: string }
   | { type: "error"; text: string }
   | { type: "run_finished"; status: string; answer?: string; thinking?: string };
@@ -164,6 +215,7 @@ const KNOWN_EVENT_TYPES = new Set([
   "sources",
   "prompts",
   "validity",
+  "context",
   "notice",
   "error",
   "run_finished",

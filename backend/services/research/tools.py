@@ -32,6 +32,10 @@ from services.adobe_restrictions import scan_metadata
 from services.duplicate_detector import metadata_similarity, tokenize_metadata
 from services.research import fetch as fetch_module
 from services.research import search as search_module
+# Imported as a module (not by name) because ``validity`` is also the name of a
+# key on :class:`ToolOutcome`; a by-name import of ``TARGET_AVERAGE`` would read
+# as if it belonged to the outcome.
+from services.research import validity as validity_module
 
 #: Marketplaces that publish a catalogue count on their landing pages. A result
 #: from one of these is *existing supply*, which is what "is this saturated?"
@@ -381,6 +385,24 @@ def _tool_assess_validity(arguments: dict) -> ToolOutcome:
     """
     download = _score(arguments, "customer_download_confidence")
     acceptance = _score(arguments, "adobe_acceptance_confidence")
+    subject = _text(arguments, "subject", limit=300)
+
+    # `subject` is checked here as well as being declared required in the schema.
+    # The schema requirement is enforced by the agent loop's argument validator;
+    # this is the last line of defence, because `call_tool` is a public entry point
+    # and a scorecard with no subject is the exact defect the argument exists to
+    # prevent — three numbers and a rationale with no statement of what they judged.
+    if not subject:
+        return ToolOutcome(
+            text=(
+                "assess_validity needs a `subject`: the exact idea or niche these "
+                "scores describe, in one short phrase. Without it the operator "
+                "cannot tell which idea the numbers are about — which matters most "
+                "on a 'research a better idea' turn. Call it again with `subject`."
+            ),
+            summary="No subject given",
+            degraded=True,
+        )
 
     if download is None or acceptance is None:
         missing = [
@@ -411,6 +433,15 @@ def _tool_assess_validity(arguments: dict) -> ToolOutcome:
         "customer_download_confidence": download,
         "adobe_acceptance_confidence": acceptance,
         "collective_average": collective,
+        # The idea these numbers describe. Recorded so the scorecard can name its
+        # subject: without it, a "research a better idea" turn produced three
+        # numbers and a rationale with no statement of *which* idea they were
+        # about, and the operator could not tell the replacement from the idea
+        # they had just rejected.
+        "subject": subject,
+        # The bar the operator set, recorded with the scores so a reader can see
+        # whether the idea cleared it without knowing the constant.
+        "target_average": validity_module.TARGET_AVERAGE,
         "reasoning": reasoning,
         "evidence": evidence,
         # The UI shows this so the operator is never told the numbers came from
@@ -418,17 +449,35 @@ def _tool_assess_validity(arguments: dict) -> ToolOutcome:
         "basis": "agent judgement over the gathered web evidence",
     }
 
+    meets = collective >= validity_module.TARGET_AVERAGE
     return ToolOutcome(
         text=(
             "Assessment recorded:\n"
+            f"- Subject assessed: {assessment['subject']}\n"
             f"- Customer download confidence: {download}\n"
             f"- Adobe Stock acceptance confidence: {acceptance}\n"
-            f"- Collective average: {collective}\n\n"
-            "The operator now sees these scores and will decide whether to continue. "
-            "Summarise your findings and offer the two options — continue with this "
-            "idea, or research a better one — then stop. Do not write the prompts yet."
+            f"- Collective average: {collective}\n"
+            f"- Target: {validity_module.TARGET_AVERAGE:g}\n\n"
+            + (
+                "This clears the target. Summarise your findings and offer the two "
+                "options — continue with this idea, or research a better one — then "
+                "stop. Do not write the prompts yet."
+                if meets
+                else (
+                    f"This is BELOW the {validity_module.TARGET_AVERAGE:g}% target. "
+                    "Do not present it as the answer. Research a *different* "
+                    "candidate idea and score that one too, until one reaches the "
+                    f"target or you have tried {validity_module.MAX_CANDIDATES} "
+                    "candidates. If none reaches it, say so plainly and report the "
+                    "best one with its real score."
+                )
+            )
         ),
-        summary=f"Confidence recorded — download {download}, acceptance {acceptance}, average {collective}",
+        summary=(
+            f"Confidence recorded — download {download}, acceptance {acceptance}, "
+            f"average {collective}"
+            + ("" if meets else f" (below the {validity_module.TARGET_AVERAGE:g}% target)")
+        ),
         validity=assessment,
     )
 
@@ -673,6 +722,15 @@ _VALIDITY_TOOL = Tool(
     parameters={
         "type": "object",
         "properties": {
+            "subject": {
+                "type": "string",
+                "description": (
+                    "The exact idea or niche these scores describe, in one short "
+                    "phrase — for example 'cold-storage warehouse robotics'. Always "
+                    "state it: on a 'research a better idea' turn the operator must "
+                    "be able to tell which idea the numbers are about."
+                ),
+            },
             "customer_download_confidence": {
                 "type": "number",
                 "description": "0-100: how likely a customer is to want this image.",
@@ -692,6 +750,7 @@ _VALIDITY_TOOL = Tool(
             },
         },
         "required": [
+            "subject",
             "customer_download_confidence",
             "adobe_acceptance_confidence",
             "reasoning",

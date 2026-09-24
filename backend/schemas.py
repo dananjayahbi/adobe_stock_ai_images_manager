@@ -755,3 +755,13 @@ class ResearchSettingsResponse(BaseModel):
     max_prompts: int = 60
     max_tool_calls: int = 10
     disclaimer: str = ""
+    #: The resolved context window, and the thresholds the live indicator uses.
+    #: Served so the bar cannot disagree with the backend about when a run is
+    #: close to its limit or when the history gets compacted.
+    context_window: int = 0
+    keep_recent_turns: int = 5
+    compact_at_share: float = 0.7
+    warn_at_share: float = 0.85
+    #: The collective average an idea must reach. Served so the card's verdict and
+    #: the agent's own instruction quote the same number.
+    target_average: float = 80.0

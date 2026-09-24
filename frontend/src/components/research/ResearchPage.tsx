@@ -4,8 +4,10 @@ import { FlaskConical, Sparkles } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import ConfidenceCard from "@/components/research/ConfidenceCard";
+import ContextWindowBar from "@/components/research/ContextWindowBar";
 import FollowUpActions from "@/components/research/FollowUpActions";
 import ModeSelector, { ModeDescription } from "@/components/research/ModeSelector";
+import PrioritySourcesPanel from "@/components/research/PrioritySourcesPanel";
 import PromptResultCard, { type PromptDetail } from "@/components/research/PromptResultCard";
 import ResearchComposer from "@/components/research/ResearchComposer";
 import ResearchThreadList from "@/components/research/ResearchThreadList";
@@ -354,6 +356,11 @@ export default function ResearchPage() {
                 disabled={isBusy}
               />
               <ModeDescription mode={activeMode} />
+              <ContextWindowBar
+                report={state.context}
+                fallbackWindow={settings?.context_window ?? 0}
+                isLive={isBusy}
+              />
               <RunSettingsPanel
                 styleInstruction={styleInstruction}
                 onStyleChange={setStyleInstruction}
@@ -368,6 +375,7 @@ export default function ResearchPage() {
                 onValidityChange={setValidityCheck}
                 disabled={isBusy}
               />
+              <PrioritySourcesPanel disabled={isBusy} />
             </div>
           </Panel>
 
@@ -377,6 +385,8 @@ export default function ResearchPage() {
                 messages={messages}
                 steps={state.steps}
                 thinking={state.thinking}
+                turns={state.turns}
+                state={state}
                 isLive={isBusy}
               />
             </Panel>
