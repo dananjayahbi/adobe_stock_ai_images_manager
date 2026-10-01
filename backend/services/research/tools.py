@@ -102,12 +102,27 @@ class ToolOutcome:
 
 @dataclass(frozen=True)
 class Tool:
-    """One callable capability, with the schema the agent is shown."""
+    """One callable capability, with the schema the agent is shown.
+
+    ``consumes_budget`` distinguishes **research** from **bookkeeping**. A research
+    tool reaches outside the process for evidence (a search, a page fetch); a
+    bookkeeping tool only records what the model has already worked out
+    (``assess_validity``, ``check_prompt_similarity``).
+
+    Charging both against one budget is a real defect, not a rounding error:
+    measured live, a run spent its 10th and final call on ``assess_validity``, the
+    loop then correctly judged the score below target and asked for a stronger
+    candidate — with **zero calls left to look for one**. The quality mechanism was
+    starved by the budget that was supposed to enable it. Bookkeeping is therefore
+    free, and the budget bounds only the work that can run away.
+    """
 
     name: str
     description: str
     parameters: dict
     run: Callable[[dict], ToolOutcome]
+    #: False for tools that only record the model's own conclusions.
+    consumes_budget: bool = True
 
     def spec(self) -> dict:
         """The declaration handed to the prompt builder."""
@@ -246,7 +261,7 @@ def _tool_web_search(arguments: dict) -> ToolOutcome:
             degraded=True,
         )
 
-    response = search_module.search(query)
+    response = search_module.run_search(query)
     return ToolOutcome(
         text=response.to_tool_text(),
         summary=(
@@ -306,10 +321,13 @@ def _tool_market_overview(arguments: dict) -> ToolOutcome:
     failures: list[str] = []
     fallback_used = False
     for query in queries:
-        response = search_module.search(query)
+        response = search_module.run_search(query)
         if response.ok:
             collected.extend(response.results)
-            if response.used_fallback:
+            # Keyed on the evidence tier rather than on "a fallback happened": a
+            # same-tier fallback is not a degraded source, and claiming it was
+            # would put a false caveat on good general-index results.
+            if response.degraded_source:
                 fallback_used = True
         else:
             failures.append(f"{query!r}: {response.error}")
@@ -709,6 +727,9 @@ _SIMILARITY_TOOL = Tool(
         "required": ["prompts"],
     },
     run=_tool_check_prompt_similarity,
+    # Bookkeeping: it compares prompts the model already wrote. Charging for it
+    # would let the final quality check be the thing that exhausts the budget.
+    consumes_budget=False,
 )
 
 #: Only offered when the operator enabled the validity check, so the scores
@@ -757,6 +778,10 @@ _VALIDITY_TOOL = Tool(
         ],
     },
     run=_tool_assess_validity,
+    # Bookkeeping, and the single most important one to exempt: measured live, a
+    # run spent its last budgeted call here, the loop then correctly judged the
+    # score below target and asked for a stronger candidate with no calls left.
+    consumes_budget=False,
 )
 
 

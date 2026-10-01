@@ -1,6 +1,6 @@
 "use client";
 
-import { RotateCcw, Save, Settings2, Sparkles, Zap } from "lucide-react";
+import { RotateCcw, Save, Settings2, Sparkles, Zap, Globe } from "lucide-react";
 import { useMemo } from "react";
 
 import { SettingsField, controlClass } from "@/components/settings/SettingsField";
@@ -8,6 +8,8 @@ import {
   SettingsNotice,
   VisionModelNote,
 } from "@/components/settings/SettingsNotice";
+import { ResearchLimitsPanel } from "@/components/settings/ResearchLimitsPanel";
+import { SearchProviderPanel } from "@/components/settings/SearchProviderPanel";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { useAppSettings } from "@/hooks/useAppSettings";
@@ -67,6 +69,18 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
     !!draft.llm_model.trim() &&
     !windowError;
 
+  /**
+   * The search half of the probe.
+   *
+   * A separate button because it is a **different vendor with a different key**.
+   * Folding it into "Test connection" would spend a Brave query every time the
+   * operator checks their LLM endpoint, and would make an LLM failure hide a
+   * perfectly good search configuration.
+   */
+  const canProbeSearch =
+    !isBusy &&
+    (!!draft.brave_search_api_key.trim() || settings?.brave_search_api_key_set === true);
+
   async function handleSave() {
     try {
       await save();
@@ -85,7 +99,7 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       size="lg"
       icon={<Settings2 className="h-4 w-4" aria-hidden />}
       title="System settings"
-      description="Point the studio at any OpenAI-compatible endpoint. Used for metadata generation and the semantic quality audit."
+      description="Point the studio at any OpenAI-compatible endpoint, and choose where the research agent searches."
       footer={
         <>
           <Button
@@ -101,6 +115,17 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
           <div className="flex-1" />
           <Button variant="subtle" size="sm" disabled={isBusy} onClick={onClose}>
             Cancel
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<Globe className="h-3.5 w-3.5" aria-hidden />}
+            disabled={!canProbeSearch}
+            isLoading={isTesting}
+            onClick={() => void test({ probeSearch: true })}
+            title="Send one query through the search provider chain"
+          >
+            Test search
           </Button>
           <Button
             variant="secondary"
@@ -254,6 +279,28 @@ export function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 images sent at {settings.effective_image_max_dim}px long edge
               </p>
             </SettingsNotice>
+          ) : null}
+
+          {settings ? (
+            <>
+              <div className="border-t border-navy-700/40 pt-4">
+                <SearchProviderPanel
+                  settings={settings}
+                  draft={draft}
+                  setField={setField}
+                  disabled={isBusy}
+                  probe={testResult?.search ?? null}
+                />
+              </div>
+              <div className="border-t border-navy-700/40 pt-4">
+                <ResearchLimitsPanel
+                  settings={settings}
+                  draft={draft}
+                  setField={setField}
+                  disabled={isBusy}
+                />
+              </div>
+            </>
           ) : null}
 
           {error ? (

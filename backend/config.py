@@ -44,6 +44,20 @@ class Settings(BaseSettings):
     #: one storage directory holds all mutable state.
     APP_SETTINGS_PATH: Path = STORAGE_ROOT / "app_settings.json"
 
+    # ------------------------------------------------------------------ #
+    # Web search (the research agent's evidence source)
+    # ------------------------------------------------------------------ #
+    #: Whether the operator has enabled Brave Search as the primary provider.
+    #: Default **off**, so a deployment with no key behaves exactly as before the
+    #: feature existed. Stored per-operator in the settings store, not here.
+    BRAVE_SEARCH_ENABLED: bool = False
+    #: Brave Search API key. Read from ``.env`` when the operator has not stored
+    #: one in the settings store, exactly like ``LLM_API_KEY``.
+    BRAVE_SEARCH_API_KEY: str = ""
+    #: Requests per second Brave's plan allows. Used to space out the queries one
+    #: ``market_overview`` call issues, which is what actually trips a 429.
+    BRAVE_SEARCH_RATE_LIMIT_PER_SECOND: float = 1.0
+
     # Legacy Gemini key. Retained only as a fallback source for LLM_API_KEY so
     # existing .env files keep working.
     GEMINI_API_KEY: str = ""

@@ -34,10 +34,12 @@ from __future__ import annotations
 import html as html_module
 import logging
 import re
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass, field
+from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +49,39 @@ SEARCH_ENDPOINT = "https://lite.duckduckgo.com/lite/"
 #: Provider identity, recorded on every response so the UI can name the source.
 PROVIDER_NAME = "duckduckgo"
 PROVIDER_LABEL = "DuckDuckGo"
+
+#: **Evidence tiers.** This is the load-bearing distinction for the provider chain.
+#:
+#: A general web index answers "what exists and who writes about it" with the same
+#: *kind* of evidence whatever index it is, so falling back from one general index
+#: to another is **silent** — the operator's conclusions are unaffected. Editorial
+#: coverage is a different tier: it shows what is being written about a topic, not
+#: how many competing stock images exist, so a result from that tier degrades the
+#: evidence and has to be announced.
+#:
+#: Before this existed there was a single ``used_fallback`` flag, which meant a
+#: Brave-to-DuckDuckGo fallback would have been labelled "news and editorial
+#: coverage" — a false statement about perfectly good general-index results.
+TIER_GENERAL_INDEX = "general_index"
+TIER_EDITORIAL = "editorial"
+
+
+@dataclass(frozen=True)
+class Provider:
+    """One entry in the fallback chain.
+
+    ``run`` is called as ``run(query, limit=…, timeout=…)``. Bound as a closure
+    rather than passed the settings, so :func:`provider_chain` is the single place
+    that reads configuration and a provider cannot pick up a different key than
+    the one the chain was built with.
+    """
+
+    name: str
+    label: str
+    tier: str
+    run: Callable[..., "SearchResponse"]
+    #: True when the provider is useless without an operator-supplied credential.
+    requires_key: bool = False
 
 #: A browser UA. The default ``Python-urllib/3.x`` UA is rejected outright.
 USER_AGENT = (
@@ -154,7 +189,15 @@ class SearchResponse:
     #: identical to a clean one.
     provider: str = ""
     provider_label: str = ""
+    #: True when the answer came from anywhere other than the first provider in
+    #: the chain. On its own this says nothing about quality — see
+    #: :attr:`degraded_source`.
     used_fallback: bool = False
+    #: True when the answer came from a **lower evidence tier** than the primary
+    #: provider (editorial coverage rather than a general web index). Only this
+    #: warrants the caveat in :meth:`to_tool_text`; a same-tier fallback is silent
+    #: by design.
+    degraded_source: bool = False
     #: What every provider said when they all failed, so the operator can tell
     #: "rate-limited" apart from "no network".
     provider_errors: list[str] = field(default_factory=list)
@@ -170,6 +213,8 @@ class SearchResponse:
             payload["provider"] = self.provider
         if self.used_fallback:
             payload["used_fallback"] = True
+        if self.degraded_source:
+            payload["degraded_source"] = True
         if self.error:
             payload["error"] = self.error
         return payload
@@ -195,8 +240,12 @@ class SearchResponse:
                 "broader phrasing before drawing a conclusion."
             )
 
+        # The caveat is keyed on the evidence TIER, not on "a fallback happened".
+        # A same-tier fallback (Brave to DuckDuckGo) returns the same kind of
+        # evidence and needs no warning; editorial coverage is a weaker kind and
+        # does, because it cannot show how many competing stock images exist.
         source_note = ""
-        if self.used_fallback:
+        if self.degraded_source:
             source_note = (
                 f"\n(Note: the primary search provider was unavailable, so these "
                 f"results come from {self.provider_label}. They are news and "
@@ -219,11 +268,21 @@ class SearchResponse:
         return "\n".join(lines)
 
 
+def clean_fragment(raw: str) -> str:
+    """Collapse whitespace and unescape entities in a text fragment.
+
+    Public because every provider needs it and each one used to carry its own
+    near-identical copy — three implementations of the same rule is three places
+    for it to drift. Markup is *not* stripped here: a JSON provider's text is
+    already plain, and stripping tags from a legitimate `<` would corrupt it.
+    """
+    return re.sub(r"\s+", " ", html_module.unescape(raw or "")).strip()
+
+
 def _clean(raw: str) -> str:
-    """Strip tags and entities from a fragment of markup."""
+    """Strip tags *and* entities from a fragment of scraped markup."""
     without_tags = _TAG.sub(" ", raw or "")
-    collapsed = re.sub(r"\s+", " ", html_module.unescape(without_tags))
-    return collapsed.strip()
+    return clean_fragment(without_tags)
 
 
 def _unwrap(href: str) -> str:
@@ -350,35 +409,106 @@ def _duckduckgo(query: str, *, limit: int, timeout: int) -> SearchResponse:
     return response
 
 
-def search(query: str, *, limit: int = MAX_RESULTS, timeout: int = 25) -> SearchResponse:
-    """Run one web search, falling back to a second provider, then reporting.
+def _brave_provider(api_key: str) -> Provider:
+    """Brave, bound to the operator's key.
 
-    Provider order matters: DuckDuckGo's general index answers a query about
-    *anything* well, so it is tried first; the news feed is the fallback, because
-    it is editorial coverage rather than a general index.
+    The key is captured in the closure so the chain is fully decided before any
+    search runs: a settings change mid-run cannot switch providers part-way
+    through a conversation.
+    """
+    from services.research import brave
+
+    def _run(query: str, *, limit: int, timeout: int) -> SearchResponse:
+        return brave.brave_search(query, api_key=api_key, limit=limit, timeout=timeout)
+
+    return Provider(
+        name=brave.PROVIDER_NAME,
+        label=brave.PROVIDER_LABEL,
+        tier=TIER_GENERAL_INDEX,
+        run=_run,
+        requires_key=True,
+    )
+
+
+def _duckduckgo_provider() -> Provider:
+    return Provider(
+        name=PROVIDER_NAME,
+        label=PROVIDER_LABEL,
+        tier=TIER_GENERAL_INDEX,
+        run=_duckduckgo,
+    )
+
+
+def _news_provider() -> Provider:
+    """Google News RSS — a *lower tier*, so its use is announced."""
+    from services.research import news_search
+
+    return Provider(
+        name=news_search.PROVIDER_NAME,
+        label=news_search.PROVIDER_LABEL,
+        tier=TIER_EDITORIAL,
+        run=news_search.google_news,
+    )
+
+
+def provider_chain(
+    *, brave_api_key: str = "", use_brave: bool = False
+) -> list[Provider]:
+    """The providers to try, in order.
+
+    The operator's settings decide the order; nothing here is hard-coded to a
+    provider, so enabling Brave in Settings changes *where the agent looks* with
+    no code change and no restart.
+
+    * **Brave enabled and keyed** → Brave first. It is the default search.
+    * Otherwise → DuckDuckGo first, so a run is byte-identical to before the
+      feature existed when Brave is off.
+    * Google News is always last, because it is the only provider that cannot
+      answer "how much supply exists" — it is the last resort, not a peer.
+    """
+    chain: list[Provider] = []
+    if use_brave and (brave_api_key or "").strip():
+        chain.append(_brave_provider(brave_api_key))
+    chain.append(_duckduckgo_provider())
+    chain.append(_news_provider())
+    return chain
+
+
+def search(
+    query: str,
+    *,
+    limit: int = MAX_RESULTS,
+    timeout: int = 25,
+    brave_api_key: str = "",
+    use_brave: bool = False,
+) -> SearchResponse:
+    """Run one web search, falling back through the provider chain, then reporting.
 
     **Never raises for a provider problem.** Every provider's failure is collected
     and, if all fail, returned as ``ok=False`` with each provider's own message, so
     the agent loop can record the step, tell the model what happened, and continue.
     A hard exception would abort a run that could still produce a useful answer.
+
+    A fallback within the same evidence tier is **silent** — the results are the
+    same kind of evidence, so flagging them would be a false alarm. A fallback to a
+    lower tier (editorial coverage) is marked ``degraded_source`` so the tool text
+    can warn the agent not to read it as catalogue data.
     """
     cleaned = re.sub(r"\s+", " ", (query or "").strip())[:MAX_QUERY_LENGTH]
     if not cleaned:
         return SearchResponse(query="", ok=False, error="Empty query.")
 
-    # Imported here rather than at module scope: the news provider imports this
-    # module's shared helpers, so a top-level import would be circular.
-    from services.research import news_search
+    chain = provider_chain(brave_api_key=brave_api_key, use_brave=use_brave)
+    primary_tier = chain[0].tier
 
     attempts: list[str] = []
-    for index, provider in enumerate((_duckduckgo, news_search.google_news)):
-        outcome = provider(cleaned, limit=limit, timeout=timeout)
+    for index, provider in enumerate(chain):
+        outcome = provider.run(cleaned, limit=limit, timeout=timeout)
         if outcome.ok and outcome.results:
             outcome.used_fallback = index > 0
+            outcome.degraded_source = provider.tier != primary_tier
             return outcome
-        attempts.append(
-            f"{outcome.provider_label or provider.__name__}: {outcome.error}"
-        )
+        attempts.append(f"{outcome.provider_label or provider.label}: {outcome.error}")
 
     return SearchResponse(
         query=cleaned,
@@ -386,3 +516,76 @@ def search(query: str, *, limit: int = MAX_RESULTS, timeout: int = 25) -> Search
         error="every search provider failed",
         provider_errors=attempts,
     )
+
+
+def run_search(
+    query: str,
+    *,
+    limit: int = MAX_RESULTS,
+    timeout: int = 25,
+    search_config: "SearchConfigLike | None" = None,
+) -> SearchResponse:
+    """Run a search using the operator's **saved** provider settings.
+
+    This is what the tools call, so a research run picks up a provider change made
+    in Settings with no restart — the same contract :func:`app_settings.resolve`
+    gives the LLM endpoint.
+
+    Settings are read here (once, at the top of the call) rather than inside the
+    provider chain so the configuration is resolved exactly once per search and the
+    pure :func:`search` function stays trivially testable with an explicit chain.
+
+    The import is function-local because ``services.app_settings`` is a
+    *application-level* module and ``services.research`` is a feature package;
+    importing it at module scope would make this package unimportable on its own,
+    which the research tests rely on.
+    """
+    from services import app_settings
+
+    config = search_config if search_config is not None else app_settings.resolve_search()
+    if config.uses_brave:
+        _pace_brave(config.rate_limit_per_second)
+    return search(
+        query,
+        limit=limit,
+        timeout=timeout,
+        brave_api_key=config.api_key,
+        use_brave=config.uses_brave,
+    )
+
+
+#: When the last Brave request was sent. Used to space requests out to the plan's
+#: allowed rate, which is the difference between a clean run and one that trips a
+#: 429 on the second of three queries.
+_last_brave_call = 0.0
+
+
+def _pace_brave(rate_limit_per_second: float) -> None:
+    """Sleep just long enough to stay inside the plan's request rate.
+
+    Pacing here rather than in the caller because a single ``market_overview`` call
+    fires **three** queries back to back: at Brave's free-plan rate of one per
+    second, queries two and three would otherwise be rejected, and the run would
+    silently fall through to the next provider while *appearing* to have used
+    Brave. Doing it once, on the path every search takes, means no caller has to
+    know the plan's rate.
+
+    Deliberately sleeps only the shortfall, so a naturally slow run is never
+    slowed further. Not a substitute for the fallback chain: a rate limit can still
+    be hit by other clients on the same key, which is why the chain exists.
+    """
+    global _last_brave_call
+
+    if rate_limit_per_second <= 0:
+        return
+    minimum_gap = 1.0 / rate_limit_per_second
+    elapsed = time.monotonic() - _last_brave_call
+    if _last_brave_call and elapsed < minimum_gap:
+        time.sleep(minimum_gap - elapsed)
+    _last_brave_call = time.monotonic()
+
+
+#: Structural type for the config :func:`run_search` accepts. Declared as a
+#: ``Protocol``-shaped alias rather than an import so this module never depends on
+#: ``app_settings`` at import time.
+SearchConfigLike = "app_settings.SearchConfig"

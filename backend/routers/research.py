@@ -64,7 +64,7 @@ from services.research import (
     sources,
     validity,
 )
-from services.research.agent import DEFAULT_MAX_TOOL_CALLS, RunRequest
+from services.research.agent import RunRequest
 from services.research.synthesis import MAX_PROMPTS
 
 logger = logging.getLogger(__name__)
@@ -257,7 +257,11 @@ def _build_request(
         style_instruction=resolved_style,
         validity_check=resolved_validity,
         history=history,
-        max_tool_calls=DEFAULT_MAX_TOOL_CALLS,
+        # Resolved per turn, so raising the limit in Settings takes effect on the
+        # next turn without a restart. A fixed module constant here was the binding
+        # constraint on research quality: `market_overview` spends three calls per
+        # invocation, so ten ran out before the agent had scored anything.
+        max_tool_calls=app_settings.resolve_tool_budget(),
         # Resolved per request, so changing the window in Settings takes effect on
         # the next turn without a restart — the same contract the LLM client has.
         context_window=app_settings.resolve().context_window,
@@ -397,7 +401,9 @@ async def research_settings() -> ResearchSettingsResponse:
         default_style_instruction=prompts.DEFAULT_STYLE_INSTRUCTION,
         house_rules=prompts.HOUSE_RULES,
         max_prompts=MAX_PROMPTS,
-        max_tool_calls=DEFAULT_MAX_TOOL_CALLS,
+        # The operator's configured budget, so the UI shows the number that will
+        # actually be enforced rather than a hard-coded one.
+        max_tool_calls=app_settings.resolve_tool_budget(),
         disclaimer=validity.DISCLAIMER,
         # Served rather than hard-coded in the UI so the bar's thresholds and the
         # backend's folding decision cannot drift apart.
@@ -549,7 +555,7 @@ async def create_research_run(
         style_instruction=run.settings["style_instruction"],
         validity_check=validity_check,
         history=[],
-        max_tool_calls=DEFAULT_MAX_TOOL_CALLS,
+        max_tool_calls=app_settings.resolve_tool_budget(),
         # Resolved here as well as in `_build_request`: this path builds its own
         # request, and a request with a zero window silently disables context
         # folding — so the opening turn of a long run would overflow where the

@@ -17,6 +17,10 @@ export interface SettingsDefaults {
 export interface SettingsBounds {
   min_context_window: number;
   max_context_window: number;
+  min_brave_rate: number;
+  max_brave_rate: number;
+  min_tool_calls: number;
+  max_tool_calls: number;
 }
 
 export interface AppSettings {
@@ -33,6 +37,21 @@ export interface AppSettings {
   effective_context_window: number;
   /** Long edge images are downscaled to, derived from the context window. */
   effective_image_max_dim: number;
+  /**
+   * Web search for the research agent.
+   *
+   * `brave_search_enabled` is the operator's choice; `effective_uses_brave` is
+   * what will actually happen. They differ when Brave is on but keyless, which is
+   * why the UI must show the *effective* one rather than assuming the toggle won.
+   */
+  brave_search_enabled: boolean;
+  brave_search_api_key_masked: string;
+  brave_search_api_key_set: boolean;
+  brave_search_rate_limit: number;
+  effective_uses_brave: boolean;
+  effective_search_provider: string;
+  /** Research tool budget. Bookkeeping tools are not charged against it. */
+  research_max_tool_calls: number;
   defaults: SettingsDefaults;
   bounds: SettingsBounds;
 }
@@ -49,6 +68,19 @@ export interface SettingsUpdate {
   llm_api_key?: string;
   llm_context_window?: number;
   clear_api_key?: boolean;
+  brave_search_enabled?: boolean;
+  brave_search_api_key?: string;
+  brave_search_rate_limit?: number;
+  clear_brave_search_key?: boolean;
+  research_max_tool_calls?: number;
+}
+
+export interface SettingsSearchProbe {
+  ok: boolean;
+  provider: string;
+  provider_label: string;
+  results: number;
+  error?: string | null;
 }
 
 export interface SettingsTestResult {
@@ -56,6 +88,8 @@ export interface SettingsTestResult {
   model?: string | null;
   reply?: string | null;
   error?: string | null;
+  /** Present only when the request asked for a search probe. */
+  search?: SettingsSearchProbe | null;
 }
 
 export async function fetchSettings(): Promise<AppSettings> {
@@ -79,9 +113,13 @@ export async function updateSettings(
  * endpoint is a normal state the dialog renders inline.
  */
 export async function testSettings(
-  payload: SettingsUpdate = {}
+  payload: SettingsUpdate = {},
+  options: { probeSearch?: boolean } = {}
 ): Promise<SettingsTestResult> {
-  const { data } = await api.post<SettingsTestResult>("/api/settings/test", payload);
+  const { data } = await api.post<SettingsTestResult>("/api/settings/test", {
+    ...payload,
+    probe_search: options.probeSearch ?? false,
+  });
   return data;
 }
 

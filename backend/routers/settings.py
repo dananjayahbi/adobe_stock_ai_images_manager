@@ -65,7 +65,62 @@ async def test_settings(request: SettingsTestRequest | None = None) -> SettingsT
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     result = llm_client.test_connection(payload)
+
+    # The search half is only probed when asked for. It is a *different* vendor
+    # with a different credential, so folding it into every connection test would
+    # spend a Brave query every time the operator checks their LLM endpoint.
+    if payload.get("probe_search"):
+        result["search"] = _probe_search(payload)
+
     return SettingsTestResponse(**result)
+
+
+def _probe_search(payload: dict) -> dict:
+    """Exercise the search provider chain and report which one answered.
+
+    Candidate values are applied to a *copy* of the configuration, matching the
+    LLM probe's non-destructive contract: testing a key the operator is still
+    experimenting with must not pin it.
+    """
+    from services.research import search as search_module
+
+    submitted_key = str(payload.get("brave_search_api_key") or "").strip()
+    current = app_settings.resolve_search()
+    # A blank or masked key means "use the saved one", the same contract the
+    # settings save uses, so probing without retyping the key still works.
+    key = (
+        current.api_key
+        if (not submitted_key or submitted_key == app_settings.mask_brave_key(current.api_key))
+        else submitted_key
+    )
+
+    response = search_module.search(
+        "stock photography market trends",
+        limit=3,
+        brave_api_key=key,
+        use_brave=bool(key),
+    )
+    if not response.ok:
+        return {
+            "ok": False,
+            "provider": response.provider,
+            "provider_label": response.provider_label,
+            "results": 0,
+            "error": response.error
+            + (
+                " — what each provider said: "
+                + "; ".join(response.provider_errors)
+                if response.provider_errors
+                else ""
+            ),
+        }
+    return {
+        "ok": True,
+        "provider": response.provider,
+        "provider_label": response.provider_label,
+        "results": len(response.results),
+        "error": None,
+    }
 
 
 @router.post("/api/settings/reset", response_model=SettingsResponse)

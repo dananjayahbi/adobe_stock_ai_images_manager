@@ -485,6 +485,10 @@ class SettingsBounds(BaseModel):
 
     min_context_window: int
     max_context_window: int
+    min_brave_rate: float = 0.1
+    max_brave_rate: float = 10.0
+    min_tool_calls: int = 4
+    max_tool_calls: int = 80
 
 
 class SettingsResponse(BaseModel):
@@ -509,6 +513,19 @@ class SettingsResponse(BaseModel):
     effective_context_window: int
     #: Long edge an image is downscaled to, derived from the context window.
     effective_image_max_dim: int
+    #: Web-search provider settings. The research agent's evidence source.
+    #: ``brave_search_enabled`` is what the operator chose; ``effective_uses_brave``
+    #: is what will actually happen (an enabled provider with no key is not used),
+    #: so the UI can never show "active" for a configuration that cannot run.
+    brave_search_enabled: bool = False
+    brave_search_api_key_masked: str = ""
+    brave_search_api_key_set: bool = False
+    brave_search_rate_limit: float = 1.0
+    effective_uses_brave: bool = False
+    effective_search_provider: str = "duckduckgo"
+    #: The research agent's tool budget. Research calls only — the bookkeeping
+    #: tools (`assess_validity`, `check_prompt_similarity`) are not charged.
+    research_max_tool_calls: int = 24
     defaults: SettingsDefaults
     bounds: SettingsBounds
 
@@ -526,6 +543,14 @@ class SettingsUpdateRequest(BaseModel):
     llm_api_key: Optional[str] = None
     llm_context_window: Optional[int] = None
     clear_api_key: bool = False
+    #: Brave Search. ``brave_search_enabled`` switches the research agent's
+    #: primary provider; the key follows the same blank-means-unchanged contract
+    #: as ``llm_api_key``.
+    brave_search_enabled: Optional[bool] = None
+    brave_search_api_key: Optional[str] = None
+    brave_search_rate_limit: Optional[float] = None
+    clear_brave_search_key: bool = False
+    research_max_tool_calls: Optional[int] = None
 
 
 class SettingsTestRequest(BaseModel):
@@ -535,6 +560,24 @@ class SettingsTestRequest(BaseModel):
     llm_model: Optional[str] = None
     llm_api_key: Optional[str] = None
     llm_context_window: Optional[int] = None
+    #: When set, the probe also exercises the search provider so a bad key or a
+    #: missing entitlement surfaces here rather than mid-research-run.
+    probe_search: Optional[bool] = None
+    brave_search_api_key: Optional[str] = None
+    brave_search_enabled: Optional[bool] = None
+
+
+class SettingsSearchProbe(BaseModel):
+    """Outcome of the web-search half of a connection probe.
+
+    A failure is a normal result, not an HTTP error: the modal renders it inline.
+    """
+
+    ok: bool
+    provider: str = ""
+    provider_label: str = ""
+    results: int = 0
+    error: Optional[str] = None
 
 
 class SettingsTestResponse(BaseModel):
@@ -548,6 +591,9 @@ class SettingsTestResponse(BaseModel):
     model: Optional[str] = None
     reply: Optional[str] = None
     error: Optional[str] = None
+    #: Present only when the request asked for a search probe, so the modal can
+    #: report the two halves of the configuration separately.
+    search: Optional[SettingsSearchProbe] = None
 
 
 # --------------------------------------------------------------------------- #

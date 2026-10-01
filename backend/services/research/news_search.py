@@ -28,7 +28,6 @@ exist. The tool text says so, so the agent does not over-read it.
 
 from __future__ import annotations
 
-import html as html_module
 import logging
 import re
 import urllib.error
@@ -41,6 +40,7 @@ from services.research.search import (
     USER_AGENT,
     SearchResponse,
     SearchResult,
+    clean_fragment,
     looks_blocked,
 )
 
@@ -67,7 +67,7 @@ _TAG = re.compile(r"<[^>]+>")
 def _clean(raw: str) -> str:
     """Strip markup and entities from a feed fragment."""
     without_tags = _TAG.sub("", raw or "")
-    return re.sub(r"\s+", " ", html_module.unescape(without_tags)).strip()
+    return clean_fragment(without_tags)
 
 
 def parse_items(body: str, limit: int) -> list[SearchResult]:

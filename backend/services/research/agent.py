@@ -43,9 +43,25 @@ from services.research import validity as validity_module
 
 logger = logging.getLogger(__name__)
 
-#: How many tool calls one run may make. Enough for a genuine multi-source
-#: investigation, small enough that a looping model cannot run for hours.
-DEFAULT_MAX_TOOL_CALLS = 10
+#: How many *research* tool calls one run may make (bookkeeping calls are free —
+#: see :attr:`services.research.tools.Tool.consumes_budget`).
+#:
+#: Raised from 10, which was measurably too small. A single ``market_overview``
+#: call spends **three** of them (it issues three queries), so a run that checks
+#: two candidates for saturation and fetches one page had already spent eight
+#: before it scored anything — and a gated run has to score, then possibly look
+#: again for a stronger candidate, then write prompts. The cap was the binding
+#: constraint on research quality, not the model's willingness to search.
+#:
+#: Still bounded, because the loop must terminate: this bounds work that can run
+#: away (searches and page fetches), and the operator can raise it in Settings.
+DEFAULT_MAX_TOOL_CALLS = 24
+
+#: Bounds on the operator-configurable budget. The floor keeps a run from being
+#: configured into uselessness; the ceiling keeps a looping model from running for
+#: hours, which is the property the cap exists to guarantee.
+MIN_TOOL_CALLS = 4
+MAX_TOOL_CALLS = 80
 
 #: Identical call repeated more than this many times is treated as a loop.
 MAX_IDENTICAL_CALLS = 2
@@ -318,6 +334,16 @@ def run(request: RunRequest) -> Iterator[dict]:
 
     accumulator = event_module.EventAccumulator()
     calls_made = 0
+    #: How many tools ran at all, including the free bookkeeping ones.
+    #:
+    #: Tracked **separately** from ``calls_made`` because the two answer different
+    #: questions: ``calls_made`` measures budget spent, ``calls_run`` measures
+    #: whether the agent reached outside its own reasoning. The "you have not
+    #: researched anything" guard needs the second. Conflating them was a real bug
+    #: the moment bookkeeping tools became free: `assess_validity` stopped
+    #: incrementing the budget, so the guard fired on a turn that *had* just run a
+    #: tool and told the agent it had "only your own recall".
+    calls_run = 0
     call_counts: dict[str, int] = {}
     empty_replies = 0
     malformed_replies = 0
@@ -577,7 +603,7 @@ def run(request: RunRequest) -> Iterator[dict]:
             # never performed. The prose is a valid final answer as far as the
             # protocol is concerned, so the guard has to live here.
             #
-            # **Only on the opening turn.** `calls_made` counts this turn's calls,
+            # **Only on the opening turn.** `calls_run` counts this turn's calls,
             # but "you have no evidence" is a property of the whole conversation:
             # on a follow-up ("continue with this idea") the history already holds
             # every tool result from the earlier turns, so answering immediately is
@@ -586,7 +612,7 @@ def run(request: RunRequest) -> Iterator[dict]:
             # that had done nothing wrong.
             if (
                 request.mode in RESEARCH_MODES
-                and calls_made == 0
+                and calls_run == 0
                 and not request.history
                 and tool_nudges < MAX_TOOL_NUDGES
             ):
@@ -710,11 +736,16 @@ def run(request: RunRequest) -> Iterator[dict]:
         if calls_made >= request.max_tool_calls:
             # Budget exhausted. Withhold the tools and demand an answer from what
             # has been gathered — far better than discarding the whole run.
+            #
+            # The notice names the budget and how to change it, because "the agent
+            # reached its limit" is otherwise indistinguishable from a defect and
+            # the operator has no way to know the number is theirs to raise.
             yield event_module.event(
                 event_module.NOTICE,
                 text=(
-                    f"The agent reached its {request.max_tool_calls}-call limit and "
-                    "is answering with what it has gathered so far."
+                    f"The agent reached its {request.max_tool_calls}-call research "
+                    "limit and is answering with what it has gathered so far. "
+                    "Raise the limit in Settings if runs need more research."
                 ),
             )
             messages.append({"role": "assistant", "content": prose or reply})
@@ -815,7 +846,16 @@ def run(request: RunRequest) -> Iterator[dict]:
                 # and charging for it would let a model burn a run on retries.
                 continue
 
-            calls_made += 1
+            # Charge only the tools that reach outside the process for evidence.
+            # `assess_validity` and `check_prompt_similarity` only record what the
+            # model has already worked out, and charging for them starved the very
+            # quality mechanism the budget exists to serve: measured live, a run
+            # spent its final call on `assess_validity`, the loop then judged the
+            # score below target and asked for a stronger candidate with nothing
+            # left to look with.
+            calls_run += 1
+            if tool_registry[call.name].consumes_budget:
+                calls_made += 1
             started = time.time()
             outcome = tools.call_tool(tool_registry, call.name, call.arguments)
             result_texts.append(

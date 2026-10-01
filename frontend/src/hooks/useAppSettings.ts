@@ -18,6 +18,10 @@ export interface SettingsDraft {
   llm_model: string;
   llm_api_key: string;
   llm_context_window: string;
+  brave_search_enabled: boolean;
+  brave_search_api_key: string;
+  brave_search_rate_limit: string;
+  research_max_tool_calls: string;
 }
 
 const EMPTY_DRAFT: SettingsDraft = {
@@ -25,6 +29,10 @@ const EMPTY_DRAFT: SettingsDraft = {
   llm_model: "",
   llm_api_key: "",
   llm_context_window: "",
+  brave_search_enabled: false,
+  brave_search_api_key: "",
+  brave_search_rate_limit: "1",
+  research_max_tool_calls: "",
 };
 
 export interface UseAppSettingsResult {
@@ -39,7 +47,8 @@ export interface UseAppSettingsResult {
   testResult: SettingsTestResult | null;
   setField: <K extends keyof SettingsDraft>(key: K, value: SettingsDraft[K]) => void;
   save: () => Promise<void>;
-  test: () => Promise<void>;
+  /** `probeSearch` also exercises the web-search provider. */
+  test: (options?: { probeSearch?: boolean }) => Promise<void>;
   reset: () => Promise<void>;
   reload: () => Promise<void>;
 }
@@ -79,6 +88,12 @@ export function useAppSettings(isOpen = true): UseAppSettingsResult {
       llm_context_window: String(
         next.llm_context_window || next.effective_context_window
       ),
+      brave_search_enabled: next.brave_search_enabled,
+      // Seeded blank for the same reason the LLM key is: the server only returns
+      // a mask, and a blank field means "keep the stored key".
+      brave_search_api_key: "",
+      brave_search_rate_limit: String(next.brave_search_rate_limit ?? 1),
+      research_max_tool_calls: String(next.research_max_tool_calls ?? 24),
     });
   }, []);
 
@@ -110,6 +125,7 @@ export function useAppSettings(isOpen = true): UseAppSettingsResult {
     const payload: SettingsUpdate = {
       llm_base_url: draft.llm_base_url.trim(),
       llm_model: draft.llm_model.trim(),
+      brave_search_enabled: draft.brave_search_enabled,
     };
     if (Number.isFinite(window)) {
       payload.llm_context_window = window;
@@ -119,6 +135,16 @@ export function useAppSettings(isOpen = true): UseAppSettingsResult {
     // makes the intent explicit.
     const key = draft.llm_api_key.trim();
     if (key) payload.llm_api_key = key;
+
+    const braveKey = draft.brave_search_api_key.trim();
+    if (braveKey) payload.brave_search_api_key = braveKey;
+
+    const rate = Number.parseFloat(draft.brave_search_rate_limit);
+    if (Number.isFinite(rate)) payload.brave_search_rate_limit = rate;
+
+    const calls = Number.parseInt(draft.research_max_tool_calls, 10);
+    if (Number.isFinite(calls)) payload.research_max_tool_calls = calls;
+
     return payload;
   }, [draft]);
 
@@ -135,11 +161,11 @@ export function useAppSettings(isOpen = true): UseAppSettingsResult {
     }
   }, [apply, buildPayload]);
 
-  const test = useCallback(async () => {
+  const test = useCallback(async (options: { probeSearch?: boolean } = {}) => {
     setTesting(true);
     setError(null);
     try {
-      const result = await testSettings(buildPayload());
+      const result = await testSettings(buildPayload(), options);
       setTestResult(result);
     } catch (err) {
       setTestResult({

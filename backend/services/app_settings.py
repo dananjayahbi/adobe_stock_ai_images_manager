@@ -59,6 +59,22 @@ MAX_CONTEXT_WINDOW = 2_000_000
 _MASK_FILL = "********"
 _MASK_TAIL = 4
 
+#: The mask used for the Brave search key. A distinct prefix so a key echoed back
+#: from the wrong field is still recognised as "unchanged" rather than stored.
+BRAVE_MASK_PREFIX = "brave"
+
+#: Bounds on the stored rate limit. Below 0.1 req/s a single ``market_overview``
+#: call would take a minute; above 10 the pacing stops having any effect.
+MIN_BRAVE_RATE = 0.1
+MAX_BRAVE_RATE = 10.0
+
+#: Bounds on the research agent's tool budget. Mirrors
+#: ``services.research.agent.MIN_TOOL_CALLS``/``MAX_TOOL_CALLS``; duplicated as
+#: numbers rather than imported because ``app_settings`` is application-level and
+#: must not depend on a feature package.
+MIN_TOOL_CALLS = 4
+MAX_TOOL_CALLS = 80
+
 #: Only http(s) endpoints are accepted; a stray scheme would be a silent no-op.
 _ALLOWED_SCHEMES = ("http://", "https://")
 
@@ -76,6 +92,28 @@ class LlmConfig:
     image_max_dim: int
     #: True when a key is available at all (a request would be attempted).
     has_api_key: bool
+
+
+@dataclass(frozen=True)
+class SearchConfig:
+    """The effective web-search configuration for the research agent.
+
+    Separate from :class:`LlmConfig` because the two have nothing to do with each
+    other — a search provider is not an LLM endpoint — and folding the key into the
+    LLM config would make "which credential is this?" ambiguous at every call site.
+
+    ``enabled`` and ``has_api_key`` are both needed: "the operator turned it on"
+    and "it can actually be used" are different states, and the second is what
+    decides the provider order.
+    """
+
+    enabled: bool
+    api_key: str
+    has_api_key: bool
+    rate_limit_per_second: float
+    #: True when Brave will actually be tried first. Derived rather than stored,
+    #: so the UI cannot show "active" for a provider with no key.
+    uses_brave: bool
 
 
 # --------------------------------------------------------------------------- #
@@ -144,6 +182,16 @@ def mask_key(key: str) -> str:
     return f"{_MASK_FILL}{key[-_MASK_TAIL:]}"
 
 
+def mask_brave_key(key: str) -> str:
+    """Display-only form of the Brave search key.
+
+    Prefixed so the two credentials in the settings payload are never mistaken
+    for one another by the UI or by a client that echoes a mask back.
+    """
+    masked = mask_key(key)
+    return f"{BRAVE_MASK_PREFIX}:{masked}" if masked else ""
+
+
 def _is_mask(value: str, stored: str) -> bool:
     """True when ``value`` is the masked placeholder for ``stored``.
 
@@ -154,6 +202,17 @@ def _is_mask(value: str, stored: str) -> bool:
     if not value:
         return True
     return bool(stored) and value == mask_key(stored)
+
+
+def _is_brave_mask(value: str, stored: str) -> bool:
+    """The Brave equivalent of :func:`_is_mask`.
+
+    Accepts both the prefixed mask this module hands out and a bare one, so a
+    client that strips the prefix cannot blank a working key.
+    """
+    if not value:
+        return True
+    return bool(stored) and value in (mask_brave_key(stored), mask_key(stored))
 
 
 # --------------------------------------------------------------------------- #
@@ -214,6 +273,82 @@ def resolve() -> LlmConfig:
     )
 
 
+def _env_brave_enabled() -> bool:
+    """Whether ``.env`` turns Brave on, so a deployment can set it once."""
+    return bool(getattr(settings, "BRAVE_SEARCH_ENABLED", False))
+
+
+def _env_brave_key() -> str:
+    """The Brave key from ``.env``, the fallback when none is stored."""
+    return str(getattr(settings, "BRAVE_SEARCH_API_KEY", "") or "").strip()
+
+
+def _env_brave_rate() -> float:
+    """The plan's allowed requests per second, clamped to the supported range."""
+    raw = getattr(settings, "BRAVE_SEARCH_RATE_LIMIT_PER_SECOND", 1.0)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        value = 1.0
+    return max(MIN_BRAVE_RATE, min(MAX_BRAVE_RATE, value))
+
+
+def resolve_search() -> SearchConfig:
+    """The effective web-search configuration, after all layers are applied.
+
+    Mirrors :func:`resolve` for the LLM endpoint: stored value first, then
+    ``.env``, then the built-in default. ``uses_brave`` is the single decision the
+    provider chain consults, so "enabled but no key" cannot half-enable the
+    feature and leave the agent on a provider it cannot authenticate to.
+    """
+    raw = load_raw()
+
+    stored_enabled = raw.get("brave_search_enabled")
+    enabled = (
+        bool(stored_enabled) if isinstance(stored_enabled, bool) else _env_brave_enabled()
+    )
+    api_key = str(raw.get("brave_search_api_key") or "").strip() or _env_brave_key()
+    rate = raw.get("brave_search_rate_limit")
+    rate_limit = (
+        _clean_brave_rate(rate) if rate is not None else _env_brave_rate()
+    )
+
+    return SearchConfig(
+        enabled=enabled,
+        api_key=api_key,
+        has_api_key=bool(api_key),
+        rate_limit_per_second=rate_limit,
+        uses_brave=enabled and bool(api_key),
+    )
+
+
+def resolve_tool_budget() -> int:
+    """The research agent's tool budget, from the store or the built-in default.
+
+    Resolved per run rather than captured at import, so raising it in Settings
+    takes effect on the next turn with no restart — the same contract the context
+    window and the LLM endpoint already have.
+    """
+    raw = load_raw()
+    stored = raw.get("research_max_tool_calls")
+    if stored is None:
+        from services.research import agent as agent_module
+
+        return agent_module.DEFAULT_MAX_TOOL_CALLS
+    try:
+        return _clean_tool_calls(stored)
+    except SettingsValidationError:
+        # A hand-edited store must not break every research run; fall back and say
+        # so, rather than raising on a read path.
+        from services.research import agent as agent_module
+
+        logger.warning(
+            "Stored research_max_tool_calls=%r is out of range; using the default",
+            stored,
+        )
+        return agent_module.DEFAULT_MAX_TOOL_CALLS
+
+
 def read_public() -> dict[str, Any]:
     """The payload the Settings modal renders.
 
@@ -223,6 +358,7 @@ def read_public() -> dict[str, Any]:
     """
     raw = load_raw()
     effective = resolve()
+    search = resolve_search()
     return {
         "llm_base_url": str(raw.get("llm_base_url") or "").strip(),
         "llm_model": str(raw.get("llm_model") or "").strip(),
@@ -233,6 +369,18 @@ def read_public() -> dict[str, Any]:
         "effective_model": effective.model,
         "effective_context_window": effective.context_window,
         "effective_image_max_dim": effective.image_max_dim,
+        "brave_search_enabled": search.enabled,
+        "brave_search_api_key_masked": mask_brave_key(search.api_key),
+        "brave_search_api_key_set": search.has_api_key,
+        "brave_search_rate_limit": search.rate_limit_per_second,
+        # The resolved answer to "which provider will actually run first".
+        # Derived so the UI cannot claim Brave is active for an enabled-but-
+        # keyless configuration.
+        "effective_uses_brave": search.uses_brave,
+        "effective_search_provider": (
+            "brave" if search.uses_brave else "duckduckgo"
+        ),
+        "research_max_tool_calls": resolve_tool_budget(),
         "defaults": {
             "llm_base_url": settings.LLM_BASE_URL,
             "llm_model": settings.LLM_MODEL,
@@ -241,6 +389,10 @@ def read_public() -> dict[str, Any]:
         "bounds": {
             "min_context_window": MIN_CONTEXT_WINDOW,
             "max_context_window": MAX_CONTEXT_WINDOW,
+            "min_brave_rate": MIN_BRAVE_RATE,
+            "max_brave_rate": MAX_BRAVE_RATE,
+            "min_tool_calls": MIN_TOOL_CALLS,
+            "max_tool_calls": MAX_TOOL_CALLS,
         },
     }
 
@@ -282,6 +434,37 @@ def _clean_window(value: Any) -> int:
     return window
 
 
+def _clean_brave_rate(value: Any) -> float:
+    """Validate the Brave rate limit.
+
+    Rejected outside the range rather than clamped: a rate the operator did not
+    intend is a silent behaviour change to how long every research run takes.
+    """
+    try:
+        rate = float(value)
+    except (TypeError, ValueError):
+        raise SettingsValidationError(
+            "Brave rate limit must be a number of requests per second."
+        ) from None
+    if rate < MIN_BRAVE_RATE or rate > MAX_BRAVE_RATE:
+        raise SettingsValidationError(
+            f"Brave rate limit must be between {MIN_BRAVE_RATE:g} and "
+            f"{MAX_BRAVE_RATE:g} requests per second."
+        )
+    return rate
+
+
+def _clean_tool_calls(value: Any) -> int:
+    """Validate the research tool budget."""
+    calls = _int_or(value, -1)
+    if calls < MIN_TOOL_CALLS or calls > MAX_TOOL_CALLS:
+        raise SettingsValidationError(
+            f"Research tool limit must be between {MIN_TOOL_CALLS} and "
+            f"{MAX_TOOL_CALLS} calls."
+        )
+    return calls
+
+
 def validate(payload: dict[str, Any]) -> None:
     """Check a payload without storing it.
 
@@ -294,6 +477,22 @@ def validate(payload: dict[str, Any]) -> None:
         raise SettingsValidationError("Model ID is required.")
     if payload.get("llm_context_window") is not None:
         _clean_window(payload["llm_context_window"])
+    if payload.get("brave_search_rate_limit") is not None:
+        _clean_brave_rate(payload["brave_search_rate_limit"])
+    if payload.get("research_max_tool_calls") is not None:
+        _clean_tool_calls(payload["research_max_tool_calls"])
+    # Enabling Brave without a usable key is refused *here* rather than at search
+    # time. A configuration that looks enabled and silently is not is worse than a
+    # rejected save: the operator would believe their searches were going through
+    # Brave and never learn otherwise.
+    if payload.get("brave_search_enabled") and not payload.get("clear_brave_search_key"):
+        candidate = str(payload.get("brave_search_api_key") or "").strip()
+        effective = resolve_search()
+        if not candidate or _is_brave_mask(candidate, effective.api_key):
+            if not effective.has_api_key:
+                raise SettingsValidationError(
+                    "Brave Search needs an API key before it can be enabled."
+                )
 
 
 def resolve_with(overrides: dict[str, Any] | None = None) -> LlmConfig:
@@ -341,7 +540,13 @@ def update(payload: dict[str, Any]) -> dict[str, Any]:
     single field without clearing the rest. An ``llm_api_key`` that is empty or
     equal to the current mask keeps the stored key; pass
     ``clear_api_key: true`` to remove it deliberately.
+
+    Validated with the same :func:`validate` the connection probe uses, so a save
+    cannot accept a payload the probe would have rejected — the two paths giving
+    different answers about the same values is how a UI ends up offering a
+    configuration the backend then refuses.
     """
+    validate(payload)
     stored = load_raw()
     effective = resolve()
 
@@ -369,6 +574,31 @@ def update(payload: dict[str, Any]) -> dict[str, Any]:
         # operator did not change the key - never blank a working credential.
         if not _is_mask(submitted.strip(), effective.api_key):
             stored["llm_api_key"] = submitted.strip()
+
+    # --- web search ----------------------------------------------------- #
+    # Same key contract as the LLM credential: a blank or masked value means
+    # "unchanged", and clearing removes the key rather than storing "" so the
+    # ``.env`` value is reachable again.
+    if "brave_search_rate_limit" in payload and payload["brave_search_rate_limit"] is not None:
+        stored["brave_search_rate_limit"] = _clean_brave_rate(
+            payload["brave_search_rate_limit"]
+        )
+
+    search = resolve_search()
+    if payload.get("clear_brave_search_key"):
+        stored.pop("brave_search_api_key", None)
+    elif "brave_search_api_key" in payload and payload["brave_search_api_key"] is not None:
+        submitted = str(payload["brave_search_api_key"]).strip()
+        if not _is_brave_mask(submitted, search.api_key):
+            stored["brave_search_api_key"] = submitted
+
+    if "brave_search_enabled" in payload and payload["brave_search_enabled"] is not None:
+        stored["brave_search_enabled"] = bool(payload["brave_search_enabled"])
+
+    if "research_max_tool_calls" in payload and payload["research_max_tool_calls"] is not None:
+        stored["research_max_tool_calls"] = _clean_tool_calls(
+            payload["research_max_tool_calls"]
+        )
 
     save_raw(stored)
     logger.info("Application settings updated")

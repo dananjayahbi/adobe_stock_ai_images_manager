@@ -484,7 +484,13 @@ class TestSearchProviders:
         assert response.provider == news_search.PROVIDER_NAME
 
     def test_a_fallback_result_says_it_is_news_not_catalogue_data(self):
-        """The limitation must be stated, or the agent over-reads the evidence."""
+        """The limitation must be stated, or the agent over-reads the evidence.
+
+        Keyed on ``degraded_source`` (a *lower evidence tier*), not on
+        ``used_fallback``. The distinction is the point: a Brave-to-DuckDuckGo
+        fallback is same-tier and returns the same kind of evidence, so flagging it
+        with this caveat would be a false statement about good results.
+        """
         from services.research import search as search_mod
 
         response = search_mod.SearchResponse(
@@ -495,10 +501,34 @@ class TestSearchProviders:
             provider="google_news",
             provider_label="Google News",
             used_fallback=True,
+            degraded_source=True,
         )
         text = response.to_tool_text()
         assert "news and" in text
         assert "not how many competing stock images exist" in text
+
+    def test_a_same_tier_fallback_carries_no_caveat(self):
+        """The mirror: a general-index fallback must NOT be described as news.
+
+        This is the defect a single ``used_fallback`` flag would have produced —
+        Brave failing over to DuckDuckGo is a change of vendor, not of evidence
+        quality.
+        """
+        from services.research import search as search_mod
+
+        response = search_mod.SearchResponse(
+            query="q",
+            results=[
+                search_mod.SearchResult(title="Result", url="https://stock.adobe.com/x")
+            ],
+            provider="duckduckgo",
+            provider_label="DuckDuckGo",
+            used_fallback=True,
+            degraded_source=False,
+        )
+        text = response.to_tool_text()
+        assert "news and" not in text
+        assert "editorial" not in text
 
     def test_a_total_provider_failure_lists_every_provider(self, monkeypatch):
         """The operator must be able to tell 'rate-limited' from 'no network'."""
@@ -780,6 +810,8 @@ class TestTools:
                 provider="google_news",
                 provider_label="Google News",
                 used_fallback=True,
+                # A lower evidence tier is what makes the share incomplete.
+                degraded_source=True,
             )
             outcome = tools.call_tool(
                 tools.registry_for(wants_prompts=True, validity_check=False),
@@ -2186,6 +2218,136 @@ class TestTheValidityGateCanBeReleased:
             )
         )
         assert "check_prompt_similarity" in stream.calls[0][0]["content"]
+
+
+class TestTheToolBudgetBoundsResearchNotBookkeeping:
+    """The budget must bound *work that can run away*, not the quality mechanism.
+
+    Measured live: a gated run spent its 10th and final call on `assess_validity`,
+    the loop then correctly judged the score below target and asked for a stronger
+    candidate — with **zero calls left to look for one**. The budget intended to
+    enable research was what starved it.
+    """
+
+    def test_a_validity_call_does_not_consume_the_budget(self, monkeypatch, stub_search):
+        """The decisive case: bookkeeping must be free.
+
+        With `max_tool_calls=2`, one research call plus one validity call leaves a
+        research call still available. If validity were charged, the run would hit
+        the cap and answer with what it had instead of looking further.
+        """
+        stub_search()
+        stream = scripted_stream(
+            [
+                [
+                    (
+                        "content",
+                        '<tool_call>{"name": "web_search", "arguments": {"query": "q1"}}</tool_call>',
+                    )
+                ],
+                [("content", self._score("idea", 50))],
+                [
+                    (
+                        "content",
+                        '<tool_call>{"name": "web_search", "arguments": {"query": "q2"}}</tool_call>',
+                    )
+                ],
+                [("content", "Verdict.")],
+            ]
+        )
+        monkeypatch.setattr(agent, "stream_chat", stream)
+
+        emitted, _ = agent.collect(
+            agent.RunRequest(mode="research", message="x", validity_check=True, max_tool_calls=2)
+        )
+        # Both research calls ran: the validity call between them was free.
+        searches = [
+            payload
+            for payload in emitted
+            if payload["type"] == event_module.TOOL_CALL and payload["name"] == "web_search"
+        ]
+        assert len(searches) == 2
+        # And the budget was never reported as exhausted.
+        assert not any(
+            payload["type"] == event_module.NOTICE and "limit" in payload.get("text", "")
+            for payload in emitted
+        )
+
+    def test_a_similarity_call_does_not_consume_the_budget(self, monkeypatch):
+        """Same rule for the other bookkeeping tool, so neither can regress alone."""
+        registry = tools.registry_for(wants_prompts=True, validity_check=False)
+        assert registry["check_prompt_similarity"].consumes_budget is False
+        assert registry["web_search"].consumes_budget is True
+        assert registry["market_overview"].consumes_budget is True
+        assert registry["fetch_page"].consumes_budget is True
+
+    def test_the_validity_tool_is_marked_free(self):
+        registry = tools.registry_for(wants_prompts=False, validity_check=True)
+        assert registry["assess_validity"].consumes_budget is False
+
+    def test_the_budget_still_bounds_research(self, monkeypatch, stub_search):
+        """The mirror: exempting bookkeeping must not exempt real research.
+
+        Without this, a change that made *every* tool free would leave the loop
+        unbounded and still pass the tests above.
+        """
+        stub_search()
+        counter = {"n": 0}
+
+        def endless(messages, temperature=0.3, **kwargs):  # noqa: ANN001, ARG001
+            counter["n"] += 1
+            yield (
+                "content",
+                '<tool_call>{"name": "web_search", "arguments": {"query": "q'
+                f'{counter["n"]}"}}}}</tool_call>',
+            )
+
+        monkeypatch.setattr(agent, "stream_chat", endless)
+        emitted, _ = agent.collect(
+            agent.RunRequest(mode="research", message="x", max_tool_calls=3)
+        )
+        assert any(
+            payload["type"] == event_module.NOTICE and "limit" in payload.get("text", "")
+            for payload in emitted
+        )
+
+    def test_the_limit_notice_says_how_to_change_it(self, monkeypatch, stub_search):
+        """`the agent reached its limit` is otherwise indistinguishable from a defect."""
+        stub_search()
+        stream = scripted_stream(
+            [[("content", self._search_call(f"q{n}"))] for n in range(6)]
+            + [[("content", "Done.")]]
+        )
+        monkeypatch.setattr(agent, "stream_chat", stream)
+        emitted, _ = agent.collect(
+            agent.RunRequest(mode="research", message="x", max_tool_calls=3)
+        )
+        notice = next(
+            payload["text"]
+            for payload in emitted
+            if payload["type"] == event_module.NOTICE and "limit" in payload.get("text", "")
+        )
+        assert "3-call" in notice
+        assert "Settings" in notice
+
+    def test_the_default_budget_allows_a_real_investigation(self):
+        """Ten was too small: `market_overview` alone spends three calls."""
+        assert agent.DEFAULT_MAX_TOOL_CALLS >= 20
+        assert agent.MIN_TOOL_CALLS < agent.DEFAULT_MAX_TOOL_CALLS < agent.MAX_TOOL_CALLS
+
+    @staticmethod
+    def _search_call(query: str) -> str:
+        return (
+            f'<tool_call>{{"name": "web_search", "arguments": {{"query": "{query}"}}}}</tool_call>'
+        )
+
+    @staticmethod
+    def _score(subject: str, value: float) -> str:
+        return (
+            '<tool_call>{"name": "assess_validity", "arguments": {'
+            f'"subject": "{subject}", "customer_download_confidence": {value}, '
+            f'"adobe_acceptance_confidence": {value}, "reasoning": "r"}}}}</tool_call>'
+        )
 
 
 class TestTheAgentKeepsSearchingUntilTheTargetIsMet:

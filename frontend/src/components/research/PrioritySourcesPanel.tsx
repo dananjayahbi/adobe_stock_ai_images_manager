@@ -163,12 +163,14 @@ export default function PrioritySourcesPanel({
       {isOpen ? (
         <div className="space-y-3 border-t border-navy-700/40 px-3 py-3">
           <p className="text-[11px] leading-relaxed text-navy-400">
-            The general search is a fallback chain and it fails as a unit — when
-            the primary provider is blocked the agent gets news coverage instead of
+            Every general search is a fallback chain, and it can degrade quietly:
+            when the index is blocked the agent gets news coverage instead of
             catalogue pages, and reports an empty market that was never actually
-            searched. List the sites that carry the evidence and the agent will
-            restrict its queries to them (<code className="text-navy-300">site:</code>)
-            and open their pages instead of settling for a snippet.
+            searched. Listing the sites that carry the evidence makes the agent
+            restrict its queries to them (
+            <code className="text-navy-300">site:</code>) and open their pages
+            instead of settling for a snippet — so the answer no longer depends on
+            which index answered.
           </p>
 
           <div className="flex flex-wrap items-center gap-2">
