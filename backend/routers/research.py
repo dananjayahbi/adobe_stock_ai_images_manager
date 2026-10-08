@@ -43,6 +43,8 @@ import database
 from database import get_db
 from models import ResearchRunStatus
 from schemas import (
+    HouseStyleResponse,
+    HouseStyleUpdateRequest,
     ResearchAcceptRequest,
     ResearchAcceptResponse,
     ResearchFollowUpRequest,
@@ -57,6 +59,7 @@ from services.research import (
     agent,
     context as context_module,
     events as event_module,
+    house_style,
     inflight,
     prompts,
     runs,
@@ -220,18 +223,32 @@ def _build_request(
     count: int | None = None,
     style_instruction: str | None = None,
     validity_check: bool | None = None,
+    house_rules: str | None = None,
 ) -> RunRequest:
     """Assemble a run request from a stored conversation plus the new turn.
 
     Settings fall back to what the conversation was started with, so a follow-up
     turn keeps the style instruction and validity setting the operator chose
     without the client having to resend them.
+
+    ``house_rules`` is resolved from the *live* store rather than the run's
+    snapshot, deliberately: the rules are not a per-run choice the client sends,
+    they are the operator's current house standard, so editing them should reach
+    the next turn of an already-open conversation. The style instruction keeps
+    the opposite contract — it is snapshotted onto the run — because that one the
+    client *does* send explicitly, and a stale copy of what the model already saw
+    would be worse than a consistent one.
     """
     settings = run.settings or {}
     resolved_style = (
         style_instruction
         if style_instruction is not None
         else settings.get("style_instruction") or prompts.DEFAULT_STYLE_INSTRUCTION
+    )
+    resolved_rules = (
+        house_rules
+        if house_rules is not None
+        else house_style.effective_rules()
     )
     resolved_validity = (
         validity_check
@@ -255,6 +272,7 @@ def _build_request(
         message=message,
         count=resolved_count,
         style_instruction=resolved_style,
+        house_rules=resolved_rules,
         validity_check=resolved_validity,
         history=history,
         # Resolved per turn, so raising the limit in Settings takes effect on the
@@ -389,6 +407,21 @@ def _summary(run) -> ResearchRunSummary:
 # Settings / vocabulary
 # --------------------------------------------------------------------------- #
 
+def _house_style_payload(style) -> dict:
+    """The wire shape of the house style, shared by the two write endpoints.
+
+    Built from the :class:`~services.research.house_style.HouseStyle` dataclass
+    rather than by hand at each call site, so the flags that drive the UI's Reset
+    button are computed by exactly one piece of code.
+    """
+    return {
+        "style_instruction": style.style_instruction,
+        "house_rules": style.house_rules,
+        "style_is_custom": style.style_is_custom,
+        "rules_is_custom": style.rules_is_custom,
+    }
+
+
 @router.get("/api/research/settings", response_model=ResearchSettingsResponse)
 async def research_settings() -> ResearchSettingsResponse:
     """The research page's vocabulary and defaults.
@@ -398,8 +431,12 @@ async def research_settings() -> ResearchSettingsResponse:
     """
     return ResearchSettingsResponse(
         modes=[dict(mode) for mode in MODES],
-        default_style_instruction=prompts.DEFAULT_STYLE_INSTRUCTION,
-        house_rules=prompts.HOUSE_RULES,
+        # The operator's *saved* house standard, falling back to the shipped
+        # default inside `house_style.load`. Served here — rather than left for
+        # the client to seed from `prompts` — so the page loads what the next run
+        # would actually use, and a saved edit survives a reload.
+        default_style_instruction=house_style.effective_style(),
+        house_rules=house_style.effective_rules(),
         max_prompts=MAX_PROMPTS,
         # The operator's configured budget, so the UI shows the number that will
         # actually be enforced rather than a hard-coded one.
@@ -415,6 +452,58 @@ async def research_settings() -> ResearchSettingsResponse:
         # and the agent's instruction must quote the same number.
         target_average=validity.TARGET_AVERAGE,
     )
+
+
+@router.get("/api/research/style", response_model=HouseStyleResponse)
+async def get_house_style() -> HouseStyleResponse:
+    """The saved house standard and rules.
+
+    Separate from ``/api/research/settings`` because this is a *resource* with a
+    write path, and the editor must be able to reload it without also refetching
+    (and potentially clobbering) the page's vocabulary.
+    """
+    return HouseStyleResponse(**_house_style_payload(house_style.load()))
+
+
+@router.put("/api/research/style", response_model=HouseStyleResponse)
+async def update_house_style(request: HouseStyleUpdateRequest) -> HouseStyleResponse:
+    """Persist the operator's house standard and/or house rules.
+
+    A ``PUT`` on its own resource rather than folding the fields into
+    ``/api/research/settings`` because the *reason* to edit them is different:
+    the settings endpoint configures the plumbing (endpoint, key, budget), while
+    this one is the content of the prompt itself. Splitting them keeps a stray
+    key edit from carrying prompt text and vice versa.
+
+    Omitted fields are left untouched; an empty string restores the shipped
+    default. Both fields are validated before either is written, so a rejection
+    cannot leave the operator with a half-applied standard.
+    """
+    payload = request.model_dump(exclude_unset=True)
+    try:
+        return HouseStyleResponse(**_house_style_payload(
+            house_style.save(
+                style_instruction=payload.get("style_instruction"),
+                house_rules=payload.get("house_rules"),
+            )
+        ))
+    except house_style.HouseStyleError as exc:
+        # 400 with the reason, not "invalid request": the operator is editing
+        # this text by hand and the limit is the useful thing to tell them.
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@router.delete("/api/research/style", response_model=HouseStyleResponse)
+async def reset_house_style() -> HouseStyleResponse:
+    """Restore both the house standard and the rules to the shipped defaults.
+
+    One endpoint for both rather than a field-scoped query parameter: the UI's
+    Reset action is per-field but they are the same intent, and the parameter
+    would invite a client to reset one field while believing it reset both.
+    """
+    return HouseStyleResponse(**_house_style_payload(house_style.reset(
+        style_instruction=True, house_rules=True
+    )))
 
 
 # --------------------------------------------------------------------------- #
@@ -553,6 +642,7 @@ async def create_research_run(
         message=message,
         count=effective_count,
         style_instruction=run.settings["style_instruction"],
+        house_rules=house_style.effective_rules(),
         validity_check=validity_check,
         history=[],
         max_tool_calls=app_settings.resolve_tool_budget(),

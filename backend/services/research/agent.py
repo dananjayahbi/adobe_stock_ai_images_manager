@@ -138,6 +138,15 @@ class RunRequest:
     message: str
     count: int = 1
     style_instruction: str = ""
+    #: The operator's house rules block, resolved by
+    #: :mod:`services.research.house_style` when the request is built.
+    #:
+    #: A separate field rather than folded into ``style_instruction`` because the
+    #: two are stored, edited and reset independently — and because a run carries
+    #: a *snapshot* of both, so editing them mid-conversation must not rewrite the
+    #: instructions of turns that already happened. Empty means the shipped
+    #: :data:`services.research.prompts.HOUSE_RULES`.
+    house_rules: str = ""
     validity_check: bool = False
     #: Prior conversation turns, oldest first, as ``{"role", "content"}`` dicts.
     history: list[dict] = field(default_factory=list)
@@ -204,7 +213,9 @@ def _initial_messages(
 
     system = prompt_module.compose_system_prompt(
         tool_specs=tool_specs,
-        style_instruction=request.style_instruction or prompt_module.DEFAULT_STYLE_INSTRUCTION,
+        style_instruction=request.style_instruction
+        or prompt_module.DEFAULT_STYLE_INSTRUCTION,
+        house_rules=request.house_rules,
         mode=request.mode,
         validity_check=request.validity_check,
         max_tools=request.max_tool_calls,

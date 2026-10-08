@@ -793,7 +793,12 @@ class ResearchAcceptResponse(BaseModel):
 
 
 class ResearchSettingsResponse(BaseModel):
-    """The research page's own defaults, so the UI never hard-codes them."""
+    """The research page's own defaults, so the UI never hard-codes them.
+
+    ``default_style_instruction`` and ``house_rules`` are the operator's **saved**
+    values (falling back to the shipped defaults), not the module constants — the
+    point of serving them is that a reload shows what the next run would use.
+    """
 
     modes: list[dict[str, Any]] = []
     default_style_instruction: str = ""
@@ -811,3 +816,33 @@ class ResearchSettingsResponse(BaseModel):
     #: The collective average an idea must reach. Served so the card's verdict and
     #: the agent's own instruction quote the same number.
     target_average: float = 80.0
+
+
+class HouseStyleResponse(BaseModel):
+    """The operator's house standard, as it would be used right now.
+
+    Sent back by both the save and the reset endpoint so the UI never has to
+    guess what the server stored. In particular the ``*_is_custom`` flags are
+    derived server-side: "the operator edited this" is a fact about the stored
+    document, and inferring it in the client by comparing against a constant it
+    fetched separately is how the Reset button ends up offering to reset
+    something that is already the default.
+    """
+
+    style_instruction: str = ""
+    house_rules: str = ""
+    style_is_custom: bool = False
+    rules_is_custom: bool = False
+
+
+class HouseStyleUpdateRequest(BaseModel):
+    """Partial update of the house standard and/or the house rules.
+
+    ``None`` (omitted) leaves a field untouched; an explicit empty string clears
+    the saved copy and restores the shipped default. The two are different
+    actions, so the wire format keeps them distinguishable rather than treating
+    blank as "unchanged" the way the credential fields do.
+    """
+
+    style_instruction: Optional[str] = None
+    house_rules: Optional[str] = None

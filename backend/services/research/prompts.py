@@ -10,13 +10,27 @@ Two distinct instructions are kept apart on purpose:
 
 * **Style instruction** — *how the images should look*. Ratio, lens, lighting,
   copy space, what must be absent, upscaling readiness. This is the part the
-  operator edits.
+  operator edits most often, so it is persisted between sessions.
+* **House rules** — *the non-negotiable constraints the output must satisfy*.
+  Adobe's refusal reasons, ratio, lens, realism. Also editable, because an
+  operator whose workflow genuinely differs (say, they only submit 4:5 vertical)
+  needs to change it — but editable *deliberately*, with the shipped default
+  always recoverable.
 * **Research instruction** — *how the agent should work*. Tool use, honesty about
   evidence, when to stop. Not exposed as a free-text field, because weakening it
   silently degrades every run's answer.
 
 Merging them would let a style tweak ("make it more cinematic") quietly remove
 the rule that says a blocked search must be reported.
+
+Where the two editable texts come from
+--------------------------------------
+``DEFAULT_STYLE_INSTRUCTION`` and ``HOUSE_RULES`` are the *shipped defaults*, not
+what a run necessarily uses. :mod:`services.research.house_style` holds the
+operator's saved text, and :func:`compose_system_prompt` takes the rules as a
+parameter rather than reading the constant — otherwise editing the rules in the
+UI would change the system prompt on the client but not on the server, which is
+exactly the class of "my edit did nothing" bug this refactor exists to fix.
 """
 
 from __future__ import annotations
@@ -57,9 +71,13 @@ DEFAULT_STYLE_INSTRUCTION = (
     "high-resolution upscaling. --ar 16:9"
 )
 
-#: Rules extracted from the reference prompt. They are stated separately because
-#: the operator may rewrite the *example* while still wanting these constraints,
-#: and because a model reproduces a rule more reliably than it infers one.
+#: The shipped house rules. A **default**: the operator may edit them
+#: (:mod:`services.research.house_style`), and this is what a reset restores and
+#: what a run with no saved rules uses.
+#:
+#: Kept as a constant because it is the contract the tests assert against — the
+#: ratio token and the refusal-reason rules must survive any edit of the operator's
+#: copy, which is exactly why the tests read *this*, not the saved value.
 HOUSE_RULES = """House rules for every prompt you produce:
 - Aspect ratio is ALWAYS 16:9, and the prompt must end with the literal token `--ar 16:9`.
 - Describe a wide, deep-focus composition with clean editorial copy space
@@ -297,6 +315,7 @@ def compose_system_prompt(
     count: int = 1,
     released: bool = False,
     source_guidance: str = "",
+    house_rules: str = "",
 ) -> str:
     """Build the full system prompt for one run.
 
@@ -313,6 +332,13 @@ def compose_system_prompt(
     :func:`services.research.sources.guidance`. Empty when no source file is
     uploaded, in which case the prompt is byte-identical to one from before the
     feature existed.
+
+    ``house_rules`` is the operator's saved rules block, from
+    :mod:`services.research.house_style`. Taken as a parameter rather than reading
+    :data:`HOUSE_RULES` here so the *same* text the operator edited is what the
+    model reads — a parameter defaulting to the constant would make the UI lie
+    about its own edit. The constant is still the fallback, which keeps every
+    existing caller (and test) working unchanged.
     """
     sections = [
         _fill_markers(
@@ -339,7 +365,7 @@ def compose_system_prompt(
             "STYLE INSTRUCTION (the operator's house standard):",
             style_instruction.strip(),
             "",
-            HOUSE_RULES,
+            (house_rules or HOUSE_RULES).strip(),
         ]
     )
     return "\n".join(sections)

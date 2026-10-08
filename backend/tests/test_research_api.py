@@ -597,6 +597,64 @@ class TestConversations:
         assert seen["request"].style_instruction == "KEEP ME"
         assert seen["request"].validity_check is True
 
+    def test_an_opening_run_uses_the_saved_house_rules(
+        self, client, stub_agent, monkeypatch
+    ):
+        """End to end: the rules the operator edited must reach the model.
+
+        Without this the house-rules editor would be a fully working save that
+        changes nothing about what the agent is told — the editor would report
+        success while the run silently used the shipped constant.
+        """
+        stub_agent()
+        client.put(
+            "/api/research/style", json={"house_rules": "- THE RUN MUST SEE THIS."}
+        )
+
+        seen: dict = {}
+        original = agent_module.run
+
+        def _capture(request):  # noqa: ANN001
+            seen["request"] = request
+            yield from original(request)
+
+        monkeypatch.setattr(agent_module, "run", _capture)
+        client.post("/api/research/runs", json={"message": "x", "mode": "static"})
+
+        assert "- THE RUN MUST SEE THIS." in seen["request"].house_rules
+
+    def test_a_follow_up_turn_picks_up_a_house_rules_edit(
+        self, client, stub_agent, monkeypatch
+    ):
+        """The rules are the operator's *current* standard, not a run snapshot.
+
+        The opposite of the style instruction, which is snapshotted onto the
+        run: an open conversation should adopt a rules edit made while it sits on
+        screen, or the editor looks broken for the whole thread's life.
+        """
+        stub_agent()
+        created = client.post(
+            "/api/research/runs", json={"message": "x", "mode": "static"}
+        ).json()
+
+        client.put(
+            "/api/research/style", json={"house_rules": "- EDITED MID THREAD."}
+        )
+
+        seen: dict = {}
+        original = agent_module.run
+
+        def _capture(request):  # noqa: ANN001
+            seen["request"] = request
+            yield from original(request)
+
+        monkeypatch.setattr(agent_module, "run", _capture)
+        client.post(
+            f"/api/research/runs/{created['id']}/messages", json={"message": "again"}
+        )
+
+        assert "- EDITED MID THREAD." in seen["request"].house_rules
+
     def test_an_empty_follow_up_is_rejected(self, client, stub_agent):
         stub_agent()
         created = client.post(

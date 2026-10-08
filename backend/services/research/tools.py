@@ -90,6 +90,14 @@ class ToolOutcome:
     ``sources``/``validity`` are structured payloads that become their own events
     so the operator gets a sources panel and a scorecard rather than having to
     read the model's prose.
+
+    ``sources`` is normalised in ``__post_init__`` rather than trusted. A tool
+    returning a **bare dict** instead of a one-element list passed every
+    annotation and type check the project had, and then killed a live run
+    mid-stream: the dict iterated as its own keys, and the accumulator called
+    ``.get("url")`` on the string ``"title"``. Coercing at the dataclass boundary
+    means one tool's slip is contained instead of becoming a dead run — and a
+    dict is a natural thing to write for a single source, so this will recur.
     """
 
     text: str
@@ -98,6 +106,21 @@ class ToolOutcome:
     validity: dict | None = None
     #: Set when the tool could not do its job, so the run can surface a notice.
     degraded: bool = False
+
+    def __post_init__(self) -> None:
+        # A bare dict is the common slip and is *promoted* rather than dropped:
+        # the author clearly meant one source, so honour the intent.
+        if isinstance(self.sources, dict):
+            self.sources = [self.sources]
+        elif self.sources is None:
+            self.sources = []
+        elif not isinstance(self.sources, list):
+            # Anything else iterable (tuple, generator) becomes a list; a scalar
+            # that is not a source is discarded rather than crashing the run.
+            self.sources = list(self.sources) if hasattr(self.sources, "__iter__") else []
+        self.sources = [
+            entry for entry in self.sources if isinstance(entry, dict)
+        ]
 
 
 @dataclass(frozen=True)
@@ -285,7 +308,17 @@ def _tool_fetch_page(arguments: dict) -> ToolOutcome:
         )
 
     page = fetch_module.fetch_page(url)
-    source = {"title": page.title or url, "url": url, "snippet": page.text[:280]} if page.ok else []
+    # A **list**, even on failure. `ToolOutcome.sources` is `list[dict]`, and
+    # returning a bare dict here iterates its *keys* downstream: `_merge_sources`
+    # then calls `.get("url")` on the string "title" and the whole run dies with
+    # `AttributeError: 'str' object has no attribute 'get'`. That failure reached
+    # production because the type annotation said `list[dict]` and nothing checked
+    # the value — the list and the dict both satisfy "iterable of something".
+    source = (
+        [{"title": page.title or url, "url": url, "snippet": page.text[:280]}]
+        if page.ok
+        else []
+    )
     return ToolOutcome(
         text=page.to_tool_text(),
         summary=f"Read {_host_of(url) or url} ({len(page.text)} chars)" if page.ok else f"Could not read {url}",

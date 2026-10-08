@@ -36,7 +36,12 @@ wait forever on a stream that has already stopped producing.
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any, Iterable
+
+#: Used by the accumulator to report a dropped, malformed source entry. A
+#: per-run failure is a warning, not an error: the run still completes.
+logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------- #
 # Event type names
@@ -186,14 +191,33 @@ class EventAccumulator:
             if isinstance(answer, str) and answer.strip():
                 self.answer = answer.strip()
 
-    def _merge_sources(self, incoming: list[dict]) -> None:
+    def _merge_sources(self, incoming: list) -> None:
         """Add sources, de-duplicated by URL and in first-seen order.
 
         A source is often returned by more than one query; listing it twice
         would make a single page look like two independent confirmations.
+
+        **Defensive about the shape on purpose.** The accumulator is the single
+        point every streamed event passes through, so an entry that is not a dict
+        — a tool that returned a bare dict instead of a list, a string, ``None`` —
+        would otherwise raise here and take down a run that had already gathered
+        real evidence. A malformed entry is dropped and logged: a missing source
+        is a cosmetic loss, whereas ``AttributeError`` mid-stream is the failure
+        where the operator loses the whole answer.
+
+        The type is ``list`` rather than ``list[dict]`` because the caller cannot
+        be trusted to have honoured the annotation, and a stricter annotation here
+        would only move the crash without preventing it.
         """
-        for source in incoming:
-            url = (source or {}).get("url", "")
+        for source in incoming or []:
+            if not isinstance(source, dict):
+                if source:
+                    logger.warning(
+                        "Dropping a malformed source entry of type %s",
+                        type(source).__name__,
+                    )
+                continue
+            url = str(source.get("url") or "").strip()
             if not url or url in self._seen_urls:
                 continue
             self._seen_urls.add(url)

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import ConfidenceCard from "@/components/research/ConfidenceCard";
 import ContextWindowBar from "@/components/research/ContextWindowBar";
 import FollowUpActions from "@/components/research/FollowUpActions";
+import HouseStyleEditor from "@/components/research/HouseStyleEditor";
 import ModeSelector, { ModeDescription } from "@/components/research/ModeSelector";
 import PrioritySourcesPanel from "@/components/research/PrioritySourcesPanel";
 import PromptResultCard, { type PromptDetail } from "@/components/research/PromptResultCard";
@@ -19,6 +20,7 @@ import { Button } from "@/components/ui/Button";
 import { PageHeader } from "@/components/ui/PageHeader";
 import { Panel } from "@/components/ui/Panel";
 import { PageShell } from "@/components/shell/PageShell";
+import { useHouseStyle } from "@/hooks/useHouseStyle";
 import { useResearchStream } from "@/hooks/useResearchStream";
 import {
   acceptResearchPrompts,
@@ -86,7 +88,12 @@ export default function ResearchPage() {
   const [mode, setMode] = useState<ResearchMode>("static");
   const [count, setCount] = useState(1);
   const [validityCheck, setValidityCheck] = useState(false);
-  const [styleInstruction, setStyleInstruction] = useState("");
+
+  // The house standard and rules live server-side (see `useHouseStyle`), so the
+  // page owns them only to hand the style to a run. Kept in one hook rather than
+  // two local `useState`s because the editor and the run must never disagree
+  // about what text is current — that disagreement was the original bug.
+  const houseStyle = useHouseStyle();
 
   const [acceptedBodies, setAcceptedBodies] = useState<string[]>([]);
   const [isSaving, setSaving] = useState(false);
@@ -116,9 +123,7 @@ export default function ResearchPage() {
   useEffect(() => {
     void (async () => {
       try {
-        const loaded = await fetchResearchSettings();
-        setSettings(loaded);
-        setStyleInstruction(loaded.default_style_instruction);
+        setSettings(await fetchResearchSettings());
       } catch (error) {
         setPageError((error as Error).message);
       }
@@ -150,9 +155,13 @@ export default function ResearchPage() {
         setMode((run.mode as ResearchMode) ?? "static");
         setValidityCheck(Boolean(run.settings?.validity_check));
         setCount(Number(run.settings?.count ?? 1) || 1);
-        if (typeof run.settings?.style_instruction === "string") {
-          setStyleInstruction(run.settings.style_instruction);
-        }
+        // The style instruction is deliberately NOT adopted from the run.
+        //
+        // It used to be, which meant opening an old thread overwrote the box with
+        // whatever that run happened to use — and since the box was also the only
+        // place the text lived, browsing conversations silently rewrote the
+        // operator's house standard. A run's style is a snapshot *of* the house
+        // standard, never the source of it.
         setAcceptedBodies(
           Array.isArray(run.result?.accepted_prompt_ids)
             ? // The stored ids identify the prompts; the *bodies* are what the
@@ -192,6 +201,13 @@ export default function ResearchPage() {
       setAcceptedBodies([]);
       stream.reset({ isStreaming: true });
 
+      // Settle the house style before the run captures it: the run sends the
+      // current text, so a pending keystroke must be saved (and the saved value
+      // read back) or the run would carry a style the operator never saw stored.
+      houseStyle.markRunStarted();
+      await houseStyle.flush();
+      const styleForRun = houseStyle.currentStyle();
+
       let runId: string;
       try {
         // Created *without* running, so the first turn streams and the operator
@@ -200,7 +216,7 @@ export default function ResearchPage() {
           message,
           mode,
           count: showCount ? count : 1,
-          styleInstruction,
+          styleInstruction: styleForRun,
           validityCheck: showValidity ? validityCheck : false,
         });
         runId = created.id;
@@ -219,7 +235,7 @@ export default function ResearchPage() {
       });
       await loadThreads();
     },
-    [count, loadThreads, mode, showCount, showValidity, stream, styleInstruction, validityCheck]
+    [count, houseStyle, loadThreads, mode, showCount, showValidity, stream, validityCheck]
   );
 
   /** Continue the active conversation. */
@@ -362,10 +378,6 @@ export default function ResearchPage() {
                 isLive={isBusy}
               />
               <RunSettingsPanel
-                styleInstruction={styleInstruction}
-                onStyleChange={setStyleInstruction}
-                defaultStyle={settings?.default_style_instruction ?? ""}
-                houseRules={settings?.house_rules ?? ""}
                 count={count}
                 onCountChange={setCount}
                 maxPrompts={settings?.max_prompts ?? 60}
@@ -373,6 +385,24 @@ export default function ResearchPage() {
                 showValidity={showValidity}
                 validityCheck={validityCheck}
                 onValidityChange={setValidityCheck}
+                disabled={isBusy}
+              />
+              <HouseStyleEditor
+                styleInstruction={houseStyle.draft.styleInstruction}
+                onStyleChange={houseStyle.setStyleInstruction}
+                houseRules={houseStyle.draft.houseRules}
+                onRulesChange={houseStyle.setHouseRules}
+                isDirty={houseStyle.isDirty}
+                isLoading={houseStyle.isLoading}
+                isSaving={houseStyle.isSaving}
+                savedAt={houseStyle.savedAt}
+                styleIsCustom={houseStyle.styleIsCustom}
+                rulesIsCustom={houseStyle.rulesIsCustom}
+                onFlush={() => void houseStyle.flush()}
+                onReset={() => void houseStyle.reset()}
+                onResetStyle={() => void houseStyle.resetStyle()}
+                onResetRules={() => void houseStyle.resetRules()}
+                error={houseStyle.error}
                 disabled={isBusy}
               />
               <PrioritySourcesPanel disabled={isBusy} />
