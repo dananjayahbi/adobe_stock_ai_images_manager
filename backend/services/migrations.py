@@ -40,6 +40,9 @@ ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     # record generated before the model was asked to name the asset, which falls
     # back to the title-derived name with no backfill needed.
     ("image_records", "suggested_filename", "VARCHAR(255)"),
+    # Batch membership (batch pipeline v2). NULL for records created outside a
+    # batch, so the legacy stage workspace keeps working unchanged.
+    ("image_records", "batch_id", "VARCHAR(36)"),
 ]
 
 # Rows that already reached READY under the old two-column model are already

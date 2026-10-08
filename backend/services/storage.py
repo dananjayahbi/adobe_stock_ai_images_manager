@@ -22,6 +22,7 @@ def create_data_directories() -> None:
         settings.REFINED_DIR,
         settings.UPSCALED_DIR,
         settings.CONVERTED_DIR,
+        settings.REMOVED_DIR,
     ]:
         Path(dir_path).mkdir(parents=True, exist_ok=True)
 

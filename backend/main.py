@@ -10,6 +10,7 @@ from config import settings
 from database import Base, engine
 from services.metric_repair import run_metric_repairs
 from services.migrations import run_additive_migrations
+from services.pipeline_runner import recover_interrupted_batches
 from services.storage import create_data_directories
 
 
@@ -27,6 +28,9 @@ async def lifespan(app: FastAPI):
     # carry the original upload's geometry and size. Repair them once; the pass
     # is self-limiting, so later starts do nothing.
     run_metric_repairs(engine)
+    # Batch jobs live in memory: a restart orphans any batch left `running`,
+    # which would read as a hung run forever and block re-runs. Fail them once.
+    recover_interrupted_batches(engine)
     yield
     # Shutdown cleanup if needed
 
@@ -61,6 +65,8 @@ from routers.settings import router as settings_router
 from routers.prompts import router as prompts_router
 from routers.delivery import router as delivery_router
 from routers.research import router as research_router
+from routers.batches import router as batches_router
+from routers.step_profiles import router as step_profiles_router
 
 app.include_router(upload_router)
 app.include_router(records_router)
@@ -74,6 +80,8 @@ app.include_router(settings_router)
 app.include_router(prompts_router)
 app.include_router(delivery_router)
 app.include_router(research_router)
+app.include_router(batches_router)
+app.include_router(step_profiles_router)
 
 # Serve generated thumbnails to the frontend grid.
 create_data_directories()

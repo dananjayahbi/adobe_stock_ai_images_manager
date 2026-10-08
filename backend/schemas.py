@@ -56,6 +56,8 @@ class RecordResponse(BaseModel):
     category: Optional[int] = None
     #: Prompt Library link. Null when the image has no known source prompt.
     prompt_id: Optional[str] = None
+    #: The batch this image belongs to (batch pipeline v2). Null outside batches.
+    batch_id: Optional[str] = None
 
 
 class RecordListResponse(BaseModel):

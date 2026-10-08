@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+body {
+  @apply bg-parchment-100 text-ink-800 font-body antialiased;
+  /* Aged vignette + grain sit behind every page, like the reference sheet. */
+  background-image: theme("backgroundImage.aged-vignette"),
+    theme("backgroundImage.paper-grain");
+  background-attachment: fixed;
+  background-repeat: no-repeat, repeat;
+  background-size: auto, 240px 240px;
+}
+
+::selection {
+  @apply bg-brass-300/50 text-ink-900;
+}
+
+@layer components {
+  /** Double-hairline card frame — the ticket/label motif from the reference. */
+  .frame-card {
+    @apply relative rounded-sm border border-parchment-400 bg-parchment-50 shadow-card;
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.65),
+      inset 0 0 0 4px rgba(214, 198, 159, 0.35);
+  }
+
+  /** Small-caps letterspaced label used above card headers. */
+  .label-caps {
+    @apply font-stamp text-[11px] uppercase tracking-[0.18em] text-ink-400;
+  }
+
+  /** Perforated divider, like a torn ticket stub. */
+  .divider-dashed {
+    @apply border-t border-dashed border-parchment-400;
+  }
+
+  /** Rotated postmark stamp. */
+  .stamp {
+    @apply inline-flex items-center justify-center rounded-full border-2 border-dashed border-oxblood-500/70 px-3 py-1 font-stamp text-[10px] uppercase tracking-[0.2em] text-oxblood-500;
+    transform: rotate(-4deg);
+  }
+}
+
+/* Slim, warm scrollbars to match the paper. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #c4b083 transparent;
+}

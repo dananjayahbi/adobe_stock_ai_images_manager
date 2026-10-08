@@ -83,6 +83,86 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class BatchStatus(str, enum.Enum):
+    """Lifecycle of one batch pipeline run (batch pipeline v2)."""
+
+    DRAFT = "draft"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class Batch(Base):
+    """A configured, customisable processing run (batch pipeline v2).
+
+    A batch declares *what kind of images* it holds (``media_type``) and *which
+    steps run on them* (``steps``: ``[{key, config}]`` in canonical order). The
+    operator uploads records into a draft batch, optionally configures each
+    step, then runs the whole pipeline in one go.
+
+    ``step_progress`` is written by the pipeline runner as it advances so the
+    processing page can poll one endpoint for live per-step status.
+    """
+
+    __tablename__ = "batches"
+    __table_args__ = (
+        Index("ix_batches_status", "status"),
+        Index("ix_batches_created_at", "created_at"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    #: "raster" (photo pipeline) or "png" (transparent-background pipeline).
+    media_type: Mapped[str] = mapped_column(String(20), nullable=False, default="raster")
+    #: Ordered step list: [{"key": "ocr", "config": {...}}, ...].
+    steps: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    #: The step profile this batch was seeded from, if any (informational).
+    profile_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
+    #: Per-step live status: {key: {status, message, counts}} — polled by the UI.
+    step_progress: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    #: Set when status == failed: which step failed and why.
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
+
+class StepProfile(Base):
+    """A saved, reusable step recipe (batch pipeline v2).
+
+    Profiles let the operator skip the step picker: choose the media type, pick
+    the profile, and the batch is created with those steps *and their configs*
+    already filled in.
+    """
+
+    __tablename__ = "step_profiles"
+    __table_args__ = (
+        Index("ix_step_profiles_media_type", "media_type"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    name: Mapped[str] = mapped_column(String(200), nullable=False, default="")
+    media_type: Mapped[str] = mapped_column(String(20), nullable=False, default="raster")
+    #: [{"key": "upscale", "config": {...}}, ...] — same shape as Batch.steps.
+    steps: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
+    )
+
+
 class PromptStatus(str, enum.Enum):
     """Lifecycle of a generation prompt in the Prompt Library.
 
@@ -226,6 +306,10 @@ class ImageRecord(Base):
     #: Nullable because images may be collected without a known prompt, and
     #: one prompt legitimately produces many images.
     prompt_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
+
+    #: The batch this image was uploaded with (batch pipeline v2). NULL for
+    #: records created outside a batch, so the legacy stage workspace is unaffected.
+    batch_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(

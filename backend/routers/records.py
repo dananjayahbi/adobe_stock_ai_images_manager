@@ -102,6 +102,14 @@ async def list_records(
             "keywords, category and filename."
         ),
     ),
+    stage_updated: bool = Query(
+        default=False,
+        description=(
+            "When true, only return records a pipeline step has actually "
+            "touched (stage_updated_at is set) — the new UI's 'processed' "
+            "definition for home and gallery."
+        ),
+    ),
     limit: int = Query(default=DEFAULT_LIMIT, description="Max records to return."),
     offset: int = Query(default=0, description="Records to skip for pagination."),
     db: Session = Depends(get_db),
@@ -196,6 +204,11 @@ async def list_records(
                 detail=f"Search term exceeds {MAX_SEARCH_LENGTH} characters.",
             )
         condition = _search_condition(term)
+        base = base.where(condition)
+        count_stmt = count_stmt.where(condition)
+
+    if stage_updated:
+        condition = ImageRecord.stage_updated_at.isnot(None)
         base = base.where(condition)
         count_stmt = count_stmt.where(condition)
 

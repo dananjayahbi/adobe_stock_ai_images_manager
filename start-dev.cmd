@@ -6,7 +6,7 @@ REM  Adobe Stock AI Image Studio - development launcher
 REM
 REM  Opens two separate CMD windows:
 REM    * Backend  - FastAPI / uvicorn on http://localhost:8001
-REM    * Frontend - Next.js dev server on http://localhost:3007
+REM    * Frontend - Next.js dev server on http://localhost:3100 (frontend-new)
 REM
 REM  Usage: double-click this file, or run "start-dev.cmd" from any terminal.
 REM
@@ -20,12 +20,12 @@ REM --- Paths ----------------------------------------------------------------
 set "REPO_ROOT=%~dp0"
 if "%REPO_ROOT:~-1%"=="\" set "REPO_ROOT=%REPO_ROOT:~0,-1%"
 set "BACKEND_DIR=%REPO_ROOT%\backend"
-set "FRONTEND_DIR=%REPO_ROOT%\frontend"
+set "FRONTEND_DIR=%REPO_ROOT%\frontend-new"
 set "VENV_PY=%BACKEND_DIR%\.venv\Scripts\python.exe"
 
 REM --- Ports ----------------------------------------------------------------
 set "BACKEND_PORT=8001"
-set "FRONTEND_PORT=3007"
+set "FRONTEND_PORT=3100"
 
 REM --- Re-entrant entry points for the child windows ------------------------
 if /i "%~1"==":run_backend"  goto run_backend

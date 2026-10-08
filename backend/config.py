@@ -103,6 +103,8 @@ class Settings(BaseSettings):
     #: Where normalised JPEG copies are written. Kept separate from the inbox so
     #: the uploaded original stays byte-for-byte intact as the audit source.
     CONVERTED_DIR: Path = STORAGE_ROOT / "converted"
+    #: RGBA cut-outs written by the PNG batch background remover.
+    REMOVED_DIR: Path = STORAGE_ROOT / "removed"
     #: Quality for the PNG -> JPEG conversion. 100 keeps the result visually
     #: lossless so the conversion cannot itself introduce an acceptance issue.
     PNG_CONVERSION_QUALITY: int = 100
