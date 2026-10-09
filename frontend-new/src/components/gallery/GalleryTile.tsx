@@ -9,6 +9,8 @@ interface GalleryTileProps {
   /** Multi-select mode: clicking the tile toggles selection instead of opening. */
   selected?: boolean;
   onToggleSelect?: (record: ImageRecord) => void;
+  /** Select mode: the checkbox is always visible, clicking ticks the tile. */
+  selectMode?: boolean;
 }
 
 /** True when the thumbnail is a transparent PNG cut-out. */
@@ -28,6 +30,7 @@ export default function GalleryTile({
   onOpen,
   selected = false,
   onToggleSelect,
+  selectMode = false,
 }: GalleryTileProps) {
   const thumb = thumbnailUrl(record.thumbnail_path);
   const cutout = isCutout(record);
@@ -37,23 +40,27 @@ export default function GalleryTile({
 
   return (
     <div
+      data-record-id={record.id}
       className={`frame-card group relative mb-4 block w-full overflow-hidden break-inside-avoid transition-all hover:-translate-y-0.5 hover:shadow-raised ${
         selected ? "ring-2 ring-oxblood-400" : ""
-      }`}
+      } ${selectMode ? "cursor-pointer" : ""}`}
     >
       <button
         type="button"
-        onClick={() => onOpen(record)}
+        onClick={() => (selectMode && onToggleSelect ? onToggleSelect(record) : onOpen(record))}
         className="block w-full text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-brass-400"
         aria-label={`Preview ${caption}`}
       >
         <div className={`relative overflow-hidden ${cutout ? "bg-transparent" : ""}`}>
           {thumb ? (
+            // draggable={false}: a native image drag fires pointercancel and
+            // kills the marquee's pointer sequence mid-box (select mode).
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={thumb}
               alt={caption}
               loading="lazy"
+              draggable={false}
               className={`w-full transition-transform duration-500 group-hover:scale-[1.03] ${
                 cutout ? "object-contain" : ""
               }`}
@@ -78,7 +85,9 @@ export default function GalleryTile({
           className={`absolute left-2 top-2 flex h-6 w-6 items-center justify-center rounded-sm border font-stamp text-xs transition-opacity ${
             selected
               ? "border-oxblood-500 bg-oxblood-500 text-ink-50 opacity-100"
-              : "border-parchment-500 bg-ink-900/70 text-ink-50 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
+              : selectMode
+                ? "border-parchment-500 bg-ink-900/70 text-ink-50 opacity-100"
+                : "border-parchment-500 bg-ink-900/70 text-ink-50 opacity-0 group-hover:opacity-100 focus-visible:opacity-100"
           }`}
         >
           {selected ? "✓" : ""}

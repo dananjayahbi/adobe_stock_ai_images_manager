@@ -14,8 +14,9 @@ interface ViewerModalProps {
 }
 
 /**
- * Full-viewport preview: zoom (wheel / buttons / double-click), pan (drag,
- * or Space+drag at 1×), keyboard navigation, and a direct download.
+ * Full-viewport preview: fit-to-viewport on open, wheel zoom, direct drag
+ * pan (no modifier), double-click for 100%, keyboard navigation and a direct
+ * download.
  *
  * Portalled to `document.body` for the same reason as `Modal`: an ancestor
  * with `backdrop-filter` would otherwise clamp `position: fixed`.
@@ -26,56 +27,21 @@ export default function ViewerModal({ record, onClose, onNavigate }: ViewerModal
   const [mounted, setMounted] = useState(false);
   const [showInfo, setShowInfo] = useState(true);
   const imageRef = useRef<HTMLImageElement | null>(null);
-  const {
-    transform,
-    spaceHeld,
-    canPan,
-    cursor,
-    startPan,
-    movePan,
-    endPan,
-    zoomBy,
-    reset,
-    setTransform,
-  } = useViewerTransform(imageRef);
+  const stageRef = useRef<HTMLDivElement | null>(null);
+  const { transform, cursor, startPan, movePan, endPan, zoomBy, fit, actual } =
+    useViewerTransform(imageRef, stageRef, record !== null);
 
   useEffect(() => setMounted(true), []);
 
-  // Wheel must be a *non-passive* native listener: React registers onWheel
-  // passively, so preventDefault would be ignored and the page behind would
-  // scroll while zooming.
-  const stageRef = useRef<HTMLDivElement | null>(null);
+  // Fit whenever a different image is shown: a big image must never open at
+  // 100% (task 05) — scale down until the whole frame is visible. Dimensions
+  // come from the record so the fit is right before the <img> even loads;
+  // onLoad re-fits as a fallback when the record carries no geometry.
   useEffect(() => {
-    const stage = stageRef.current;
-    if (!stage) return;
-    const onWheel = (event: WheelEvent) => {
-      event.preventDefault();
-      const image = imageRef.current;
-      if (!image) return;
-      const rect = image.getBoundingClientRect();
-      const offsetX = event.clientX - rect.left - rect.width / 2;
-      const offsetY = event.clientY - rect.top - rect.height / 2;
-      const factor = event.deltaY < 0 ? 1.12 : 1 / 1.12;
-      setTransform((current) => {
-        const nextScale = Math.min(8, Math.max(0.2, current.scale * factor));
-        if (nextScale === current.scale) return current;
-        const ratio = nextScale / current.scale;
-        return {
-          scale: nextScale,
-          x: offsetX - ratio * (offsetX - current.x),
-          y: offsetY - ratio * (offsetY - current.y),
-        };
-      });
-    };
-    stage.addEventListener("wheel", onWheel, { passive: false });
-    return () => stage.removeEventListener("wheel", onWheel);
-  }, [imageRef, setTransform]);
-
-  // Reset the view whenever a different image is shown.
-  useEffect(() => {
-    reset();
+    if (!record) return;
     setShowInfo(true);
-  }, [record?.id, reset]);
+    fit(record.width ?? undefined, record.height ?? undefined);
+  }, [record, fit]);
 
   useEffect(() => {
     if (!record) return;
@@ -85,7 +51,8 @@ export default function ViewerModal({ record, onClose, onNavigate }: ViewerModal
       else if (event.key === "ArrowRight") onNavigate(1);
       else if (event.key === "+" || event.key === "=") zoomBy(1.25);
       else if (event.key === "-") zoomBy(1 / 1.25);
-      else if (event.key === "0") reset();
+      else if (event.key === "0") fit();
+      else if (event.key === "1") actual();
       else if (event.key.toLowerCase() === "h") setShowInfo((v) => !v);
     };
     document.addEventListener("keydown", onKey);
@@ -95,7 +62,7 @@ export default function ViewerModal({ record, onClose, onNavigate }: ViewerModal
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = previousOverflow;
     };
-  }, [record, onClose, onNavigate, zoomBy, reset]);
+  }, [record, onClose, onNavigate, zoomBy, fit, actual]);
 
   if (!mounted || !record) return null;
 
@@ -122,46 +89,54 @@ export default function ViewerModal({ record, onClose, onNavigate }: ViewerModal
           </p>
           <p className="font-stamp text-[10px] uppercase tracking-[0.14em] text-ink-400">
             {record.stage.replace(/_/g, " ")}
-            {spaceHeld && " · space pan"}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
             onClick={() => zoomBy(1 / 1.25)}
-            className="h-8 w-8 rounded-sm border border-parchment-500/50 bg-parchment-50/10 font-stamp text-ink-50 hover:bg-parchment-50/20"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-sm border border-parchment-500/50 bg-parchment-50/10 font-stamp text-ink-50 hover:bg-parchment-50/20"
             aria-label="Zoom out"
           >
             −
           </button>
-          <span className="w-14 text-center font-stamp text-[11px] text-ink-400">
+          <span className="inline-flex h-8 w-14 items-center justify-center font-stamp text-[11px] text-ink-400">
             {Math.round(transform.scale * 100)}%
           </span>
           <button
             type="button"
             onClick={() => zoomBy(1.25)}
-            className="h-8 w-8 rounded-sm border border-parchment-500/50 bg-parchment-50/10 font-stamp text-ink-50 hover:bg-parchment-50/20"
+            className="inline-flex h-8 w-8 items-center justify-center rounded-sm border border-parchment-500/50 bg-parchment-50/10 font-stamp text-ink-50 hover:bg-parchment-50/20"
             aria-label="Zoom in"
           >
             +
           </button>
           <button
             type="button"
-            onClick={reset}
-            className="h-8 rounded-sm border border-parchment-500/50 bg-parchment-50/10 px-2 font-stamp text-[11px] uppercase tracking-wider text-ink-50 hover:bg-parchment-50/20"
+            onClick={() => fit()}
+            className="inline-flex h-8 items-center justify-center rounded-sm border border-parchment-500/50 bg-parchment-50/10 px-2 font-stamp text-[11px] uppercase tracking-wider text-ink-50 hover:bg-parchment-50/20"
+            title="Fit the whole image in the viewport (0)"
           >
-            Reset
+            Fit
+          </button>
+          <button
+            type="button"
+            onClick={actual}
+            className="inline-flex h-8 items-center justify-center rounded-sm border border-parchment-500/50 bg-parchment-50/10 px-2 font-stamp text-[11px] uppercase tracking-wider text-ink-50 hover:bg-parchment-50/20"
+            title="Actual size: 1 monitor pixel per image pixel (1)"
+          >
+            100%
           </button>
           <a
             href={`${full}?download=1`}
-            className="ml-1 h-8 rounded-sm border border-brass-400/60 bg-brass-300/20 px-3 font-stamp text-[11px] uppercase tracking-wider text-brass-300 hover:bg-brass-300/30"
+            className="ml-1 inline-flex h-8 items-center justify-center rounded-sm border border-brass-400/60 bg-brass-300/20 px-3 font-stamp text-[11px] uppercase tracking-wider text-brass-300 hover:bg-brass-300/30"
           >
             ↓ Download
           </a>
           <button
             type="button"
             onClick={onClose}
-            className="ml-1 h-8 rounded-sm border border-parchment-500/50 px-3 font-stamp text-[11px] uppercase tracking-wider text-ink-50 hover:bg-parchment-50/20"
+            className="inline-flex h-8 items-center justify-center rounded-sm border border-parchment-500/50 px-3 font-stamp text-[11px] uppercase tracking-wider text-ink-50 hover:bg-parchment-50/20"
             aria-label="Close preview"
           >
             ✕ Esc
@@ -177,7 +152,12 @@ export default function ViewerModal({ record, onClose, onNavigate }: ViewerModal
         onPointerMove={movePan}
         onPointerUp={endPan}
         onPointerCancel={endPan}
-        onDoubleClick={() => (transform.scale > 1 ? reset() : zoomBy(2))}
+        onDoubleClick={() => {
+          // Double-click = 100% for pixel inspection; from 100% it returns
+          // to fit so a second double-click is never a dead end.
+          if (Math.abs(transform.scale - 1) < 0.01) fit();
+          else actual();
+        }}
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
@@ -185,6 +165,7 @@ export default function ViewerModal({ record, onClose, onNavigate }: ViewerModal
           src={full}
           alt={caption}
           draggable={false}
+          onLoad={() => fit()}
           onError={(event) => {
             // No full-size file yet — fall back to the thumbnail.
             if (thumb && event.currentTarget.src !== thumb) event.currentTarget.src = thumb;
@@ -228,7 +209,7 @@ export default function ViewerModal({ record, onClose, onNavigate }: ViewerModal
         </div>
 
         <p className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 font-stamp text-[10px] uppercase tracking-[0.14em] text-ink-400/70">
-          Wheel zoom · double-click fit · Space+drag pan · H hide HUD
+          Wheel zoom · drag pan · double-click 100% · 0 fit · H hide HUD
         </p>
       </div>
     </div>,

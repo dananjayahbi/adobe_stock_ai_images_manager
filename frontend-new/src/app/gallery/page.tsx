@@ -1,13 +1,17 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRecords } from "@/hooks/useRecords";
+import { useFolderHistory } from "@/hooks/useFolderHistory";
+import { useMarqueeSelect } from "@/hooks/useMarqueeSelect";
 import EmptyState from "@/components/ui/EmptyState";
 import Button from "@/components/ui/Button";
 import Modal from "@/components/ui/Modal";
 import GalleryTile from "@/components/gallery/GalleryTile";
 import GroupCard from "@/components/gallery/GroupCard";
 import FilterBar, { type GalleryFilters } from "@/components/gallery/FilterBar";
+import SelectionModeToggle from "@/components/gallery/SelectionModeToggle";
+import MarqueeOverlay from "@/components/gallery/MarqueeOverlay";
 import SelectionToolbar from "@/components/gallery/SelectionToolbar";
 import DownloadDialog from "@/components/gallery/DownloadDialog";
 import DeleteDialog from "@/components/gallery/DeleteDialog";
@@ -22,10 +26,24 @@ import type { GalleryGroup, ImageRecord } from "@/lib/types";
  * and a full-viewport viewer.
  *
  * View model: at the top level the page lists folder cards (never filtered)
- * plus ungrouped images; opening a folder scopes the image query to it.
- * Selection is per-image ids and survives filter changes.
+ * plus ungrouped images; opening a folder scopes the image query to it — and
+ * records the folder in `?group=`, so the browser's own back button steps out
+ * of the folder exactly like the Back button does.
+ *
+ * Selection is per-image ids and survives filter changes. In *select mode*
+ * clicking a tile ticks it and dragging paints a rubber band (Windows
+ * desktop convention) instead of opening the preview.
  */
 export default function GalleryPage() {
+  // useSearchParams needs a Suspense boundary when Next prerenders the page.
+  return (
+    <Suspense fallback={null}>
+      <GalleryView />
+    </Suspense>
+  );
+}
+
+function GalleryView() {
   const [search, setSearch] = useState("");
   const [draft, setDraft] = useState("");
   const [filters, setFilters] = useState<GalleryFilters>({
@@ -33,9 +51,10 @@ export default function GalleryPage() {
     used: "all",
   });
   const [groups, setGroups] = useState<GalleryGroup[]>([]);
-  const [openGroup, setOpenGroup] = useState<GalleryGroup | null>(null);
+  const [groupsLoaded, setGroupsLoaded] = useState(false);
 
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [selectMode, setSelectMode] = useState(false);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -44,20 +63,12 @@ export default function GalleryPage() {
   const [renameValue, setRenameValue] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const { page, loading, error, reload } = useRecords({
-    limit: 500,
-    search,
-    stageUpdated: true,
-    stage: filters.stage,
-    used: filters.used,
-    groupId: openGroup ? openGroup.id : "none",
-  });
-
-  const records = useMemo(() => page?.items ?? [], [page]);
-
   const loadGroups = useCallback(() => {
     fetchGroups()
-      .then(setGroups)
+      .then((items) => {
+        setGroups(items);
+        setGroupsLoaded(true);
+      })
       .catch((err) =>
         setActionError(err instanceof Error ? err.message : String(err))
       );
@@ -66,6 +77,58 @@ export default function GalleryPage() {
   useEffect(() => {
     loadGroups();
   }, [loadGroups]);
+
+  // Leave selection behind whenever the folder context changes — opening a
+  // folder, the Back button, or the browser's own back/forward arrows.
+  const handleGroupIdChange = useCallback(() => {
+    setSelected(new Set());
+  }, []);
+
+  const knownGroupIds = useMemo(
+    () => (groupsLoaded ? groups.map((group) => group.id) : null),
+    [groupsLoaded, groups]
+  );
+
+  const { groupId, openFolder, closeFolder, resetFolder } = useFolderHistory({
+    onGroupIdChange: handleGroupIdChange,
+    knownGroupIds,
+  });
+
+  const { page, loading, error, reload } = useRecords({
+    limit: 500,
+    search,
+    stageUpdated: true,
+    stage: filters.stage,
+    used: filters.used,
+    groupId: groupId ?? "none",
+  });
+
+  const records = useMemo(() => page?.items ?? [], [page]);
+  const openGroup = useMemo(
+    () => groups.find((group) => group.id === groupId) ?? null,
+    [groups, groupId]
+  );
+
+  /**
+   * Select mode: click ticks a tile; a drag paints a rubber band over the
+   * grid. Plain drags *replace* the selection with what the box touches;
+   * Ctrl/Cmd-drag adds to it (the desktop convention).
+   */
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const handleMarqueeSelect = useCallback((ids: string[], additive: boolean) => {
+    setSelected((current) => {
+      if (!additive) return new Set(ids);
+      const next = new Set(current);
+      ids.forEach((id) => next.add(id));
+      return next;
+    });
+  }, []);
+
+  const marquee = useMarqueeSelect({
+    enabled: selectMode,
+    containerRef: gridRef,
+    onSelect: handleMarqueeSelect,
+  });
 
   const toggleSelect = useCallback((record: ImageRecord) => {
     setSelected((current) => {
@@ -103,6 +166,28 @@ export default function GalleryPage() {
   const active = activeIndex !== null ? records[activeIndex] ?? null : null;
   const selectedIds = useMemo(() => Array.from(selected), [selected]);
 
+  // Esc leaves select mode — but only when nothing else owns Esc (the viewer
+  // and the dialogs close themselves first).
+  useEffect(() => {
+    if (!selectMode) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (
+        activeIndex !== null ||
+        downloadOpen ||
+        deleteOpen ||
+        groupDialogOpen ||
+        renameTarget
+      ) {
+        return;
+      }
+      event.stopPropagation();
+      setSelectMode(false);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [selectMode, activeIndex, downloadOpen, deleteOpen, groupDialogOpen, renameTarget]);
+
   const handleDownload = useCallback(() => {
     if (selectedIds.length === 0) return;
     // One image → direct download; many → the option dialog (task rule).
@@ -120,13 +205,13 @@ export default function GalleryPage() {
     async (group: GalleryGroup) => {
       try {
         await deleteGroup(group.id);
-        if (openGroup?.id === group.id) setOpenGroup(null);
+        if (groupId === group.id) resetFolder();
         loadGroups();
       } catch (err) {
         setActionError(err instanceof Error ? err.message : String(err));
       }
     },
-    [loadGroups, openGroup]
+    [loadGroups, groupId, resetFolder]
   );
 
   const submitRename = useCallback(async () => {
@@ -140,22 +225,30 @@ export default function GalleryPage() {
     }
   }, [renameTarget, renameValue, loadGroups]);
 
-  const inFolder = openGroup !== null;
+  const inFolder = groupId !== null;
 
   return (
     <div className="space-y-6">
-      {/* Header: title/breadcrumb + search + filters */}
+      {/* Header: back/title/breadcrumb + search + filters */}
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="label-caps">The collection</p>
+          {inFolder && (
+            <Button
+              variant="secondary"
+              size="sm"
+              type="button"
+              onClick={closeFolder}
+              className="mb-2"
+            >
+              ← Back
+            </Button>
+          )}
           <h1 className="font-display text-3xl text-ink-800">
             {inFolder ? (
               <button
                 type="button"
-                onClick={() => {
-                  setOpenGroup(null);
-                  clearSelection();
-                }}
+                onClick={closeFolder}
                 className="hover:text-oxblood-400"
               >
                 Gallery
@@ -166,7 +259,10 @@ export default function GalleryPage() {
             {inFolder && (
               <>
                 <span className="mx-2 text-ink-400">/</span>
-                <span className="text-oxblood-400">{openGroup.name}</span>
+                {/* openGroup resolves once the folder list loads (deep links). */}
+                <span className="text-oxblood-400">
+                  {openGroup?.name ?? "Folder"}
+                </span>
               </>
             )}
             {page && (
@@ -178,6 +274,10 @@ export default function GalleryPage() {
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
+          <SelectionModeToggle
+            active={selectMode}
+            onToggle={() => setSelectMode((value) => !value)}
+          />
           <FilterBar filters={filters} onChange={setFilters} />
           <form
             className="flex items-center gap-2"
@@ -257,10 +357,7 @@ export default function GalleryPage() {
               <GroupCard
                 key={group.id}
                 group={group}
-                onOpen={(g) => {
-                  setOpenGroup(g);
-                  clearSelection();
-                }}
+                onOpen={(g) => openFolder(g.id)}
                 onRename={(g) => {
                   setRenameTarget(g);
                   setRenameValue(g.name);
@@ -285,7 +382,22 @@ export default function GalleryPage() {
           {!inFolder && groups.length > 0 && (
             <p className="label-caps mb-3">Ungrouped images</p>
           )}
-          <div className="columns-2 gap-4 sm:columns-3 lg:columns-4 xl:columns-5 2xl:columns-6">
+          {selectMode && (
+            <p className="mb-3 font-stamp text-[10px] uppercase tracking-[0.14em] text-ink-400">
+              Click to tick · drag a box to select · Ctrl+drag adds · Esc exits
+            </p>
+          )}
+          <div
+            ref={gridRef}
+            className={`relative columns-2 gap-4 sm:columns-3 lg:columns-4 xl:columns-5 2xl:columns-6 ${
+              selectMode ? "cursor-crosshair select-none" : ""
+            }`}
+            onPointerDown={marquee.onPointerDown}
+            onPointerMove={marquee.onPointerMove}
+            onPointerUp={marquee.onPointerUp}
+            onPointerCancel={marquee.onPointerUp}
+            onClickCapture={marquee.onClickCapture}
+          >
             {records.map((record) => (
               <GalleryTile
                 key={record.id}
@@ -293,8 +405,10 @@ export default function GalleryPage() {
                 onOpen={open}
                 selected={selected.has(record.id)}
                 onToggleSelect={toggleSelect}
+                selectMode={selectMode}
               />
             ))}
+            <MarqueeOverlay rect={marquee.rect} />
           </div>
         </section>
       )}

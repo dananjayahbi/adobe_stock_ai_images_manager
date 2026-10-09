@@ -89,6 +89,23 @@ app.include_router(gallery_files_router)
 
 # Serve generated thumbnails to the frontend grid.
 create_data_directories()
+
+
+@app.middleware("http")
+async def thumbnails_must_revalidate(request, call_next):
+    """Thumbnails are rewritten *in place* (bg removal overwrites thumb_{id}.png).
+
+    Without an explicit directive the browser heuristically caches them, so a
+    freshly produced cut-out keeps showing the previous image until a manual
+    reload forces revalidation. ``no-cache`` keeps cheap ETag/Last-Modified 304s
+    while guaranteeing an overwritten file is picked up immediately.
+    """
+    response = await call_next(request)
+    if request.url.path.startswith("/thumbnails"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 app.mount(
     "/thumbnails",
     StaticFiles(directory=str(settings.THUMBNAILS_DIR)),
