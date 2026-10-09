@@ -45,11 +45,11 @@ export default function StepCard({
         <span
           className={`mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-sm border font-stamp text-sm ${
             status === "completed"
-              ? "border-olive-500 bg-olive-500 text-parchment-50"
+              ? "border-olive-500 bg-olive-500 text-ink-50"
               : status === "failed"
-                ? "border-oxblood-500 bg-oxblood-500 text-parchment-50"
+                ? "border-oxblood-500 bg-oxblood-500 text-ink-50"
                 : status === "running"
-                  ? "border-brass-400 bg-brass-300 text-ink-800"
+                  ? "border-brass-400 bg-brass-300 text-ink-900"
                   : "border-parchment-500 bg-parchment-100 text-ink-400"
           }`}
           aria-hidden="true"

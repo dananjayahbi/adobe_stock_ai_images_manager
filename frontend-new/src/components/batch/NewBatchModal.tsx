@@ -183,7 +183,7 @@ export default function NewBatchModal({ open, onClose }: NewBatchModalProps) {
         )}
 
         {error && (
-          <p className="mt-4 text-sm text-oxblood-500" role="alert">
+          <p className="mt-4 text-sm text-oxblood-400" role="alert">
             {error}
           </p>
         )}

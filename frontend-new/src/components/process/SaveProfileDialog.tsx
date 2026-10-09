@@ -75,7 +75,7 @@ export default function SaveProfileDialog({
           className="w-full rounded-sm border border-parchment-500 bg-parchment-50 px-3 py-2 text-sm text-ink-800 placeholder:text-ink-400/70 focus:border-brass-400 focus:outline-none focus:ring-1 focus:ring-brass-400"
         />
         {error && (
-          <p className="mt-2 text-sm text-oxblood-500" role="alert">
+          <p className="mt-2 text-sm text-oxblood-400" role="alert">
             {error}
           </p>
         )}

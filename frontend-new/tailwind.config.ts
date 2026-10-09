@@ -14,52 +14,61 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        /** Parchment page backdrop: 50 = freshest sheet, 900 = deep stain. */
+        /**
+         * Leather surfaces (mapped by role, dark theme):
+         * 50 = card sheet, 100 = deep page, 200/300 = raised hover + inset
+         * states, 400/500 = hairline borders, 600+ = decorative glyph tones.
+         */
         parchment: {
-          50: "#fbf6ea",
-          100: "#f7f0df",
-          200: "#efe6cf",
-          300: "#e4d8ba",
-          400: "#d6c69f",
-          500: "#c4b083",
-          600: "#ad9563",
-          700: "#8f774c",
-          800: "#6f5a3a",
-          900: "#4c3d28",
+          50: "#2b2119",
+          100: "#201812",
+          200: "#362a20",
+          300: "#423427",
+          400: "#4f3f2e",
+          500: "#6b563e",
+          600: "#8a7050",
+          700: "#a58a64",
+          800: "#c0a57c",
+          900: "#d8c39a",
         },
-        /** Ink: primary type + line work. */
+        /**
+         * Ink: type tones for dark surfaces. Brighter = more prominent
+         * (400 muted < 600 secondary < 800 primary). 900 is reserved for
+         * scrims/selection and intentionally stays near-black.
+         */
         ink: {
-          50: "#f4efe7",
-          200: "#c9bda9",
-          400: "#7d705c",
-          600: "#4a412f",
-          800: "#2f281c",
-          900: "#1e1912",
+          50: "#f7efdd",
+          200: "#d8c9ae",
+          400: "#a29175",
+          600: "#c9b993",
+          800: "#eee3cc",
+          900: "#17110a",
         },
         /** Brass: gilded accents, rules, badges. */
         brass: {
-          300: "#d9bd7e",
-          400: "#c9a757",
+          300: "#ddc284",
+          400: "#cba857",
           500: "#a98541",
           600: "#8a6a2f",
           700: "#6b5123",
         },
-        /** Oxblood: primary actions (the reference's red wax seal). */
+        /** Oxblood: primary actions (red wax seal). 400 = legible text tone. */
         oxblood: {
-          400: "#b2564a",
+          300: "#e09a8f",
+          400: "#d2796a",
           500: "#8b3a2f",
           600: "#742f26",
           700: "#5c251e",
         },
-        /** Olive: success / passed states. */
+        /** Olive: success / passed states. 400 = legible text tone. */
         olive: {
-          400: "#7d8a4f",
+          400: "#9db066",
           500: "#5b6334",
           600: "#4a5129",
         },
-        /** Rust: warnings + failures. */
+        /** Rust: warnings + failures. 400 = legible text tone. */
         rust: {
-          400: "#c07a3a",
+          400: "#dd9d5c",
           500: "#a15f26",
           600: "#824a1c",
         },
@@ -71,9 +80,9 @@ const config: Config = {
         script: ["var(--font-script)", "cursive"],
       },
       boxShadow: {
-        card: "0 1px 2px rgba(76, 61, 40, 0.10), 0 8px 24px -16px rgba(76, 61, 40, 0.35)",
-        raised: "0 2px 4px rgba(76, 61, 40, 0.12), 0 16px 40px -20px rgba(76, 61, 40, 0.45)",
-        seal: "inset 0 0 0 1px rgba(169, 133, 65, 0.35)",
+        card: "0 1px 2px rgba(0, 0, 0, 0.45), 0 8px 24px -16px rgba(0, 0, 0, 0.7)",
+        raised: "0 2px 4px rgba(0, 0, 0, 0.5), 0 16px 40px -20px rgba(0, 0, 0, 0.8)",
+        seal: "inset 0 0 0 1px rgba(203, 168, 87, 0.35)",
       },
       backgroundImage: {
         "paper-grain": "url('/grain.svg')",

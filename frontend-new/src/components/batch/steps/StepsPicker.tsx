@@ -50,7 +50,7 @@ export default function StepsPicker({ mediaType, selected, onToggle }: Props) {
               <span
                 className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-sm border font-stamp text-xs ${
                   active
-                    ? "border-oxblood-500 bg-oxblood-500 text-parchment-50"
+                    ? "border-oxblood-500 bg-oxblood-500 text-ink-50"
                     : "border-parchment-500 bg-parchment-100 text-ink-400"
                 }`}
               >
@@ -74,7 +74,7 @@ export default function StepsPicker({ mediaType, selected, onToggle }: Props) {
       </div>
 
       {selected.length === 0 && (
-        <p className="text-sm text-oxblood-500" role="alert">
+        <p className="text-sm text-oxblood-400" role="alert">
           Pick at least one step to continue.
         </p>
       )}

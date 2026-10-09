@@ -94,13 +94,13 @@ export default function GalleryPage() {
       </div>
 
       {error && (
-        <p className="rounded-sm border border-oxblood-500/40 bg-oxblood-400/10 px-3 py-2 text-sm text-oxblood-600" role="alert">
+        <p className="rounded-sm border border-oxblood-500/40 bg-oxblood-400/10 px-3 py-2 text-sm text-oxblood-400" role="alert">
           {error}
         </p>
       )}
 
       {loading && records.length === 0 && (
-        <div className="columns-2 gap-4 sm:columns-3 lg:columns-4">
+        <div className="columns-2 gap-4 sm:columns-3 lg:columns-4 xl:columns-5 2xl:columns-6">
           {Array.from({ length: 8 }).map((_, i) => (
             <div
               key={i}
@@ -123,7 +123,7 @@ export default function GalleryPage() {
       )}
 
       {records.length > 0 && (
-        <div className="columns-2 gap-4 sm:columns-3 lg:columns-4">
+        <div className="columns-2 gap-4 sm:columns-3 lg:columns-4 xl:columns-5 2xl:columns-6">
           {records.map((record) => (
             <GalleryTile key={record.id} record={record} onOpen={open} />
           ))}

@@ -3,17 +3,25 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light;
+  color-scheme: dark;
 }
 
 body {
-  @apply bg-parchment-100 text-ink-800 font-body antialiased;
-  /* Aged vignette + grain sit behind every page, like the reference sheet. */
-  background-image: theme("backgroundImage.aged-vignette"),
-    theme("backgroundImage.paper-grain");
+  @apply text-ink-800 font-body antialiased;
+  /* Full-bleed leather plate: fixed, cover, never repeating. */
+  background-color: #1a130c;
+  background-image:
+    radial-gradient(
+      ellipse at 50% 0%,
+      rgba(255, 214, 150, 0.06),
+      transparent 55%
+    ),
+    linear-gradient(rgba(24, 17, 11, 0.74), rgba(24, 17, 11, 0.74)),
+    url("/bg-leather.jpg");
   background-attachment: fixed;
-  background-repeat: no-repeat, repeat;
-  background-size: auto, 240px 240px;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center;
 }
 
 ::selection {
@@ -24,8 +32,8 @@ body {
   /** Double-hairline card frame — the ticket/label motif from the reference. */
   .frame-card {
     @apply relative rounded-sm border border-parchment-400 bg-parchment-50 shadow-card;
-    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.65),
-      inset 0 0 0 4px rgba(214, 198, 159, 0.35);
+    box-shadow: inset 0 0 0 1px rgba(238, 227, 204, 0.06),
+      inset 0 0 0 4px rgba(0, 0, 0, 0.18);
   }
 
   /** Small-caps letterspaced label used above card headers. */
@@ -40,7 +48,7 @@ body {
 
   /** Rotated postmark stamp. */
   .stamp {
-    @apply inline-flex items-center justify-center rounded-full border-2 border-dashed border-oxblood-500/70 px-3 py-1 font-stamp text-[10px] uppercase tracking-[0.2em] text-oxblood-500;
+    @apply inline-flex items-center justify-center rounded-full border-2 border-dashed border-oxblood-400/70 px-3 py-1 font-stamp text-[10px] uppercase tracking-[0.2em] text-oxblood-400;
     transform: rotate(-4deg);
   }
 }
@@ -48,5 +56,5 @@ body {
 /* Slim, warm scrollbars to match the paper. */
 * {
   scrollbar-width: thin;
-  scrollbar-color: #c4b083 transparent;
+  scrollbar-color: #6b563e transparent;
 }

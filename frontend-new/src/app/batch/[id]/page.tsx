@@ -212,7 +212,7 @@ export default function ProcessingPage() {
 
         {batch.error && (
           <p
-            className="mt-3 rounded-sm border border-oxblood-500/40 bg-oxblood-400/10 px-3 py-2 text-sm text-oxblood-600"
+            className="mt-3 rounded-sm border border-oxblood-500/40 bg-oxblood-400/10 px-3 py-2 text-sm text-oxblood-400"
             role="alert"
           >
             {batch.error}
@@ -220,14 +220,14 @@ export default function ProcessingPage() {
         )}
         {actionError && (
           <p
-            className="mt-3 rounded-sm border border-oxblood-500/40 bg-oxblood-400/10 px-3 py-2 text-sm text-oxblood-600"
+            className="mt-3 rounded-sm border border-oxblood-500/40 bg-oxblood-400/10 px-3 py-2 text-sm text-oxblood-400"
             role="alert"
           >
             {actionError}
           </p>
         )}
         {notice && !actionError && (
-          <p className="mt-3 rounded-sm border border-olive-500/40 bg-olive-400/10 px-3 py-2 text-sm text-olive-600">
+          <p className="mt-3 rounded-sm border border-olive-500/40 bg-olive-400/10 px-3 py-2 text-sm text-olive-400">
             {notice}
           </p>
         )}
@@ -290,7 +290,7 @@ export default function ProcessingPage() {
 
           {batch.status === "completed" && (
             <div className="frame-card mt-4 border-olive-500/60 px-4 py-3 text-center">
-              <p className="font-display text-lg text-olive-600">
+              <p className="font-display text-lg text-olive-400">
                 Run complete ✦
               </p>
               <p className="text-sm text-ink-400">

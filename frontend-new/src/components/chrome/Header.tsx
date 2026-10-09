@@ -14,9 +14,9 @@ export default function Header() {
 
   return (
     <header className="sticky top-0 z-40 border-b border-parchment-400/70 bg-parchment-100/90 backdrop-blur-sm">
-      <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-3 sm:px-6">
+      <div className="flex w-full items-center justify-between px-4 py-3 sm:px-6 lg:px-8 xl:px-10">
         <Link href="/" className="group flex items-baseline gap-3">
-          <span className="font-script text-3xl leading-none text-oxblood-500 transition-colors group-hover:text-oxblood-600">
+          <span className="font-script text-3xl leading-none text-oxblood-400 transition-colors group-hover:text-oxblood-300">
             Batch Studio
           </span>
           <span className="label-caps hidden sm:inline">Adobe Stock Pipeline</span>
@@ -34,7 +34,7 @@ export default function Header() {
                 href={item.href}
                 className={`rounded-sm px-3 py-1.5 font-stamp text-xs uppercase tracking-[0.14em] transition-colors ${
                   active
-                    ? "bg-oxblood-500 text-parchment-50"
+                    ? "bg-oxblood-500 text-ink-50"
                     : "text-ink-600 hover:bg-parchment-200 hover:text-ink-800"
                 }`}
               >

@@ -85,7 +85,7 @@ export default function ProfileStep({ mediaType, selectedId, onSelect }: Props) 
       </div>
 
       {error && (
-        <p className="text-sm text-oxblood-500" role="alert">
+        <p className="text-sm text-oxblood-400" role="alert">
           {error}
         </p>
       )}
@@ -133,7 +133,7 @@ export default function ProfileStep({ mediaType, selectedId, onSelect }: Props) 
                 <button
                   type="button"
                   onClick={() => remove(profile.id)}
-                  className="font-stamp text-[10px] uppercase tracking-[0.14em] text-ink-400 underline-offset-2 transition-colors hover:text-oxblood-500 hover:underline"
+                  className="font-stamp text-[10px] uppercase tracking-[0.14em] text-ink-400 underline-offset-2 transition-colors hover:text-oxblood-400 hover:underline"
                 >
                   Delete
                 </button>

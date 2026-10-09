@@ -15,7 +15,7 @@ export default function RecordStrip({ records, running }: RecordStripProps) {
   if (records.length === 0) return null;
 
   return (
-    <ul className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6">
+    <ul className="grid grid-cols-3 gap-3 sm:grid-cols-4 lg:grid-cols-6 xl:grid-cols-8">
       {records.map((record) => {
         const thumb = thumbnailUrl(record.thumbnail_path);
         const processed = record.stage_updated_at != null;
@@ -36,7 +36,7 @@ export default function RecordStrip({ records, running }: RecordStripProps) {
                   className="h-full w-full object-cover"
                 />
               ) : (
-                <div className="flex h-full items-center justify-center font-script text-xl text-parchment-500">
+                <div className="flex h-full items-center justify-center font-script text-xl text-parchment-600">
                   ✦
                 </div>
               )}

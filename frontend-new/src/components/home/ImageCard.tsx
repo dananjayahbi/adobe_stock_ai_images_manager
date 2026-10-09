@@ -22,12 +22,12 @@ export default function ImageCard({ record }: { record: ImageRecord }) {
             className="h-full w-full object-cover transition-transform duration-500 group-hover:scale-[1.03]"
           />
         ) : (
-          <div className="flex h-full items-center justify-center font-script text-3xl text-parchment-500">
+          <div className="flex h-full items-center justify-center font-script text-3xl text-parchment-600">
             ✦
           </div>
         )}
         {record.megapixels != null && (
-          <span className="absolute left-2 top-2 rounded-sm bg-ink-900/70 px-1.5 py-0.5 font-stamp text-[10px] tracking-wider text-parchment-100">
+          <span className="absolute left-2 top-2 rounded-sm bg-ink-900/70 px-1.5 py-0.5 font-stamp text-[10px] tracking-wider text-ink-50">
             {record.megapixels.toFixed(1)} MP
           </span>
         )}

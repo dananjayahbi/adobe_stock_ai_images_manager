@@ -19,7 +19,7 @@ export default function HomePage() {
         <p className="label-caps">A local pipeline for Adobe Stock</p>
         <h1 className="mt-3 font-display text-4xl leading-tight text-ink-800 sm:text-5xl">
           Process images in{" "}
-          <span className="font-script text-oxblood-500">batches</span>
+          <span className="font-script text-oxblood-400">batches</span>
         </h1>
         <p className="mx-auto mt-4 max-w-xl text-lg leading-relaxed text-ink-400">
           Choose raster photos or transparent cut-outs, pick exactly the steps

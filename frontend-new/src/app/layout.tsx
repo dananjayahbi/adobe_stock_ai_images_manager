@@ -41,10 +41,10 @@ export default function RootLayout({
         className={`${display.variable} ${body.variable} ${stamp.variable} ${script.variable} min-h-screen`}
       >
         <Header />
-        <main className="mx-auto w-full max-w-6xl px-4 py-8 sm:px-6">
+        <main className="w-full px-4 py-8 sm:px-6 lg:px-8 xl:px-10">
           {children}
         </main>
-        <footer className="mx-auto w-full max-w-6xl px-4 pb-10 pt-4 sm:px-6">
+        <footer className="w-full px-4 pb-10 pt-4 sm:px-6 lg:px-8 xl:px-10">
           <div className="divider-dashed flex items-center justify-between pt-4">
             <span className="label-caps">Batch Studio</span>
             <span className="label-caps">Est. MMXXVI · Local Pipeline</span>

@@ -4,10 +4,10 @@ type Tone = "neutral" | "success" | "warn" | "danger" | "info";
 
 const TONES: Record<Tone, string> = {
   neutral: "border-parchment-500 text-ink-600 bg-parchment-200",
-  success: "border-olive-500 text-olive-600 bg-olive-400/15",
-  warn: "border-rust-400 text-rust-600 bg-rust-400/15",
-  danger: "border-oxblood-500 text-oxblood-600 bg-oxblood-400/15",
-  info: "border-brass-400 text-brass-700 bg-brass-300/20",
+  success: "border-olive-500 text-olive-400 bg-olive-400/15",
+  warn: "border-rust-400 text-rust-400 bg-rust-400/15",
+  danger: "border-oxblood-500 text-oxblood-400 bg-oxblood-400/15",
+  info: "border-brass-400 text-brass-300 bg-brass-300/20",
 };
 
 interface BadgeProps {

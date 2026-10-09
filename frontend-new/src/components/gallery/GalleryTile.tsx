@@ -31,12 +31,12 @@ export default function GalleryTile({ record, onOpen }: GalleryTileProps) {
             className="w-full transition-transform duration-500 group-hover:scale-[1.03]"
           />
         ) : (
-          <div className="flex aspect-[4/3] items-center justify-center font-script text-3xl text-parchment-500">
+          <div className="flex aspect-[4/3] items-center justify-center font-script text-3xl text-parchment-600">
             ✦
           </div>
         )}
         <div className="absolute inset-x-0 bottom-0 translate-y-full bg-ink-900/80 px-3 py-2 transition-transform duration-300 group-hover:translate-y-0">
-          <p className="truncate text-sm text-parchment-100">{caption}</p>
+          <p className="truncate text-sm text-ink-50">{caption}</p>
         </div>
       </div>
     </button>

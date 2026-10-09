@@ -38,13 +38,13 @@ export default function LatestGrid({ onNewBatch }: LatestGridProps) {
       </div>
 
       {error && (
-        <p className="mb-4 rounded-sm border border-oxblood-500/40 bg-oxblood-400/10 px-3 py-2 text-sm text-oxblood-600" role="alert">
+        <p className="mb-4 rounded-sm border border-oxblood-500/40 bg-oxblood-400/10 px-3 py-2 text-sm text-oxblood-400" role="alert">
           {error}
         </p>
       )}
 
       {loading && records.length === 0 && (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
           {Array.from({ length: 4 }).map((_, i) => (
             <div
               key={i}
@@ -68,7 +68,7 @@ export default function LatestGrid({ onNewBatch }: LatestGridProps) {
       )}
 
       {records.length > 0 && (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
           {records.map((record) => (
             <ImageCard key={record.id} record={record} />
           ))}

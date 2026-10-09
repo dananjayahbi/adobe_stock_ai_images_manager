@@ -47,7 +47,7 @@ export default function MediaTypeStep({ value, onSelect }: Props) {
           >
             <div className="mb-3 flex items-center justify-between">
               <span
-                className={`font-script text-4xl leading-none ${active ? "text-oxblood-500" : "text-parchment-600"}`}
+                className={`font-script text-4xl leading-none ${active ? "text-oxblood-400" : "text-parchment-600"}`}
               >
                 {option.glyph}
               </span>
