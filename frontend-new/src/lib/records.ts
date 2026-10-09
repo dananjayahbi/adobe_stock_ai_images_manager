@@ -9,6 +9,15 @@ export interface RecordPage {
   page_size: number;
 }
 
+/** Gallery filters. All are image-level — groups are never filtered. */
+export interface RecordFilters {
+  search?: string;
+  stage?: string;
+  used?: "all" | "used" | "unused";
+  /** A group id, or "none" for ungrouped images. */
+  groupId?: string;
+}
+
 /**
  * Fetch processed records.
  *
@@ -18,16 +27,26 @@ export interface RecordPage {
 export async function fetchRecords(options: {
   limit?: number;
   offset?: number;
-  search?: string;
   stageUpdated?: boolean;
-}): Promise<RecordPage> {
+} & RecordFilters): Promise<RecordPage> {
   const { data } = await api.get("/api/records", {
     params: {
       limit: options.limit ?? 100,
       offset: options.offset ?? 0,
       ...(options.search ? { search: options.search } : {}),
+      ...(options.stage ? { stage: options.stage } : {}),
+      ...(options.used && options.used !== "all" ? { used: options.used } : {}),
+      ...(options.groupId ? { group_id: options.groupId } : {}),
       ...(options.stageUpdated ? { stage_updated: "true" } : {}),
     },
+  });
+  return data;
+}
+
+/** Delete records and their on-disk artifacts (gallery multi-delete). */
+export async function deleteRecords(recordIds: string[]): Promise<{ deleted: number }> {
+  const { data } = await api.post("/api/records/bulk-delete", {
+    record_ids: recordIds,
   });
   return data;
 }

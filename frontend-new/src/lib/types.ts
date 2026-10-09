@@ -61,9 +61,19 @@ export interface ImageRecord {
   generated_title: string | null;
   generated_keywords: string[] | null;
   batch_id: string | null;
+  /** Gallery folder this image lives in; null = ungrouped (top level). */
+  group_id: string | null;
+  is_used: boolean;
   created_at: string;
   stage_updated_at: string | null;
   acceptance_score: number | null;
+}
+
+export interface GalleryGroup {
+  id: string;
+  name: string;
+  image_count: number;
+  created_at: string;
 }
 
 export interface Batch {

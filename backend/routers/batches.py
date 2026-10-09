@@ -404,12 +404,13 @@ async def upload_to_batch(
                     written.append(Path(conversion.output_path))
                 stage_detail = {"collector": conversion.to_dict()}
 
-            # For alpha, the thumbnail must composite onto white: a direct
-            # RGBA -> JPEG conversion renders transparency as black.
+            # For alpha, the thumbnail keeps its channel: the gallery shows
+            # the cut-out over the card's own background (a white JPEG would
+            # paint a plate over the dark theme).
             if keep_alpha:
                 from services import png_ops
 
-                thumb_path = png_ops.white_thumbnail(
+                thumb_path = png_ops.alpha_thumbnail(
                     working_path, settings.THUMBNAILS_DIR, Path(full_path).stem
                 )
             else:

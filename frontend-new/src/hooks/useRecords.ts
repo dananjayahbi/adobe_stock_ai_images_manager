@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchRecords, type RecordPage } from "@/lib/records";
+import { fetchRecords, type RecordFilters, type RecordPage } from "@/lib/records";
 
 /**
  * Fetch records with the standard poll-safe loader pattern: a monotonic
@@ -10,11 +10,18 @@ import { fetchRecords, type RecordPage } from "@/lib/records";
  */
 export function useRecords(options: {
   limit?: number;
-  search?: string;
   stageUpdated?: boolean;
   pollMs?: number;
-}) {
-  const { limit = 12, search = "", stageUpdated = false, pollMs = 0 } = options;
+} & RecordFilters) {
+  const {
+    limit = 12,
+    stageUpdated = false,
+    pollMs = 0,
+    search = "",
+    stage = "",
+    used = "all",
+    groupId,
+  } = options;
   const [page, setPage] = useState<RecordPage | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -23,6 +30,8 @@ export function useRecords(options: {
   // Serialize the query into primitives — never an array/object identity,
   // which would retrigger the effect on every render.
   const searchKey = search.trim();
+  const stageKey = stage.trim();
+  const groupKey = groupId ?? "";
 
   const load = useCallback(async () => {
     const id = ++requestId.current;
@@ -31,6 +40,9 @@ export function useRecords(options: {
       const data = await fetchRecords({
         limit,
         search: searchKey || undefined,
+        stage: stageKey || undefined,
+        used,
+        groupId: groupKey || undefined,
         stageUpdated,
       });
       if (id === requestId.current) {
@@ -44,7 +56,7 @@ export function useRecords(options: {
     } finally {
       if (id === requestId.current) setLoading(false);
     }
-  }, [limit, searchKey, stageUpdated]);
+  }, [limit, searchKey, stageKey, used, groupKey, stageUpdated]);
 
   useEffect(() => {
     void load();

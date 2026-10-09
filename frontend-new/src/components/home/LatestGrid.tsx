@@ -1,10 +1,13 @@
 "use client";
 
 import Link from "next/link";
+import { useCallback, useState } from "react";
 import { useRecords } from "@/hooks/useRecords";
 import EmptyState from "@/components/ui/EmptyState";
 import Button from "@/components/ui/Button";
 import ImageCard from "./ImageCard";
+import ViewerModal from "@/components/viewer/ViewerModal";
+import type { ImageRecord } from "@/lib/types";
 
 interface LatestGridProps {
   /** Opens the New Batch wizard (wired by the page). */
@@ -18,8 +21,29 @@ export default function LatestGrid({ onNewBatch }: LatestGridProps) {
     stageUpdated: true,
     pollMs: 8000,
   });
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
 
   const records = page?.items ?? [];
+
+  const open = useCallback(
+    (record: ImageRecord) => {
+      const index = records.findIndex((r) => r.id === record.id);
+      if (index >= 0) setActiveIndex(index);
+    },
+    [records]
+  );
+
+  const navigate = useCallback(
+    (direction: -1 | 1) => {
+      setActiveIndex((current) => {
+        if (current === null || records.length === 0) return current;
+        return (current + direction + records.length) % records.length;
+      });
+    },
+    [records.length]
+  );
+
+  const active = activeIndex !== null ? records[activeIndex] ?? null : null;
 
   return (
     <section aria-labelledby="latest-heading">
@@ -70,10 +94,16 @@ export default function LatestGrid({ onNewBatch }: LatestGridProps) {
       {records.length > 0 && (
         <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
           {records.map((record) => (
-            <ImageCard key={record.id} record={record} />
+            <ImageCard key={record.id} record={record} onOpen={open} />
           ))}
         </div>
       )}
+
+      <ViewerModal
+        record={active}
+        onClose={() => setActiveIndex(null)}
+        onNavigate={navigate}
+      />
     </section>
   );
 }

@@ -9,6 +9,8 @@ Provided:
 * ``white_thumbnail``  - 400px JPEG thumbnail with alpha composited onto white
                          (dropping alpha directly renders transparent pixels as
                          black, which reads as a corrupted thumbnail).
+* ``alpha_thumbnail``  - 400px PNG thumbnail that *keeps* alpha, for the gallery
+                         to display the cut-out over the card's own background.
 * ``lanczos_rgba``     - alpha-preserving resize used by the PNG upscale path.
 """
 
@@ -53,12 +55,44 @@ def white_thumbnail(
             rgba = img.convert("RGBA")
             rgba.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
             background = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
-            composited = Image.alpha_composite(background, rgba).convert("RGB")
+            composited = alpha_composite_safe(background, rgba).convert("RGB")
             composited.save(out, "JPEG", quality=85)
         return str(out)
     except Exception:  # noqa: BLE001
         logger.exception("Failed to build PNG thumbnail for %s", source)
         return ""
+
+
+def alpha_thumbnail(
+    source: str | Path,
+    thumb_dir: str | Path,
+    record_id: str,
+) -> str:
+    """Write a 400px *PNG* thumbnail that keeps the alpha channel.
+
+    The gallery displays cut-outs over the card's own background, so the
+    thumbnail must stay transparent — a white JPEG would paint a white plate
+    over the leather theme. Returns ``""`` on failure, like the other writers.
+    """
+    out = Path(thumb_dir) / f"thumb_{record_id}.png"
+    try:
+        with Image.open(source) as img:
+            rgba = img.convert("RGBA")
+            rgba.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
+            rgba.save(out, "PNG", optimize=True)
+        return str(out)
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to build alpha PNG thumbnail for %s", source)
+        return ""
+
+
+def alpha_composite_safe(
+    background: Image.Image, foreground: Image.Image
+) -> Image.Image:
+    """``alpha_composite`` with the size guard the callers keep needing."""
+    if background.size != foreground.size:
+        foreground = foreground.resize(background.size, Image.Resampling.LANCZOS)
+    return Image.alpha_composite(background, foreground)
 
 
 def lanczos_rgba(img: Image.Image, size: tuple[int, int]) -> Image.Image:

@@ -202,8 +202,9 @@ def _step_bg_remove(
 
             record.working_path = result.output_path
             # Regenerate the thumbnail so the grid shows the cut-out, not the
-            # original with its background.
-            thumb = png_ops.white_thumbnail(
+            # original with its background. A *transparent* PNG thumb: the
+            # gallery renders the object over the card's own background.
+            thumb = png_ops.alpha_thumbnail(
                 result.output_path,
                 cfg.THUMBNAILS_DIR,
                 Path(record.thumbnail_path).stem.removeprefix("thumb_")

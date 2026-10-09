@@ -110,6 +110,14 @@ async def list_records(
             "definition for home and gallery."
         ),
     ),
+    group_id: str | None = Query(
+        default=None,
+        description=(
+            "Gallery folder filter: a group id, or 'none' for ungrouped "
+            "images. Filters apply to images only — groups themselves are "
+            "listed by GET /api/groups."
+        ),
+    ),
     limit: int = Query(default=DEFAULT_LIMIT, description="Max records to return."),
     offset: int = Query(default=0, description="Records to skip for pagination."),
     db: Session = Depends(get_db),
@@ -209,6 +217,14 @@ async def list_records(
 
     if stage_updated:
         condition = ImageRecord.stage_updated_at.isnot(None)
+        base = base.where(condition)
+        count_stmt = count_stmt.where(condition)
+
+    if group_id is not None:
+        if group_id == QUEUED_NONE_SENTINEL:
+            condition = ImageRecord.group_id.is_(None)
+        else:
+            condition = ImageRecord.group_id == group_id
         base = base.where(condition)
         count_stmt = count_stmt.where(condition)
 

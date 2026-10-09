@@ -58,6 +58,8 @@ class RecordResponse(BaseModel):
     prompt_id: Optional[str] = None
     #: The batch this image belongs to (batch pipeline v2). Null outside batches.
     batch_id: Optional[str] = None
+    #: Gallery folder this image lives in. Null = ungrouped (top level).
+    group_id: Optional[str] = None
 
 
 class RecordListResponse(BaseModel):
@@ -103,6 +105,43 @@ class BulkUsedRequest(BaseModel):
 class DeleteRequest(BaseModel):
     """Request body for deleting many records at once."""
     record_ids: list[str]
+
+
+class GroupCreateRequest(BaseModel):
+    """Create a gallery folder, optionally pre-filled with images."""
+
+    name: str
+    record_ids: list[str] = []
+
+
+class GroupRenameRequest(BaseModel):
+    """Rename a gallery folder."""
+
+    name: str
+
+
+class GroupAssignRequest(BaseModel):
+    """Move records into a folder — or out of one with ``group_id: null``."""
+
+    record_ids: list[str]
+    group_id: Optional[str] = None
+
+
+class GroupResponse(BaseModel):
+    """A gallery folder with its current image count."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: str
+    name: str
+    image_count: int = 0
+    created_at: datetime
+
+
+class GroupListResponse(BaseModel):
+    """All gallery folders, oldest-first (stable ordering for the UI)."""
+
+    items: list[GroupResponse]
 
 
 class AutoFixResponse(BaseModel):

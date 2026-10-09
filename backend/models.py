@@ -311,6 +311,9 @@ class ImageRecord(Base):
     #: records created outside a batch, so the legacy stage workspace is unaffected.
     batch_id: Mapped[str | None] = mapped_column(String(36), nullable=True)
 
+    #: Gallery folder this image belongs to. NULL = ungrouped (top level).
+    group_id: Mapped[str | None] = mapped_column(String(36), nullable=True, index=True)
+
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False
@@ -336,6 +339,37 @@ class ImageRecord(Base):
         from services.asset_naming import effective_download_name
 
         return effective_download_name(self)
+
+
+class ImageGroup(Base):
+    """A gallery folder: a named set of images the operator groups by hand.
+
+    Deliberately *not* a hierarchy — folders are a flat organizing device
+    ("the ones for this client"), and ``ImageRecord.group_id`` is the single
+    edge, so moving an image is a one-column update.
+    """
+
+    __tablename__ = "image_groups"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow, nullable=False
+    )
+
+    @property
+    def image_count(self) -> int:
+        """Number of images currently in this folder (computed on read)."""
+        from database import SessionLocal
+        from sqlalchemy import func
+
+        with SessionLocal() as db:
+            return (
+                db.query(func.count(ImageRecord.id))
+                .filter(ImageRecord.group_id == self.id)
+                .scalar()
+                or 0
+            )
 
 
 class ResearchRunStatus(str, enum.Enum):

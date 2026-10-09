@@ -43,6 +43,8 @@ ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     # Batch membership (batch pipeline v2). NULL for records created outside a
     # batch, so the legacy stage workspace keeps working unchanged.
     ("image_records", "batch_id", "VARCHAR(36)"),
+    # Gallery folder membership. NULL = ungrouped (top level of the gallery).
+    ("image_records", "group_id", "VARCHAR(36)"),
 ]
 
 # Rows that already reached READY under the old two-column model are already
