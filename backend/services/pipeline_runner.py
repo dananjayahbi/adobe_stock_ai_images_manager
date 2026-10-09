@@ -33,7 +33,14 @@ from sqlalchemy.orm import Session
 
 from config import Settings, settings as default_settings
 from models import Batch, ImageRecord, PipelineStage, utcnow
-from services import bg_remover, edge_quality, pipeline_defs, png_ops, record_metrics
+from services import (
+    bg_remover,
+    edge_quality,
+    pipeline_defs,
+    png_ops,
+    record_metrics,
+    step_progress,
+)
 from services.jobs import (
     STATUS_CANCELLED,
     STATUS_COMPLETED,
@@ -512,8 +519,26 @@ def run_batch(
         job = _start_step_job(key, records=step_records)
         with _active_lock:
             _active_jobs[batch_id] = job.id
+
+        # Sample the job while the step runs so the UI sees counts advance
+        # instead of sitting on "Starting…" until the whole step finishes.
+        monitor = step_progress.StepProgressMonitor(
+            job,
+            snapshot=lambda msg, counts: {
+                "status": "running",
+                "message": msg,
+                "counts": counts,
+            },
+            publish=lambda snap: _persist(
+                db_factory, batch_id, progress={**progress, key: snap}
+            ),
+        ).start()
+
         try:
             outcome = _dispatch(key, db_factory, step_records, config, job, cfg, media_type)
+            # Stop sampling *before* persisting the outcome: a late monitor
+            # tick would otherwise overwrite the terminal state with "running".
+            monitor.stop()
             progress[key] = outcome
             _persist(db_factory, batch_id, progress=progress)
             if outcome["status"] == "failed":
@@ -530,6 +555,7 @@ def run_batch(
                 break
         except Exception as exc:  # noqa: BLE001 - must not escape the task runner
             logger.exception("Batch step '%s' crashed", key)
+            monitor.stop()  # freeze sampling before we write the failed state
             registry.finish(job, STATUS_FAILED, str(exc))
             progress[key] = {
                 "status": "failed",
@@ -540,6 +566,7 @@ def run_batch(
             _persist(db_factory, batch_id, progress=progress)
             break
         finally:
+            monitor.stop()
             with _active_lock:
                 _active_jobs.pop(batch_id, None)
 

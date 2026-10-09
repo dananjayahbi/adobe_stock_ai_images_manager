@@ -12,8 +12,11 @@ const POLL_MS = 1500;
  * Two details that matter:
  * - A monotonic request id (not an in-flight boolean) invalidates responses:
  *   a poll that lands after the batch id changes must not overwrite state.
- * - The interval clears itself when the batch reaches a terminal status, so
- *   the page goes quiet after a run instead of polling forever.
+ * - "Terminal" pauses the interval instead of killing it: a finished batch
+ *   stops the network chatter, but a later Run must resume polling — clearing
+ *   the timer outright left the page frozen on "Starting…" for every re-run.
+ *   ``refresh`` recomputes the flag from each response, so a manual refresh
+ *   after Run re-arms the timer.
  */
 export function useBatchPolling(batchId: string | undefined) {
   const [batch, setBatch] = useState<BatchDetail | null>(null);
@@ -29,7 +32,9 @@ export function useBatchPolling(batchId: string | undefined) {
       if (id !== requestId.current) return; // stale response — a newer id exists
       setBatch(data);
       setError(null);
-      if (data.status !== "running") terminal.current = true;
+      // Recomputed both ways: a completed batch pauses the timer, and a Run
+      // that flips it back to "running" resumes it.
+      terminal.current = data.status !== "running";
     } catch (err) {
       if (id === requestId.current) {
         setError(err instanceof Error ? err.message : String(err));
@@ -46,10 +51,7 @@ export function useBatchPolling(batchId: string | undefined) {
     void refresh();
 
     const timer = window.setInterval(() => {
-      if (terminal.current) {
-        window.clearInterval(timer);
-        return;
-      }
+      if (terminal.current) return; // batch is at rest — skip, but keep the timer
       void refresh();
     }, POLL_MS);
     return () => window.clearInterval(timer);
