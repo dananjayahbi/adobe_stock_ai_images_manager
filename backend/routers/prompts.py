@@ -90,6 +90,14 @@ async def list_prompts(
             "can be used without being bound, so the two axes are independent."
         ),
     ),
+    q: str = Query(
+        default="",
+        max_length=200,
+        description=(
+            "Substring search over title, body, negative prompt and tags. "
+            "Case-insensitive; empty matches everything."
+        ),
+    ),
     db: Session = Depends(get_db),
 ) -> PromptListResponse:
     """Return every prompt newest-first with its binding count.
@@ -98,6 +106,9 @@ async def list_prompts(
     ``bound``/``unbound`` is derived from the actual bindings. Keeping them
     separate is what lets the operator answer two different questions: "have I
     consumed this prompt?" and "have I collected what it produced?".
+
+    ``q`` narrows ``items`` only: the tab counts stay library-wide, because they
+    answer "how many does the library hold", not "how many match this search".
     """
     key = (status or "all").lower()
     if key not in STATUS_FILTERS:
@@ -115,6 +126,8 @@ async def list_prompts(
     for prompt in prompts:
         bound = counts.get(prompt.id, 0)
         if not prompt_library.matches_filter(prompt, bound, key):
+            continue
+        if not prompt_library.matches_query(prompt, q):
             continue
         items.append(
             PromptResponse.model_validate(

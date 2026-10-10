@@ -16,6 +16,8 @@ export interface SettingsDefaults {
 export interface SettingsBounds {
   min_context_window: number;
   max_context_window: number;
+  min_brave_rate: number;
+  max_brave_rate: number;
   min_keyword_target: number;
   max_keyword_target: number;
   min_metadata_delay: number;
@@ -39,6 +41,16 @@ export interface AppSettings {
   metadata_keyword_target: number;
   metadata_delay_seconds: number;
   metadata_extra_instructions: string;
+  /** Web-search provider for the research agent (Brave → DuckDuckGo fallback). */
+  brave_search_enabled: boolean;
+  /** Display-only Brave key mask. Never a usable key. */
+  brave_search_api_key_masked: string;
+  brave_search_api_key_set: boolean;
+  brave_search_rate_limit: number;
+  /** What will actually run first — derived, so an enabled-but-keyless
+   *  configuration can never be shown as active. */
+  effective_uses_brave: boolean;
+  effective_search_provider: "brave" | "duckduckgo";
   defaults: SettingsDefaults;
   bounds: SettingsBounds;
 }
@@ -48,6 +60,7 @@ export interface AppSettings {
  *
  * Sending `llm_api_key: ""` keeps the stored key, which is what makes a
  * "save without retyping the key" flow safe. Use `clear_api_key` to remove it.
+ * `brave_search_api_key` follows the same blank-means-unchanged contract.
  */
 export interface SettingsUpdate {
   llm_base_url?: string;
@@ -55,6 +68,10 @@ export interface SettingsUpdate {
   llm_api_key?: string;
   llm_context_window?: number;
   clear_api_key?: boolean;
+  brave_search_enabled?: boolean;
+  brave_search_api_key?: string;
+  brave_search_rate_limit?: number;
+  clear_brave_search_key?: boolean;
   metadata_keyword_target?: number;
   metadata_delay_seconds?: number;
   metadata_extra_instructions?: string;

@@ -420,7 +420,6 @@ class TestToolInstructions:
         text, which is worse than no instruction at all."""
         system = prompts.compose_system_prompt(
             tool_specs=tools.specs_for(wants_prompts=True, validity_check=False),
-            style_instruction="style",
             mode="static",
             validity_check=False,
             max_tools=10,
@@ -435,7 +434,6 @@ class TestToolInstructions:
     def test_a_prose_mode_gets_the_prose_answer_format(self):
         system = prompts.compose_system_prompt(
             tool_specs=tools.specs_for(wants_prompts=False, validity_check=False),
-            style_instruction="style",
             mode="ideas",
             validity_check=False,
             max_tools=10,

@@ -43,8 +43,6 @@ import database
 from database import get_db
 from models import ResearchRunStatus
 from schemas import (
-    HouseStyleResponse,
-    HouseStyleUpdateRequest,
     ResearchAcceptRequest,
     ResearchAcceptResponse,
     ResearchFollowUpRequest,
@@ -53,18 +51,20 @@ from schemas import (
     ResearchRunResponse,
     ResearchRunSummary,
     ResearchSettingsResponse,
+    SystemPromptUpdateRequest,
+    SystemPromptsResponse,
 )
 from services import app_settings
 from services.research import (
     agent,
     context as context_module,
     events as event_module,
-    house_style,
     inflight,
     prompts,
     runs,
     source_store,
     sources,
+    system_prompts,
     validity,
 )
 from services.research.agent import RunRequest
@@ -76,28 +76,21 @@ router = APIRouter(tags=["research"])
 
 #: Modes the API accepts, with the copy the UI renders. Defined here rather than
 #: in the frontend so a mode cannot be offered without the backend knowing it.
+#:
+#: Three modes, as the operator specified: **generate** merges the old
+#: ``static``/``batch`` pair (one knob — the count — decides single vs many),
+#: **research** investigates before writing, **ideas** proposes niches only.
+#: The legacy ids are still accepted on input (see :func:`_validate_mode`) so
+#: stored conversations and older scripts keep working.
 MODES: tuple[dict, ...] = (
     {
-        "id": "static",
-        "label": "Static",
-        "tagline": "Give a hint, get a refined prompt",
+        "id": "generate",
+        "label": "Generate prompts",
+        "tagline": "Describe what you want, get prompts",
         "description": (
-            "Describe what you want in a sentence. The agent writes a fully "
-            "specified prompt in your house style. No web research."
-        ),
-        "produces_prompts": True,
-        "researches": False,
-        "supports_count": True,
-        "supports_validity": False,
-    },
-    {
-        "id": "batch",
-        "label": "Batch",
-        "tagline": "Describe a niche, get a set of prompts",
-        "description": (
-            "Describe a niche and how many prompts you need. Each prompt "
-            "describes a clearly different image, and overlaps are flagged before "
-            "you save them."
+            "Explain what you need and how many prompts you want — one or many "
+            "is just the count. The agent writes them in your house style. No "
+            "internet research."
         ),
         "produces_prompts": True,
         "researches": False,
@@ -120,11 +113,13 @@ MODES: tuple[dict, ...] = (
     },
     {
         "id": "ideas",
-        "label": "Find ideas",
-        "tagline": "Ask what is worth pursuing",
+        "label": "Find new ideas",
+        "tagline": "Deep research, trending ideas",
         "description": (
-            "The agent researches demand and competition, then proposes distinct "
-            "niches for you to choose from. It writes no prompts until you pick one."
+            "The agent researches demand and competition, then proposes the "
+            "ideas you ask for in your message, strongest first, each rated "
+            "against the confidence target. It writes no prompts until you pick "
+            "one."
         ),
         "produces_prompts": False,
         "researches": True,
@@ -135,6 +130,10 @@ MODES: tuple[dict, ...] = (
 
 #: Accepted mode ids, for validation.
 MODE_IDS = tuple(mode["id"] for mode in MODES)
+
+#: Pre-merge mode ids still accepted on input so stored conversations and old
+#: scripts keep working. They behave exactly like ``generate``.
+LEGACY_MODE_IDS = ("static", "batch")
 
 #: Prompt counts the API accepts. The upper bound matches the synthesis cap so a
 #: request cannot ask for more than one answer can carry.
@@ -179,12 +178,23 @@ def _get_run_or_404(db: Session, run_id: str):
 
 def _validate_mode(mode: str) -> str:
     key = (mode or "").strip().lower()
-    if key not in MODE_IDS:
+    if key not in MODE_IDS and key not in LEGACY_MODE_IDS:
         raise HTTPException(
             status_code=400,
-            detail=f"Invalid mode. Accepted values: {', '.join(MODE_IDS)}.",
+            detail=(
+                f"Invalid mode. Accepted values: "
+                f"{', '.join(MODE_IDS + LEGACY_MODE_IDS)}."
+            ),
         )
     return key
+
+
+def _mode_spec(mode: str) -> dict:
+    """The served spec for a mode id, mapping the legacy ids onto ``generate``."""
+    from services.research import system_prompts
+
+    key = system_prompts.key_for(mode)
+    return next(spec for spec in MODES if spec["id"] == key)
 
 
 def _clamp_count(value: int | None, default: int = 1) -> int:
@@ -221,35 +231,17 @@ def _build_request(
     *,
     message: str,
     count: int | None = None,
-    style_instruction: str | None = None,
     validity_check: bool | None = None,
-    house_rules: str | None = None,
 ) -> RunRequest:
     """Assemble a run request from a stored conversation plus the new turn.
 
     Settings fall back to what the conversation was started with, so a follow-up
-    turn keeps the style instruction and validity setting the operator chose
-    without the client having to resend them.
-
-    ``house_rules`` is resolved from the *live* store rather than the run's
-    snapshot, deliberately: the rules are not a per-run choice the client sends,
-    they are the operator's current house standard, so editing them should reach
-    the next turn of an already-open conversation. The style instruction keeps
-    the opposite contract — it is snapshotted onto the run — because that one the
-    client *does* send explicitly, and a stale copy of what the model already saw
-    would be worse than a consistent one.
+    turn keeps the validity setting the operator chose without the client having
+    to resend it. The system prompt itself is *not* snapshotted: it resolves from
+    the live per-mode store on every turn, so an edit reaches an already-open
+    conversation — the operator asked for one text they can rewrite at will.
     """
     settings = run.settings or {}
-    resolved_style = (
-        style_instruction
-        if style_instruction is not None
-        else settings.get("style_instruction") or prompts.DEFAULT_STYLE_INSTRUCTION
-    )
-    resolved_rules = (
-        house_rules
-        if house_rules is not None
-        else house_style.effective_rules()
-    )
     resolved_validity = (
         validity_check
         if validity_check is not None
@@ -271,8 +263,6 @@ def _build_request(
         mode=run.mode,
         message=message,
         count=resolved_count,
-        style_instruction=resolved_style,
-        house_rules=resolved_rules,
         validity_check=resolved_validity,
         history=history,
         # Resolved per turn, so raising the limit in Settings takes effect on the
@@ -315,7 +305,6 @@ def _persist_turn(
     # Keep the settings in step with the turn that is about to run.
     run.settings = {
         **(run.settings or {}),
-        "style_instruction": request.style_instruction,
         "validity_check": request.validity_check,
         "count": request.count,
     }
@@ -407,36 +396,15 @@ def _summary(run) -> ResearchRunSummary:
 # Settings / vocabulary
 # --------------------------------------------------------------------------- #
 
-def _house_style_payload(style) -> dict:
-    """The wire shape of the house style, shared by the two write endpoints.
-
-    Built from the :class:`~services.research.house_style.HouseStyle` dataclass
-    rather than by hand at each call site, so the flags that drive the UI's Reset
-    button are computed by exactly one piece of code.
-    """
-    return {
-        "style_instruction": style.style_instruction,
-        "house_rules": style.house_rules,
-        "style_is_custom": style.style_is_custom,
-        "rules_is_custom": style.rules_is_custom,
-    }
-
-
 @router.get("/api/research/settings", response_model=ResearchSettingsResponse)
 async def research_settings() -> ResearchSettingsResponse:
     """The research page's vocabulary and defaults.
 
-    Served rather than duplicated in the frontend so the mode list, the default
-    style instruction and the confidence disclaimer cannot drift between the two.
+    Served rather than duplicated in the frontend so the mode list and the
+    confidence disclaimer cannot drift between the two.
     """
     return ResearchSettingsResponse(
         modes=[dict(mode) for mode in MODES],
-        # The operator's *saved* house standard, falling back to the shipped
-        # default inside `house_style.load`. Served here — rather than left for
-        # the client to seed from `prompts` — so the page loads what the next run
-        # would actually use, and a saved edit survives a reload.
-        default_style_instruction=house_style.effective_style(),
-        house_rules=house_style.effective_rules(),
         max_prompts=MAX_PROMPTS,
         # The operator's configured budget, so the UI shows the number that will
         # actually be enforced rather than a hard-coded one.
@@ -454,56 +422,42 @@ async def research_settings() -> ResearchSettingsResponse:
     )
 
 
-@router.get("/api/research/style", response_model=HouseStyleResponse)
-async def get_house_style() -> HouseStyleResponse:
-    """The saved house standard and rules.
+# --------------------------------------------------------------------------- #
+# Per-mode system prompts
+# --------------------------------------------------------------------------- #
 
-    Separate from ``/api/research/settings`` because this is a *resource* with a
-    write path, and the editor must be able to reload it without also refetching
-    (and potentially clobbering) the page's vocabulary.
+def _system_prompts_payload() -> SystemPromptsResponse:
+    loaded = system_prompts.load_all()
+    default = system_prompts.default_template()
+    return SystemPromptsResponse(
+        items={key: text for key, (text, _) in loaded.items()},
+        defaults={key: default for key in system_prompts.MODE_KEYS},
+        is_custom={key: custom for key, (_, custom) in loaded.items()},
+    )
+
+
+@router.get("/api/research/system-prompts", response_model=SystemPromptsResponse)
+async def get_system_prompts() -> SystemPromptsResponse:
+    """The operator's system prompt for each mode, with the defaults.
+
+    A resource of its own so the editor can save one mode's prompt without
+    round-tripping the whole settings document.
     """
-    return HouseStyleResponse(**_house_style_payload(house_style.load()))
+    return _system_prompts_payload()
 
 
-@router.put("/api/research/style", response_model=HouseStyleResponse)
-async def update_house_style(request: HouseStyleUpdateRequest) -> HouseStyleResponse:
-    """Persist the operator's house standard and/or house rules.
+@router.put("/api/research/system-prompts", response_model=SystemPromptsResponse)
+async def update_system_prompt(request: SystemPromptUpdateRequest) -> SystemPromptsResponse:
+    """Replace one mode's system prompt (empty text restores the default).
 
-    A ``PUT`` on its own resource rather than folding the fields into
-    ``/api/research/settings`` because the *reason* to edit them is different:
-    the settings endpoint configures the plumbing (endpoint, key, budget), while
-    this one is the content of the prompt itself. Splitting them keeps a stray
-    key edit from carrying prompt text and vice versa.
-
-    Omitted fields are left untouched; an empty string restores the shipped
-    default. Both fields are validated before either is written, so a rejection
-    cannot leave the operator with a half-applied standard.
+    Returned in full rather than as a bare ack so the editor repaints every
+    mode's ``is_custom`` flag from one truthful server response.
     """
-    payload = request.model_dump(exclude_unset=True)
     try:
-        return HouseStyleResponse(**_house_style_payload(
-            house_style.save(
-                style_instruction=payload.get("style_instruction"),
-                house_rules=payload.get("house_rules"),
-            )
-        ))
-    except house_style.HouseStyleError as exc:
-        # 400 with the reason, not "invalid request": the operator is editing
-        # this text by hand and the limit is the useful thing to tell them.
+        system_prompts.save(request.mode, request.text)
+    except system_prompts.SystemPromptError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@router.delete("/api/research/style", response_model=HouseStyleResponse)
-async def reset_house_style() -> HouseStyleResponse:
-    """Restore both the house standard and the rules to the shipped defaults.
-
-    One endpoint for both rather than a field-scoped query parameter: the UI's
-    Reset action is per-field but they are the same intent, and the parameter
-    would invite a client to reset one field while believing it reset both.
-    """
-    return HouseStyleResponse(**_house_style_payload(house_style.reset(
-        style_instruction=True, house_rules=True
-    )))
+    return _system_prompts_payload()
 
 
 # --------------------------------------------------------------------------- #
@@ -614,10 +568,11 @@ async def create_research_run(
     message = _clean_message(request.message)
     count = _clamp_count(request.count)
 
-    mode_spec = next(spec for spec in MODES if spec["id"] == mode)
-    # A mode that cannot produce prompts must not be told a prompt count, and the
-    # validity tool is only offered where the mode supports it.
-    effective_count = count if mode_spec["produces_prompts"] else 0
+    mode_spec = _mode_spec(mode)
+    # The count only reaches modes with a count control (``generate``);
+    # ``ideas" is chat-driven — the operator says how many they want in the
+    # message — and the validity tool is only offered where the mode supports it.
+    effective_count = count if mode_spec["supports_count"] else 0
     validity_check = bool(request.validity_check) and mode_spec["supports_validity"]
 
     run = runs.create_run(
@@ -625,8 +580,6 @@ async def create_research_run(
         mode=mode,
         message=message,
         settings={
-            "style_instruction": request.style_instruction
-            or prompts.DEFAULT_STYLE_INSTRUCTION,
             "validity_check": validity_check,
             "count": effective_count,
         },
@@ -641,8 +594,6 @@ async def create_research_run(
         mode=mode,
         message=message,
         count=effective_count,
-        style_instruction=run.settings["style_instruction"],
-        house_rules=house_style.effective_rules(),
         validity_check=validity_check,
         history=[],
         max_tool_calls=app_settings.resolve_tool_budget(),
@@ -718,7 +669,6 @@ async def continue_research_run(
         run,
         message=message,
         count=request.count,
-        style_instruction=request.style_instruction,
         validity_check=request.validity_check,
     )
     _persist_turn(db, run, agent_request, message)

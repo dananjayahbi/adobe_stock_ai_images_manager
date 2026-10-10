@@ -145,6 +145,22 @@ def matches_filter(prompt: Prompt, bound_count: int, key: str) -> bool:
     return prompt.status == wanted
 
 
+def matches_query(prompt: Prompt, query: str) -> bool:
+    """Case-insensitive substring search over title, body, negatives and tags.
+
+    Pure and separate from :func:`matches_filter` so the search bar composes
+    with the status tabs: both must pass. Empty query matches everything — the
+    no-search state must be identical to the pre-search list, or opening the
+    page would silently filter.
+    """
+    needle = (query or "").strip().casefold()
+    if not needle:
+        return True
+    fields = [prompt.title or "", prompt.body or "", prompt.negative_prompt or ""]
+    fields.extend(str(tag) for tag in (prompt.tags or []))
+    return any(needle in field.casefold() for field in fields)
+
+
 def library_totals(db: Session) -> dict[str, int]:
     """Counts for the whole library, so the filter tabs can show numbers.
 

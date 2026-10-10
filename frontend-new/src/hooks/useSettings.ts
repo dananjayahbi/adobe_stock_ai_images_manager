@@ -17,6 +17,9 @@ export interface SettingsDraft {
   llm_model: string;
   llm_api_key: string;
   llm_context_window: string;
+  brave_search_enabled: boolean;
+  brave_search_api_key: string;
+  brave_search_rate_limit: string;
   metadata_keyword_target: string;
   metadata_delay_seconds: string;
   metadata_extra_instructions: string;
@@ -27,6 +30,9 @@ const EMPTY_DRAFT: SettingsDraft = {
   llm_model: "",
   llm_api_key: "",
   llm_context_window: "",
+  brave_search_enabled: false,
+  brave_search_api_key: "",
+  brave_search_rate_limit: "1",
   metadata_keyword_target: "49",
   metadata_delay_seconds: "2",
   metadata_extra_instructions: "",
@@ -82,6 +88,10 @@ export function useSettings(): UseSettingsResult {
       metadata_keyword_target: String(next.metadata_keyword_target ?? 49),
       metadata_delay_seconds: String(next.metadata_delay_seconds ?? 2),
       metadata_extra_instructions: next.metadata_extra_instructions ?? "",
+      brave_search_enabled: next.brave_search_enabled,
+      // Blank-seeded like the LLM key: the server only returns a mask.
+      brave_search_api_key: "",
+      brave_search_rate_limit: String(next.brave_search_rate_limit ?? 1),
     });
   }, []);
 
@@ -121,6 +131,15 @@ export function useSettings(): UseSettingsResult {
     // makes the intent explicit.
     const key = draft.llm_api_key.trim();
     if (key) payload.llm_api_key = key;
+
+    // Brave: the toggle always travels (it is the point of the card), the key
+    // only when typed, and the rate only when it parses — same contracts as the
+    // LLM half.
+    payload.brave_search_enabled = draft.brave_search_enabled;
+    const braveKey = draft.brave_search_api_key.trim();
+    if (braveKey) payload.brave_search_api_key = braveKey;
+    const rate = Number.parseFloat(draft.brave_search_rate_limit);
+    if (Number.isFinite(rate)) payload.brave_search_rate_limit = rate;
 
     const target = Number.parseInt(draft.metadata_keyword_target, 10);
     if (Number.isFinite(target)) payload.metadata_keyword_target = target;

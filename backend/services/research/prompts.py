@@ -1,36 +1,23 @@
-"""System prompts for the Prompt Research agent.
+"""System prompt assembly for the Prompt Research agent.
 
-The default *style instruction* is not invented here: it is the operator's own
-house template, supplied verbatim as the reference standard (see
-``DEFAULT_STYLE_INSTRUCTION``). It is a **default**, exposed and editable in the
-UI, because the whole point of the feature is that the operator should not have
-to leave the app to get a prompt written the way they want it.
+:func:`compose_system_prompt` stacks three sections, each owned by a different
+party:
 
-Two distinct instructions are kept apart on purpose:
+* **Research instruction** — *how the agent should work*: tool-call protocol,
+  evidence rules, when to finish, and the answer format the parser reads. Not
+  operator-editable, because weakening it silently degrades every run's answer
+  (a style tweak must not be able to remove the rule that a blocked search gets
+  reported).
+* **Runtime section** — the per-run objective (mode + validity gate), the tool
+  budget, and any uploaded priority sources. Generated fresh each turn.
+* **Operator system prompt** — one plain text per mode from
+  :mod:`services.research.system_prompts`, pasted verbatim: structure, template,
+  styles and rules all live there, no placeholders, no length limit.
 
-* **Style instruction** — *how the images should look*. Ratio, lens, lighting,
-  copy space, what must be absent, upscaling readiness. This is the part the
-  operator edits most often, so it is persisted between sessions.
-* **House rules** — *the non-negotiable constraints the output must satisfy*.
-  Adobe's refusal reasons, ratio, lens, realism. Also editable, because an
-  operator whose workflow genuinely differs (say, they only submit 4:5 vertical)
-  needs to change it — but editable *deliberately*, with the shipped default
-  always recoverable.
-* **Research instruction** — *how the agent should work*. Tool use, honesty about
-  evidence, when to stop. Not exposed as a free-text field, because weakening it
-  silently degrades every run's answer.
-
-Merging them would let a style tweak ("make it more cinematic") quietly remove
-the rule that says a blocked search must be reported.
-
-Where the two editable texts come from
---------------------------------------
-``DEFAULT_STYLE_INSTRUCTION`` and ``HOUSE_RULES`` are the *shipped defaults*, not
-what a run necessarily uses. :mod:`services.research.house_style` holds the
-operator's saved text, and :func:`compose_system_prompt` takes the rules as a
-parameter rather than reading the constant — otherwise editing the rules in the
-UI would change the system prompt on the client but not on the server, which is
-exactly the class of "my edit did nothing" bug this refactor exists to fix.
+``DEFAULT_STYLE_INSTRUCTION`` and ``HOUSE_RULES`` are the *shipped default* of
+that operator section (the old style block, kept verbatim so an untouched
+install behaves exactly as before) — the editable copy lives in the
+system-prompts store, not here.
 """
 
 from __future__ import annotations
@@ -307,7 +294,6 @@ def answer_format_block(*, wants_prompts: bool, count: int = 1) -> str:
 def compose_system_prompt(
     *,
     tool_specs: list[dict],
-    style_instruction: str,
     mode: str,
     validity_check: bool,
     max_tools: int,
@@ -315,31 +301,28 @@ def compose_system_prompt(
     count: int = 1,
     released: bool = False,
     source_guidance: str = "",
-    house_rules: str = "",
 ) -> str:
     """Build the full system prompt for one run.
 
-    Assembled per run (rather than being one constant) because the tool list, the
-    operator's style instruction, the mode's objective, and the required answer
-    format all change what the agent should do. A stale tool list is how an agent
-    ends up calling a tool that no longer exists; a missing answer format is how it
-    ends up answering in a shape nothing can parse.
+    Assembled as, in order:
 
-    ``released`` is the operator having pressed Continue on a validity-gated run,
-    which is the one case where that mode *does* want the JSON prompt contract.
+    1. **The transport block** (:data:`RESEARCH_INSTRUCTION` with the tool list
+       and the answer format substituted in) — machinery the agent cannot work
+       without: tool-call syntax, evidence rules, the parseable finish.
+    2. **The runtime section** — the per-run objective (which encodes the mode
+       and the validity gate), the tool budget, and the operator's priority
+       sources when any are uploaded.
+    3. **The operator's system prompt** (:mod:`services.research.system_prompts`)
+       — one plain text, pasted verbatim, no substitution and no placeholders.
+       Structure, template, styles and rules all live here; the shipped default
+       is the old style block, so an unchanged install behaves as before.
 
-    ``source_guidance`` is the operator's priority-source section, rendered by
-    :func:`services.research.sources.guidance`. Empty when no source file is
-    uploaded, in which case the prompt is byte-identical to one from before the
-    feature existed.
-
-    ``house_rules`` is the operator's saved rules block, from
-    :mod:`services.research.house_style`. Taken as a parameter rather than reading
-    :data:`HOUSE_RULES` here so the *same* text the operator edited is what the
-    model reads — a parameter defaulting to the constant would make the UI lie
-    about its own edit. The constant is still the fallback, which keeps every
-    existing caller (and test) working unchanged.
+    ``released`` is the operator having pressed Continue on a validity-gated
+    run, which is the one case where that mode *does* want the JSON prompt
+    contract.
     """
+    from services.research import system_prompts
+
     sections = [
         _fill_markers(
             RESEARCH_INSTRUCTION,
@@ -348,30 +331,20 @@ def compose_system_prompt(
         ),
         "",
         "OBJECTIVE FOR THIS RUN",
-        _objective(mode, validity_check, released=released),
+        _objective(mode, validity_check, released=released, count=count),
         "",
         f"You have at most {max_tools} tool calls. Use fewer if the evidence is "
         "already sufficient, and always finish with the answer described above.",
     ]
     if source_guidance.strip():
-        # Placed before the style rules because it changes *where the agent looks*,
-        # and the operator's house style has no bearing on that.
+        # It changes *where the agent looks*, so it sits before the operator's
+        # content guidance — the same position the old composer used.
         sections.extend(["", source_guidance.strip()])
-    sections.extend(
-        [
-            "",
-            STYLE_NOTE,
-            "",
-            "STYLE INSTRUCTION (the operator's house standard):",
-            style_instruction.strip(),
-            "",
-            (house_rules or HOUSE_RULES).strip(),
-        ]
-    )
+    sections.extend(["", system_prompts.effective(mode).strip()])
     return "\n".join(sections)
 
 
-def _objective(mode: str, validity_check: bool, released: bool = False) -> str:
+def _objective(mode: str, validity_check: bool, released: bool = False, count: int = 1) -> str:
     """The mode-specific instruction block.
 
     Every prompt-producing objective states that the JSON contract is mandatory.
@@ -381,15 +354,22 @@ def _objective(mode: str, validity_check: bool, released: bool = False) -> str:
 
     ``released`` is the operator having pressed Continue on a gated run, which is
     the one case where a gated research run *does* want prompts.
+
+    ``count`` feeds the prompt-producing modes: ``generate`` is single-or-many
+    decided by one knob. ``ideas`` deliberately does **not** use it — there is
+    no count control for that mode; the operator says how many ideas they want
+    in the message itself, and the objective tells the agent to read it there.
     """
-    if mode == "static":
+    if mode in ("static", "generate"):
         return (
-            "The operator gave you a hint and wants refined generation prompts for "
-            "it. You do not need to research unless the hint is ambiguous; the "
-            "operator's hint is the authority on the subject. Produce the requested "
-            "number of prompts, each describing a different image. Your FINAL reply "
-            "must be the JSON object from ANSWER FORMAT — nothing before it, "
-            "nothing after it."
+            "The operator gave you a description and wants generation prompts for "
+            "it. You do not need to research unless the request is ambiguous; the "
+            "operator's description is the authority on the subject. Produce "
+            f"exactly {max(1, count)} prompt(s), each describing a clearly "
+            "different image: vary the subject, setting, activity, time of day "
+            "and camera position so no two would produce similar frames. Your "
+            "FINAL reply must be the JSON object from ANSWER FORMAT — nothing "
+            "before it, nothing after it."
         )
     if mode == "batch":
         return (
@@ -446,12 +426,24 @@ def _objective(mode: str, validity_check: bool, released: bool = False) -> str:
             "before it, nothing after it."
         )
     if mode == "ideas":
+        scoring = (
+            " The operator asked for a validity check: call `assess_validity` for "
+            "each idea you propose (pass `subject` = the idea) so each one gets a "
+            "real scorecard, and hold ideas below the target out of your "
+            "recommendation."
+            if validity_check
+            else ""
+        )
         return (
             "The operator asked you to find ideas rather than to write prompts. "
-            "Research what is in demand and what is over-supplied, then propose a "
-            "small number of distinct niches or concepts, strongest first. For each, "
-            "say briefly why it is worth pursuing and what the competition looks "
-            "like. Do NOT write prompts: the operator will pick one and ask for "
-            "them."
+            "Research what is in demand and what is over-supplied, then propose "
+            "the number of distinct niche(s) or concept(s) they asked for in "
+            "their message — if they did not say how many, propose five — "
+            "strongest first. Rate each idea against the "
+            f"{_target_text()} collective-confidence target: only recommend one "
+            "when your evidence supports roughly that level, and say plainly when "
+            "it does not. For each, say briefly why it is worth pursuing and what "
+            "the competition looks like. Do NOT write prompts: the operator will "
+            f"pick one and ask for them.{scoring}"
         )
     return "Answer the operator's request using the tools available to you."

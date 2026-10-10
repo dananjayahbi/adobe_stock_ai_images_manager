@@ -10,6 +10,7 @@ export default function Header() {
   const navItems = [
     { href: "/", label: "Home" },
     { href: "/gallery", label: "Gallery" },
+    { href: "/prompts", label: "Prompts" },
     { href: "/settings", label: "Config" },
   ];
 

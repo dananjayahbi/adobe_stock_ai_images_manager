@@ -99,26 +99,32 @@ class TestResearchSettings:
         payload = response.json()
 
         mode_ids = {mode["id"] for mode in payload["modes"]}
-        assert mode_ids == {"static", "batch", "research", "ideas"}
+        assert mode_ids == {"generate", "research", "ideas"}
 
-        # The operator's own reference prompt is the default style.
-        assert payload["default_style_instruction"].startswith(
-            "Epic commercial stock photograph"
-        )
-        assert payload["default_style_instruction"].endswith("--ar 16:9")
+        # The style fields are gone: the operator's system prompt is the only
+        # editable content now (a resource of its own, /system-prompts).
+        assert "default_style_instruction" not in payload
+        assert "house_rules" not in payload
 
     def test_only_the_research_modes_offer_the_validity_check(self, client):
         """A scorecard must not be possible in a run that was not asked for one."""
         modes = {mode["id"]: mode for mode in client.get("/api/research/settings").json()["modes"]}
         assert modes["research"]["supports_validity"] is True
         assert modes["ideas"]["supports_validity"] is True
-        assert modes["static"]["supports_validity"] is False
-        assert modes["batch"]["supports_validity"] is False
+        assert modes["generate"]["supports_validity"] is False
 
     def test_the_ideas_mode_declares_it_produces_no_prompts(self, client):
         modes = {mode["id"]: mode for mode in client.get("/api/research/settings").json()["modes"]}
         assert modes["ideas"]["produces_prompts"] is False
-        assert modes["static"]["produces_prompts"] is True
+        assert modes["generate"]["produces_prompts"] is True
+
+    def test_the_merged_generate_mode_supports_a_count(self, client):
+        """Single and multiple prompts are the same mode — the count decides."""
+        modes = {mode["id"]: mode for mode in client.get("/api/research/settings").json()["modes"]}
+        assert modes["generate"]["supports_count"] is True
+        # Ideas has no count control: the operator says how many they want in
+        # the message ("find me 6 trend ideas") and the agent reads it there.
+        assert modes["ideas"]["supports_count"] is False
 
     def test_the_disclaimer_is_served_so_it_cannot_be_dropped(self, client):
         payload = client.get("/api/research/settings").json()
@@ -381,13 +387,13 @@ class TestCreateRun:
         ).json()
         assert payload["settings"]["count"] <= 60
 
-    def test_a_mode_that_produces_no_prompts_is_given_no_count(self, client, stub_agent):
-        """Telling an ideas run to produce N prompts would ask it to answer a
-        question the operator did not ask."""
+    def test_the_ideas_mode_gets_no_count_control(self, client, stub_agent):
+        """"Find me 6 ideas" is chat-driven: the count must NOT be forced onto
+        the run — the agent reads the number from the operator's message."""
         stub_agent()
         payload = client.post(
             "/api/research/runs",
-            json={"message": "what is worth shooting?", "mode": "ideas", "count": 5},
+            json={"message": "Find latest 6 trend ideas for me", "mode": "ideas", "count": 5},
         ).json()
         assert payload["settings"]["count"] == 0
 
@@ -399,22 +405,15 @@ class TestCreateRun:
         ).json()
         assert payload["settings"]["validity_check"] is False
 
-    def test_the_default_style_is_recorded_when_none_is_given(self, client, stub_agent):
-        stub_agent()
-        payload = client.post(
-            "/api/research/runs", json={"message": "x", "mode": "static"}
-        ).json()
-        assert payload["settings"]["style_instruction"].startswith(
-            "Epic commercial stock photograph"
-        )
-
-    def test_a_custom_style_instruction_is_recorded(self, client, stub_agent):
+    def test_style_instruction_is_no_longer_a_run_setting(self, client, stub_agent):
+        """The house-style split is gone: one system prompt per mode instead.
+        A legacy ``style_instruction`` in the body is ignored, not stored."""
         stub_agent()
         payload = client.post(
             "/api/research/runs",
             json={"message": "x", "mode": "static", "style_instruction": "MY STYLE"},
         ).json()
-        assert payload["settings"]["style_instruction"] == "MY STYLE"
+        assert "style_instruction" not in payload["settings"]
 
     def test_a_failing_run_is_stored_as_failed_with_its_error(self, client, stub_agent):
         """A failure must be visible in the thread, not an empty conversation."""
@@ -568,7 +567,7 @@ class TestConversations:
         assert "automated warehouses" in contents
         assert "Here is my answer." in contents
 
-    def test_a_follow_up_keeps_the_style_and_validity_settings(
+    def test_a_follow_up_keeps_the_validity_setting(
         self, client, stub_agent, monkeypatch
     ):
         stub_agent()
@@ -578,7 +577,6 @@ class TestConversations:
                 "message": "x",
                 "mode": "research",
                 "validity_check": True,
-                "style_instruction": "KEEP ME",
             },
         ).json()
 
@@ -594,66 +592,27 @@ class TestConversations:
             f"/api/research/runs/{created['id']}/messages", json={"message": "continue"}
         )
 
-        assert seen["request"].style_instruction == "KEEP ME"
         assert seen["request"].validity_check is True
 
-    def test_an_opening_run_uses_the_saved_house_rules(
-        self, client, stub_agent, monkeypatch
-    ):
-        """End to end: the rules the operator edited must reach the model.
+    def test_a_saved_system_prompt_reaches_the_model(self, client):
+        """End to end over the API: text saved through the endpoint is what the
+        composer will put in the system prompt — without this the editor is a
+        save that changes nothing about what the model reads."""
+        from services.research import prompts as prompt_module
 
-        Without this the house-rules editor would be a fully working save that
-        changes nothing about what the agent is told — the editor would report
-        success while the run silently used the shipped constant.
-        """
-        stub_agent()
-        client.put(
-            "/api/research/style", json={"house_rules": "- THE RUN MUST SEE THIS."}
-        )
-
-        seen: dict = {}
-        original = agent_module.run
-
-        def _capture(request):  # noqa: ANN001
-            seen["request"] = request
-            yield from original(request)
-
-        monkeypatch.setattr(agent_module, "run", _capture)
-        client.post("/api/research/runs", json={"message": "x", "mode": "static"})
-
-        assert "- THE RUN MUST SEE THIS." in seen["request"].house_rules
-
-    def test_a_follow_up_turn_picks_up_a_house_rules_edit(
-        self, client, stub_agent, monkeypatch
-    ):
-        """The rules are the operator's *current* standard, not a run snapshot.
-
-        The opposite of the style instruction, which is snapshotted onto the
-        run: an open conversation should adopt a rules edit made while it sits on
-        screen, or the editor looks broken for the whole thread's life.
-        """
-        stub_agent()
-        created = client.post(
-            "/api/research/runs", json={"message": "x", "mode": "static"}
+        payload = client.put(
+            "/api/research/system-prompts",
+            json={"mode": "generate", "text": "- THE RUN MUST SEE THIS."},
         ).json()
+        assert payload["is_custom"]["generate"] is True
 
-        client.put(
-            "/api/research/style", json={"house_rules": "- EDITED MID THREAD."}
+        composed = prompt_module.compose_system_prompt(
+            tool_specs=[],
+            mode="generate",
+            validity_check=False,
+            max_tools=5,
         )
-
-        seen: dict = {}
-        original = agent_module.run
-
-        def _capture(request):  # noqa: ANN001
-            seen["request"] = request
-            yield from original(request)
-
-        monkeypatch.setattr(agent_module, "run", _capture)
-        client.post(
-            f"/api/research/runs/{created['id']}/messages", json={"message": "again"}
-        )
-
-        assert "- EDITED MID THREAD." in seen["request"].house_rules
+        assert "- THE RUN MUST SEE THIS." in composed
 
     def test_an_empty_follow_up_is_rejected(self, client, stub_agent):
         stub_agent()

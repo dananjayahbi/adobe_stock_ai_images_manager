@@ -1981,17 +1981,19 @@ class TestAgentLoop:
             promises_prompts = "prompt" in continue_action["message"].casefold()
             assert promises_prompts is expect_prompts, mode
 
-    def test_the_system_prompt_carries_the_style_instruction_and_the_tools(
+    def test_the_system_prompt_carries_the_operator_text_and_the_tools(
         self, monkeypatch
     ):
         """A stale tool list is how an agent calls a tool that no longer exists."""
+        from services.research import system_prompts
+
+        system_prompts.save("research", "MY CUSTOM HOUSE STYLE")
         stream = scripted_stream([[("content", "Answer.")]])
         monkeypatch.setattr(agent, "stream_chat", stream)
         agent.collect(
             agent.RunRequest(
                 mode="research",
                 message="x",
-                style_instruction="MY CUSTOM HOUSE STYLE",
                 validity_check=True,
             )
         )
@@ -2682,7 +2684,6 @@ class TestPrompts:
         """The parser's delimiter must not be a guess."""
         system = prompts.compose_system_prompt(
             tool_specs=tools.specs_for(wants_prompts=True, validity_check=False),
-            style_instruction=prompts.DEFAULT_STYLE_INSTRUCTION,
             mode="batch",
             validity_check=False,
             max_tools=10,
@@ -2693,7 +2694,6 @@ class TestPrompts:
     def test_the_system_prompt_forbids_inventing_evidence(self):
         system = prompts.compose_system_prompt(
             tool_specs=[],
-            style_instruction="s",
             mode="research",
             validity_check=True,
             max_tools=5,
@@ -2705,7 +2705,6 @@ class TestPrompts:
         def system_for(mode: str, validity: bool) -> str:
             return prompts.compose_system_prompt(
                 tool_specs=[],
-                style_instruction="s",
                 mode=mode,
                 validity_check=validity,
                 max_tools=5,

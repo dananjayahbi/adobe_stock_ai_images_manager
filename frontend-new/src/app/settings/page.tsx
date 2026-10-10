@@ -10,6 +10,7 @@ import InstallIndicator from "@/components/setup/InstallIndicator";
 import InstallProgressModal from "@/components/setup/InstallProgressModal";
 import GatewaySettingsCard from "@/components/settings/GatewaySettingsCard";
 import MetadataSettingsCard from "@/components/settings/MetadataSettingsCard";
+import SearchSettingsCard from "@/components/settings/SearchSettingsCard";
 import ModelStorageCard from "@/components/setup/ModelStorageCard";
 
 /**
@@ -137,11 +138,13 @@ export default function SettingsPage() {
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="frame-card h-64 animate-pulse bg-parchment-200" />
             <div className="frame-card h-64 animate-pulse bg-parchment-200" />
+            <div className="frame-card h-64 animate-pulse bg-parchment-200" />
           </div>
         ) : (
           <div className="grid gap-4 lg:grid-cols-2">
             <GatewaySettingsCard controller={settingsController} />
             <MetadataSettingsCard controller={settingsController} />
+            <SearchSettingsCard controller={settingsController} />
           </div>
         )}
       </section>
