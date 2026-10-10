@@ -4,7 +4,6 @@ import { useState } from "react";
 import Button from "@/components/ui/Button";
 import SaveProfileDialog from "@/components/process/SaveProfileDialog";
 import { createProfile } from "@/lib/profiles";
-import { canonicalOrder } from "@/lib/steps";
 import type { BatchStep, MediaType } from "@/lib/types";
 
 interface SaveAsProfileControlProps {
@@ -19,8 +18,8 @@ interface SaveAsProfileControlProps {
  * The wizard only *consumes* profiles (ProfileStep), so without this control
  * the only way to create one was the processing page. This wraps the shared
  * name dialog plus the create call in one self-contained unit: it builds the
- * steps in canonical order, posts them, and confirms inline so the operator
- * knows the recipe is now offered back in this wizard.
+ * steps in the operator's run order, posts them, and confirms inline so the
+ * operator knows the recipe is now offered back in this wizard.
  */
 export default function SaveAsProfileControl({
   mediaType,
@@ -31,7 +30,8 @@ export default function SaveAsProfileControl({
 
   if (selected.length === 0) return null;
 
-  const steps: BatchStep[] = canonicalOrder(selected).map((key) => ({
+  // `selected` already arrives in run order — saving must not re-sort it.
+  const steps: BatchStep[] = selected.map((key) => ({
     key,
     config: {},
   }));

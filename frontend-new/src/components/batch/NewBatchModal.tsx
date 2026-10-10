@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createBatch } from "@/lib/batches";
-import { canonicalOrder } from "@/lib/steps";
 import type { BatchStep, MediaType, StepProfile } from "@/lib/types";
 import Modal from "@/components/ui/Modal";
 import Button from "@/components/ui/Button";
@@ -83,14 +82,31 @@ export default function NewBatchModal({ open, onClose }: NewBatchModalProps) {
     setCustomSteps((current) =>
       current.includes(key)
         ? current.filter((k) => k !== key)
+        // Newly picked steps join the *end* of the run order; the operator can
+        // move them in the list beside the picker.
         : [...current, key]
     );
   };
 
+  const moveStep = (key: string, direction: -1 | 1) => {
+    setCustomSteps((current) => {
+      const index = current.indexOf(key);
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= current.length) return current;
+      const next = [...current];
+      [next[index], next[target]] = [next[target], next[index]];
+      return next;
+    });
+  };
+
+  const removeStep = (key: string) => {
+    setCustomSteps((current) => current.filter((k) => k !== key));
+  };
+
   const buildSteps = (): BatchStep[] => {
     if (profile) return profile.steps;
-    const ordered = canonicalOrder(customSteps);
-    return ordered.map((key) => ({ key, config: {} }));
+    // The order the operator arranged is the order that runs.
+    return customSteps.map((key) => ({ key, config: {} }));
   };
 
   const submit = async () => {
@@ -178,6 +194,8 @@ export default function NewBatchModal({ open, onClose }: NewBatchModalProps) {
             mediaType={mediaType}
             selected={customSteps}
             onToggle={toggleStep}
+            onMove={moveStep}
+            onRemove={removeStep}
           />
         )}
 

@@ -74,6 +74,25 @@ export default function ProcessingPage() {
     [batch, refresh]
   );
 
+  /** Move one step up/down and persist the new run order. */
+  const handleMove = useCallback(
+    async (key: string, direction: -1 | 1) => {
+      if (!batch) return;
+      const index = batch.steps.findIndex((step) => step.key === key);
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= batch.steps.length) return;
+      const steps = [...batch.steps];
+      [steps[index], steps[target]] = [steps[target], steps[index]];
+      try {
+        await updateBatch(batch.id, { steps });
+        await refresh();
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [batch, refresh]
+  );
+
   const handleRun = useCallback(async () => {
     if (!batchId) return;
     setBusy(true);
@@ -284,6 +303,8 @@ export default function ProcessingPage() {
                 progress={batch.step_progress?.[step.key] ?? null}
                 editable={editable}
                 onConfigChange={(key, config) => void handleConfigChange(key, config)}
+                onMove={(direction) => void handleMove(step.key, direction)}
+                totalSteps={batch.steps.length}
               />
             ))}
           </ol>

@@ -52,7 +52,8 @@ class TestStepCatalog:
         # Upscale leads so masking happens on the high-res pixels, never on a
         # copy whose alpha has already been resampled.
         assert data["order"] == [
-            "upscale", "bg_remove", "ocr", "refine", "compatibility", "metadata",
+            "upscale", "bg_remove", "ocr", "refine", "compatibility",
+            "pure_white", "metadata",
         ]
         keys = [s["key"] for s in data["steps"]]
         assert keys == data["order"]
@@ -61,7 +62,22 @@ class TestStepCatalog:
         data = client.get("/api/batches/steps", params={"media_type": "raster"}).json()
         keys = {s["key"] for s in data["steps"]}
         assert "bg_remove" not in keys
-        assert keys == {"ocr", "upscale", "refine", "compatibility", "metadata"}
+        assert keys == {
+            "ocr", "upscale", "refine", "compatibility", "pure_white", "metadata"
+        }
+
+    def test_pure_white_is_raster_only(self, client):
+        png = client.get("/api/batches/steps", params={"media_type": "png"}).json()
+        assert "pure_white" not in {s["key"] for s in png["steps"]}
+
+        raster = client.get(
+            "/api/batches/steps", params={"media_type": "raster"}
+        ).json()
+        step = next(s for s in raster["steps"] if s["key"] == "pure_white")
+        config = step["default_config"]
+        assert config["threshold"] == 245
+        assert config["border_min"] == 248
+        assert config["protect_subject"] is True
 
     def test_png_catalog_excludes_refine_and_compatibility(self, client):
         data = client.get("/api/batches/steps", params={"media_type": "png"}).json()
@@ -81,7 +97,7 @@ class TestStepCatalog:
     def test_media_types_block_lists_match_the_order(self, client):
         data = client.get("/api/batches/steps").json()
         assert data["media_types"]["raster"] == [
-            "upscale", "ocr", "refine", "compatibility", "metadata"
+            "upscale", "ocr", "refine", "compatibility", "pure_white", "metadata"
         ]
         assert data["media_types"]["png"] == ["upscale", "bg_remove", "ocr", "metadata"]
 
@@ -117,10 +133,26 @@ class TestBatchCrud:
             ],
         )
         keys = [s["key"] for s in batch["steps"]]
-        assert keys == ["upscale", "ocr"]  # canonical order, junk removed
+        # The requested order is preserved (junk still removed): the operator
+        # arranges the pipeline, the server does not re-sort it.
+        assert keys == ["ocr", "upscale"]
         upscale = next(s for s in batch["steps"] if s["key"] == "upscale")
         assert upscale["config"]["target_long_edge"] == 2560
         assert "gpu_id" in upscale["config"]  # defaults merged in
+
+    def test_a_custom_order_survives_create_and_patch(self, client):
+        created = _create_batch(
+            client,
+            steps=[{"key": "metadata"}, {"key": "ocr"}, {"key": "upscale"}],
+        )
+        assert [s["key"] for s in created["steps"]] == ["metadata", "ocr", "upscale"]
+
+        patched = client.patch(
+            f"/api/batches/{created['id']}",
+            json={"steps": [{"key": "upscale"}, {"key": "metadata"}]},
+        )
+        assert patched.status_code == 200
+        assert [s["key"] for s in patched.json()["steps"]] == ["upscale", "metadata"]
 
     def test_png_batch_rejects_refine(self, client):
         batch = _create_batch(
@@ -287,7 +319,8 @@ class TestStepProfiles:
         )
         assert created.status_code == 201, created.text
         profile = created.json()
-        assert [s["key"] for s in profile["steps"]] == ["upscale", "ocr"]
+        # Profiles keep the order they were saved in, too.
+        assert [s["key"] for s in profile["steps"]] == ["ocr", "upscale"]
 
         listing = client.get(
             "/api/step-profiles", params={"media_type": "raster"}
@@ -372,12 +405,16 @@ class TestPipelineRunner:
         assert "no images" in (row.error or "").lower()
         session.close()
 
-    def test_runner_executes_steps_in_canonical_order(
+    def test_runner_executes_steps_in_the_stored_order(
         self, client, db_session_factory, monkeypatch
     ):
         from services import pipeline_runner
 
-        batch = _make_batch_with_image(client, [{"key": "metadata"}])
+        # Deliberately NOT the catalog's canonical order: the runner must walk
+        # the list the operator saved, not re-sort it.
+        batch = _make_batch_with_image(
+            client, [{"key": "metadata"}, {"key": "ocr"}]
+        )
 
         calls: list[str] = []
 
@@ -391,7 +428,7 @@ class TestPipelineRunner:
         monkeypatch.setattr(pipeline_runner, "_run_stage_step", fake_run)
         pipeline_runner.run_batch(db_session_factory, batch["id"])
 
-        assert calls == ["metadata"]
+        assert calls == ["metadata", "ocr"]
         session = db_session_factory()
         row = session.get(Batch, batch["id"])
         assert row.status == "completed"

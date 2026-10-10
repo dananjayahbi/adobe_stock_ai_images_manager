@@ -7,14 +7,17 @@ and their validation. The API, the pipeline runner, and the frontend (via
 
 Design rules
 ------------
-* **Canonical order is fixed.** The operator picks *which* steps run; the runner
-  always executes them in this order. It starts with ``upscale`` because a
-  super-resolution pass after masking resamples the alpha channel with a
-  bicubic blur and leaves stair-stepped, haloed edges — the fastest way to fail
-  a 100% crop inspection. So: raise the RGB resolution first, *then* mask it at
-  that resolution. ``bg_remove`` precedes OCR so OCR inspects the kept object
-  rather than the background it is about to throw away, and ``metadata`` comes
-  last because it needs the final image.
+* **Canonical order is the default, not a cage.** ``STEP_ORDER`` is the
+  suggested arrangement the picker and processing page open with, and
+  ``normalise_steps`` drops unknown keys - but the operator may reorder steps,
+  and the stored order is what the runner executes. The suggestion starts with
+  ``upscale`` because a super-resolution pass after masking resamples the alpha
+  channel with a bicubic blur and leaves stair-stepped, haloed edges - the
+  fastest way to fail a 100% crop inspection. So: raise the RGB resolution
+  first, *then* mask it at that resolution. ``bg_remove`` precedes OCR so OCR
+  inspects the kept object rather than the background it is about to throw
+  away, ``pure_white`` sits after QC (the clamp must not game the exposure
+  score) and ``metadata`` comes last because it needs the final image.
 * **Configs are validated per step, leniently.** Unknown keys are dropped and
   missing keys fall back to defaults, so a saved profile from an older version
   never crashes a run.
@@ -23,7 +26,7 @@ Design rules
 
 from __future__ import annotations
 
-from config import Settings, settings as default_settings
+from config import Settings
 
 #: Canonical step order. The runner sorts picked steps by this list.
 STEP_ORDER: tuple[str, ...] = (
@@ -32,6 +35,7 @@ STEP_ORDER: tuple[str, ...] = (
     "ocr",
     "refine",
     "compatibility",
+    "pure_white",
     "metadata",
 )
 
@@ -42,6 +46,7 @@ STEP_MEDIA_TYPES: dict[str, tuple[str, ...]] = {
     "upscale": ("raster", "png"),
     "refine": ("raster",),        # writes JPEG — photo pipeline only
     "compatibility": ("raster",),  # 80% photo gate — photo pipeline only
+    "pure_white": ("raster",),     # white-background photos only
     "metadata": ("raster", "png"),
 }
 
@@ -75,6 +80,14 @@ STEP_META: dict[str, dict[str, str]] = {
         "label": "Acceptance QC",
         "description": "Runs the full acceptance algorithm and gates at the 80% threshold.",
     },
+    "pure_white": {
+        "label": "Pure white background",
+        "description": (
+            "Verifies the outer border is near-white, then clamps the background "
+            "to exactly #FFFFFF without touching the subject's highlights — so "
+            "reviewers see a mathematically pure white background."
+        ),
+    },
     "metadata": {
         "label": "Metadata & keywords",
         "description": "Generates titles, descriptions, keywords, and the category.",
@@ -83,8 +96,13 @@ STEP_META: dict[str, dict[str, str]] = {
 
 #: Default config per step. Doubles as the declared config schema.
 def default_step_config(key: str, cfg: Settings | None = None) -> dict:
-    """Return the default configuration for one step."""
-    settings = cfg or default_settings
+    """Return the default configuration for one step.
+
+    ``cfg`` is accepted for call-site symmetry with the other catalog helpers;
+    the metadata delay resolves through :func:`app_settings.resolve_metadata`
+    (stored setting → ``.env``) rather than the ``cfg`` argument, so an
+    operator's Settings change reaches new batches without a restart.
+    """
     if key == "bg_remove":
         return {
             # Segmentation runs on the CUDA execution provider when the local
@@ -112,8 +130,22 @@ def default_step_config(key: str, cfg: Settings | None = None) -> dict:
         }
     if key in ("refine", "compatibility"):
         return {"use_semantic": True}
+    if key == "pure_white":
+        return {
+            # Pixels above this (all channels) in the background clamp to 255.
+            "threshold": 245,
+            # The border must average at least this per channel to count as a
+            # near-white background worth clamping (research: 248-254).
+            "border_min": 248,
+            # Clamp only border-connected pixels: protects specular highlights
+            # on the subject from being blown out.
+            "protect_subject": True,
+        }
     if key == "metadata":
-        return {"delay_seconds": float(getattr(settings, "METADATA_CALL_DELAY_SECONDS", 2.0))}
+        # Stored setting first (Settings page), then .env, then the built-in.
+        from services import app_settings
+
+        return {"delay_seconds": app_settings.resolve_metadata().delay_seconds}
     return {}
 
 
@@ -145,7 +177,9 @@ def normalise_steps(steps: list, media_type: str, cfg: Settings | None = None) -
 
     * drops steps not pickable by ``media_type`` or unknown to the catalog
     * merges each step's config over its defaults (unknown keys dropped)
-    * sorts into canonical order
+    * **preserves the requested order** — the operator arranges the pipeline
+       in the wizard or on the processing page, and the runner executes in
+    this stored order (``STEP_ORDER`` remains the default suggestion)
 
     Raises ``ValueError`` with a readable message when nothing valid remains.
     """
@@ -165,7 +199,8 @@ def normalise_steps(steps: list, media_type: str, cfg: Settings | None = None) -
         merged = {**defaults, **config}
         by_key[key] = {"key": key, "config": merged}
 
-    ordered = [by_key[key] for key in STEP_ORDER if key in by_key]
+    # Insertion order == the operator's requested order (dicts preserve it).
+    ordered = list(by_key.values())
     if not ordered:
         raise ValueError(
             f"No valid steps for media type '{media_type}'. "

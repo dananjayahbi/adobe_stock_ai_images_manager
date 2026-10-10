@@ -23,6 +23,7 @@ def create_data_directories() -> None:
         settings.UPSCALED_DIR,
         settings.CONVERTED_DIR,
         settings.REMOVED_DIR,
+        settings.WHITE_DIR,
     ]:
         Path(dir_path).mkdir(parents=True, exist_ok=True)
 
@@ -144,7 +145,7 @@ def delete_record_files(record, cfg=None) -> list[str]:
     if working_path:
         candidates.append(Path(working_path))
 
-    for attribute in ("REFINED_DIR", "UPSCALED_DIR", "CONVERTED_DIR"):
+    for attribute in ("REFINED_DIR", "UPSCALED_DIR", "CONVERTED_DIR", "WHITE_DIR"):
         directory = getattr(cfg, attribute, None) or getattr(settings, attribute, None)
         if not directory:
             continue

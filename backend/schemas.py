@@ -530,6 +530,11 @@ class SettingsBounds(BaseModel):
     max_brave_rate: float = 10.0
     min_tool_calls: int = 4
     max_tool_calls: int = 80
+    min_keyword_target: int = 5
+    max_keyword_target: int = 49
+    min_metadata_delay: float = 0.0
+    max_metadata_delay: float = 30.0
+    max_extra_instructions: int = 2000
 
 
 class SettingsResponse(BaseModel):
@@ -567,6 +572,12 @@ class SettingsResponse(BaseModel):
     #: The research agent's tool budget. Research calls only — the bookkeeping
     #: tools (`assess_validity`, `check_prompt_similarity`) are not charged.
     research_max_tool_calls: int = 24
+    #: Metadata generation: how many keywords to ask for, the pause between
+    #: calls, and any operator instruction appended to the prompt. Resolved
+    #: values - what the next generation will actually use.
+    metadata_keyword_target: int = 49
+    metadata_delay_seconds: float = 2.0
+    metadata_extra_instructions: str = ""
     defaults: SettingsDefaults
     bounds: SettingsBounds
 
@@ -592,6 +603,10 @@ class SettingsUpdateRequest(BaseModel):
     brave_search_rate_limit: Optional[float] = None
     clear_brave_search_key: bool = False
     research_max_tool_calls: Optional[int] = None
+    #: Metadata generation options (all optional - omitted fields are untouched).
+    metadata_keyword_target: Optional[int] = None
+    metadata_delay_seconds: Optional[float] = None
+    metadata_extra_instructions: Optional[str] = None
 
 
 class SettingsTestRequest(BaseModel):

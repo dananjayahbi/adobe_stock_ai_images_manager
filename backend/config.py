@@ -105,6 +105,8 @@ class Settings(BaseSettings):
     CONVERTED_DIR: Path = STORAGE_ROOT / "converted"
     #: RGBA cut-outs written by the PNG batch background remover.
     REMOVED_DIR: Path = STORAGE_ROOT / "removed"
+    #: Raster images whose background was verified/clamped to pure #FFFFFF.
+    WHITE_DIR: Path = STORAGE_ROOT / "white"
     #: Quality for the PNG -> JPEG conversion. 100 keeps the result visually
     #: lossless so the conversion cannot itself introduce an acceptance issue.
     PNG_CONVERSION_QUALITY: int = 100
@@ -184,7 +186,11 @@ class Settings(BaseSettings):
     #: Stage 6 - pause between LLM metadata calls, in seconds, to dodge rate limits.
     METADATA_CALL_DELAY_SECONDS: float = 2.0
     #: Default number of keywords requested from the metadata model.
-    METADATA_KEYWORD_TARGET: int = 30
+    #: This is the *settings default* (the Settings page can override it per
+    #: install); it must match what the generator actually did before the
+    #: setting existed - up to Adobe's 49-keyword ceiling - or enabling the
+    #: setting would silently halve every batch's keywords.
+    METADATA_KEYWORD_TARGET: int = 49
 
     #: Adobe Stock category assigned when the model's suggestion is unusable.
     DEFAULT_ADOBE_CATEGORY: int = 8

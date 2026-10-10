@@ -652,10 +652,13 @@ def run_metadata_stage(
     Returns the job id.
     """
     cfg = settings or default_settings
+    # Stored setting first (Settings page), then .env, then the built-in.
+    from services import app_settings
+
     pause = (
         float(delay_seconds)
         if delay_seconds is not None
-        else float(getattr(cfg, "METADATA_CALL_DELAY_SECONDS", 2.0))
+        else app_settings.resolve_metadata().delay_seconds
     )
     db = db_session_factory()
     job: Job | None = None

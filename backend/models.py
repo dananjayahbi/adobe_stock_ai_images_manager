@@ -97,7 +97,8 @@ class Batch(Base):
     """A configured, customisable processing run (batch pipeline v2).
 
     A batch declares *what kind of images* it holds (``media_type``) and *which
-    steps run on them* (``steps``: ``[{key, config}]`` in canonical order). The
+    steps run on them* (``steps``: ``[{key, config}]`` in the operator's chosen
+    order — the runner executes the list as stored). The
     operator uploads records into a draft batch, optionally configures each
     step, then runs the whole pipeline in one go.
 

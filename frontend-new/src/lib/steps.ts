@@ -2,19 +2,22 @@
  * Client-side mirror of the backend step catalog.
  *
  * The server's `GET /api/batches/steps` is authoritative (the UI fetches it);
- * this module holds the same canonical order and per-step config field
- * definitions so the config forms render without a round-trip and tests can
- * assert against a local constant. If the two ever disagree, the server wins:
- * `normaliseSteps` output is what gets stored.
+ * this module holds the default order and per-step config field definitions so
+ * the config forms render without a round-trip and tests can assert against a
+ * local constant. If the two ever disagree, the server wins: its
+ * `normalise_steps` output is what gets stored — including the operator's
+ * chosen step order, which is preserved rather than re-sorted.
  */
 import type { MediaType, StepConfig, StepDefinition } from "./types";
 
 /**
- * Canonical execution order — must match pipeline_defs.STEP_ORDER.
+ * Default execution order — must match pipeline_defs.STEP_ORDER.
  *
- * Upscale leads so background removal masks an already-upscaled image: a
- * super-resolution pass *after* matting resamples the alpha channel and is
- * what leaves stair-stepped, haloed edges.
+ * This is the arrangement the picker *opens* with, not a cage: the operator
+ * can reorder steps in the wizard and on the processing page, and the runner
+ * executes the stored order. Upscale leads so background removal masks an
+ * already-upscaled image: a super-resolution pass *after* matting resamples
+ * the alpha channel and is what leaves stair-stepped, haloed edges.
  */
 export const STEP_ORDER = [
   "upscale",
@@ -22,12 +25,13 @@ export const STEP_ORDER = [
   "ocr",
   "refine",
   "compatibility",
+  "pure_white",
   "metadata",
 ] as const;
 
 /** Steps pickable per media type — must match pipeline_defs.STEP_MEDIA_TYPES. */
 export const MEDIA_STEPS: Record<MediaType, string[]> = {
-  raster: ["ocr", "upscale", "refine", "compatibility", "metadata"],
+  raster: ["ocr", "upscale", "refine", "compatibility", "pure_white", "metadata"],
   png: ["upscale", "bg_remove", "ocr", "metadata"],
 };
 
@@ -139,6 +143,30 @@ export const STEP_FIELDS: Record<string, FieldDef[]> = {
       hint: "Adds the model's judgement to the 80% gate.",
     },
   ],
+  pure_white: [
+    {
+      key: "threshold",
+      label: "Clamp threshold",
+      type: "number",
+      min: 200,
+      max: 254,
+      hint: "Background pixels above this become exactly 255. 245 keeps anti-aliased edges intact.",
+    },
+    {
+      key: "border_min",
+      label: "Near-white border minimum",
+      type: "number",
+      min: 240,
+      max: 255,
+      hint: "The outer border must average at least this per channel to be treated as a white background.",
+    },
+    {
+      key: "protect_subject",
+      label: "Protect subject highlights",
+      type: "toggle",
+      hint: "Clamps only the border-connected background, so specular highlights on the subject are never blown out.",
+    },
+  ],
   metadata: [
     {
       key: "delay_seconds",
@@ -159,6 +187,7 @@ export const STEP_LABELS: Record<string, string> = {
   upscale: "Upscale",
   refine: "Refine",
   compatibility: "Acceptance QC",
+  pure_white: "Pure white background",
   metadata: "Metadata & keywords",
 };
 
@@ -168,15 +197,9 @@ export const STEP_BLURBS: Record<string, string> = {
   upscale: "Raises resolution to the Adobe target — runs before masking.",
   refine: "Corrective adjustments until the score clears 80%.",
   compatibility: "Full acceptance algorithm, gates at 80%.",
+  pure_white: "Verifies the border and clamps the background to pure #FFFFFF.",
   metadata: "Titles, description, keywords, category.",
 };
-
-/** Sort a step list into canonical order (server re-does this; belt + braces). */
-export function canonicalOrder(keys: string[]): string[] {
-  return [...keys].sort(
-    (a, b) => STEP_ORDER.indexOf(a as never) - STEP_ORDER.indexOf(b as never)
-  );
-}
 
 /** Default config per step — mirrors pipeline_defs.default_step_config. */
 export function defaultConfig(key: string): StepConfig {
@@ -195,6 +218,8 @@ export function defaultConfig(key: string): StepConfig {
     case "refine":
     case "compatibility":
       return { use_semantic: true };
+    case "pure_white":
+      return { threshold: 245, border_min: 248, protect_subject: true };
     case "metadata":
       return { delay_seconds: 2 };
     default:
@@ -207,7 +232,11 @@ export function stepDefinition(key: string, mediaType: MediaType): StepDefinitio
     key,
     label: STEP_LABELS[key] ?? key,
     description: STEP_BLURBS[key] ?? "",
-    media_types: key === "bg_remove" ? ["png"] : ["raster", "png"],
+    media_types: (MEDIA_STEPS[mediaType].includes(key)
+      ? [mediaType]
+      : (Object.keys(MEDIA_STEPS) as MediaType[]).filter((mt) =>
+          MEDIA_STEPS[mt].includes(key)
+        )) as StepDefinition["media_types"],
     default_config: defaultConfig(key),
   };
 }

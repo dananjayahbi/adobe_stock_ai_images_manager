@@ -123,13 +123,27 @@ def generate_metadata(file_path: str | Path, api_key: str | None = None) -> dict
     if api_key:
         logger.debug("generate_metadata: explicit api_key ignored; using configured gateway key")
 
+    # Resolved per call: a Settings change reaches the very next generation
+    # with no restart (same contract as the LLM endpoint itself).
+    from services import app_settings
+
+    meta_cfg = app_settings.resolve_metadata()
+    keyword_target = min(meta_cfg.keyword_target, MAX_KEYWORDS)
+
     prompt = METADATA_PROMPT.format(
         categories=_CATEGORY_LIST,
         title_target=TITLE_TARGET,
         filename_target=FILENAME_STEM_TARGET,
-        max_keywords=MAX_KEYWORDS,
+        max_keywords=keyword_target,
         high_impact=HIGH_IMPACT_SLOTS,
     )
+    if meta_cfg.extra_instructions:
+        # Appended after .format(): operator text may contain braces, which
+        # would otherwise be interpolated as format placeholders.
+        prompt += (
+            "\n\nAdditional instructions from the operator (follow them unless "
+            "they contradict the rules above):\n" + meta_cfg.extra_instructions
+        )
 
     try:
         data = chat_json(file_path, prompt, temperature=0.2)
@@ -181,8 +195,9 @@ def generate_metadata(file_path: str | Path, api_key: str | None = None) -> dict
             ", ".join(blocked[:5]),
         )
 
-    # Cap at Adobe's keyword ceiling, keeping the most relevant first.
-    cleaned_keywords = cleaned_keywords[:MAX_KEYWORDS]
+    # Cap at the operator's target (never above Adobe's ceiling), keeping the
+    # most relevant first.
+    cleaned_keywords = cleaned_keywords[:keyword_target]
 
     if not title:
         logger.warning("Generated metadata has empty title for %s", file_path)

@@ -3,10 +3,13 @@
 import { useCallback, useState } from "react";
 import Button from "@/components/ui/Button";
 import { useSetupStatus } from "@/hooks/useSetupStatus";
+import { useSettings } from "@/hooks/useSettings";
 import DependencyCard from "@/components/setup/DependencyCard";
 import EnvironmentCard from "@/components/setup/EnvironmentCard";
 import InstallIndicator from "@/components/setup/InstallIndicator";
 import InstallProgressModal from "@/components/setup/InstallProgressModal";
+import GatewaySettingsCard from "@/components/settings/GatewaySettingsCard";
+import MetadataSettingsCard from "@/components/settings/MetadataSettingsCard";
 import ModelStorageCard from "@/components/setup/ModelStorageCard";
 
 /**
@@ -33,6 +36,11 @@ export default function SettingsPage() {
   const [installOpen, setInstallOpen] = useState(false);
   /** Which card fired the in-flight install — scopes its spinner. */
   const [installingKey, setInstallingKey] = useState<string | null>(null);
+
+  // Runtime settings (AI gateway + metadata generation) share one controller:
+  // Save/Reset live in this page's action bar, the cards are pure views.
+  const settingsController = useSettings();
+  const { isSaving, isTesting } = settingsController;
 
   const running = status?.running ?? false;
 
@@ -85,6 +93,58 @@ export default function SettingsPage() {
           {error}
         </p>
       )}
+
+      {/* Runtime settings — the AI gateway metadata generation talks to, plus
+          the generation options themselves. Both save server-side, so a change
+          reaches the next request with no restart. */}
+      <section aria-label="AI settings">
+        <div className="mb-3 flex items-baseline justify-between gap-3">
+          <p className="label-caps">AI settings</p>
+          <div className="flex flex-wrap items-center gap-2">
+            {settingsController.notice && (
+              <span className="text-xs text-olive-400" role="status">
+                {settingsController.notice}
+              </span>
+            )}
+            {settingsController.error && (
+              <span className="text-xs text-oxblood-400" role="alert">
+                {settingsController.error}
+              </span>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              type="button"
+              onClick={() => void settingsController.reset()}
+              disabled={isSaving || isTesting}
+              title="Clear saved overrides and fall back to the .env values"
+            >
+              Reset to defaults
+            </Button>
+            <Button
+              size="sm"
+              type="button"
+              onClick={() => void settingsController.save()}
+              loading={isSaving}
+              disabled={isTesting || settingsController.isLoading}
+            >
+              Save settings
+            </Button>
+          </div>
+        </div>
+
+        {settingsController.isLoading && !settingsController.settings ? (
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="frame-card h-64 animate-pulse bg-parchment-200" />
+            <div className="frame-card h-64 animate-pulse bg-parchment-200" />
+          </div>
+        ) : (
+          <div className="grid gap-4 lg:grid-cols-2">
+            <GatewaySettingsCard controller={settingsController} />
+            <MetadataSettingsCard controller={settingsController} />
+          </div>
+        )}
+      </section>
 
       <section aria-label="Dependencies">
         <div className="mb-3 flex items-baseline justify-between gap-3">

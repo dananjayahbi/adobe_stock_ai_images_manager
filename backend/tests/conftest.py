@@ -75,7 +75,8 @@ def client(db_session_factory, monkeypatch, tmp_path):
     refined = tmp_path / "refined"
     upscaled = tmp_path / "upscaled"
     converted = tmp_path / "converted"
-    for directory in (inbox, thumbnails, ready, refined, upscaled, converted):
+    white = tmp_path / "white"
+    for directory in (inbox, thumbnails, ready, refined, upscaled, converted, white):
         directory.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(settings, "INBOX_DIR", inbox)
     monkeypatch.setattr(settings, "THUMBNAILS_DIR", thumbnails)
@@ -83,6 +84,7 @@ def client(db_session_factory, monkeypatch, tmp_path):
     monkeypatch.setattr(settings, "REFINED_DIR", refined)
     monkeypatch.setattr(settings, "UPSCALED_DIR", upscaled)
     monkeypatch.setattr(settings, "CONVERTED_DIR", converted)
+    monkeypatch.setattr(settings, "WHITE_DIR", white)
 
     # Upload is Stage 1 only and schedules no background work, so no audit
     # stubbing is needed here. Stage operations are dispatched explicitly by

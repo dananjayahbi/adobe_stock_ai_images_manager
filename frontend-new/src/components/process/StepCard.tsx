@@ -15,6 +15,10 @@ interface StepCardProps {
   /** Config can only change while the batch is not running. */
   editable: boolean;
   onConfigChange: (key: string, config: BatchStep["config"]) => void;
+  /** Move this step one position up/down in the run order. */
+  onMove?: (direction: -1 | 1) => void;
+  /** Total steps — used to disable the down arrow on the last card. */
+  totalSteps?: number;
 }
 
 const STATUS_TONE: Record<
@@ -35,6 +39,8 @@ export default function StepCard({
   progress,
   editable,
   onConfigChange,
+  onMove,
+  totalSteps,
 }: StepCardProps) {
   const [open, setOpen] = useState(false);
   const status: StepStatus = progress?.status ?? "pending";
@@ -81,6 +87,29 @@ export default function StepCard({
             </div>
           )}
         </div>
+
+        {editable && onMove && (
+          <span className="flex shrink-0 flex-col gap-1">
+            <button
+              type="button"
+              onClick={() => onMove(-1)}
+              disabled={index === 0}
+              aria-label={`Move ${STEP_LABELS[step.key] ?? step.key} up`}
+              className="flex h-6 w-6 items-center justify-center rounded-sm border border-parchment-500 text-xs text-ink-600 transition-colors hover:border-brass-400 hover:text-ink-900 disabled:cursor-not-allowed disabled:opacity-30"
+            >
+              ↑
+            </button>
+            <button
+              type="button"
+              onClick={() => onMove(1)}
+              disabled={totalSteps != null && index >= totalSteps - 1}
+              aria-label={`Move ${STEP_LABELS[step.key] ?? step.key} down`}
+              className="flex h-6 w-6 items-center justify-center rounded-sm border border-parchment-500 text-xs text-ink-600 transition-colors hover:border-brass-400 hover:text-ink-900 disabled:cursor-not-allowed disabled:opacity-30"
+            >
+              ↓
+            </button>
+          </span>
+        )}
 
         {editable && (
           <Button

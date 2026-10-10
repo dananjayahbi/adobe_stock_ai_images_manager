@@ -1,9 +1,10 @@
-"""Pipeline runner - executes a batch's picked steps in canonical order.
+"""Pipeline runner - executes a batch's picked steps in stored order.
 
 A batch declares ``steps: [{key, config}]``; this module walks them in the
-canonical order defined by :mod:`services.pipeline_defs` and runs each one over
-the batch's records, writing per-step status into ``batch.step_progress`` as it
-goes so the processing page can poll a single endpoint.
+order the operator saved (the catalog's order is only the default suggestion)
+and runs each one over the batch's records, writing per-step status into
+``batch.step_progress`` as it goes so the processing page can poll a single
+endpoint.
 
 Contracts (mirroring the stage orchestrator's):
 
@@ -343,6 +344,94 @@ def _step_upscale_png(
     return _outcome_for_job(job, counts)
 
 
+def _step_pure_white(
+    db_factory: SessionFactory,
+    records: list[ImageRecord],
+    config: dict,
+    job: Job,
+    cfg: Settings,
+) -> dict:
+    """Verify the border is near-white and clamp the background to #FFFFFF.
+
+    A *verification* step: a background that is not near-white is reported and
+    left untouched rather than forced - a colour cast is a retouching problem,
+    not something a levels clamp should silently rewrite.
+    """
+    from services import pure_white
+
+    threshold = int(config.get("threshold") or pure_white.DEFAULT_THRESHOLD)
+    border_min = int(config.get("border_min") or pure_white.DEFAULT_BORDER_MIN)
+    protect = bool(config.get("protect_subject", True))
+
+    out_dir = Path(cfg.WHITE_DIR)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for record in records:
+        item = next(i for i in job.items if i.record_id == record.id)
+        if job.cancel_requested:
+            item.status = "skipped"
+            item.message = "Cancelled."
+            continue
+
+        item.status = "running"
+        item.started_at = time.time()
+        if record.stage in TERMINAL_STAGES:
+            item.status = "skipped"
+            item.message = f"Terminal stage ({record.stage.value})."
+            item.finished_at = time.time()
+            continue
+
+        try:
+            source = _current_path(record)
+            destination = out_dir / f"{record.id}-white.jpg"
+            result = pure_white.ensure_pure_white(
+                source,
+                destination,
+                threshold=threshold,
+                border_min=border_min,
+                protect_subject=protect,
+            )
+            if not result.get("ok"):
+                item.status = "failed"
+                item.message = result.get("reason", "Pure white check failed.")
+                item.finished_at = time.time()
+                continue
+
+            details = dict(record.stage_details or {})
+            details["pure_white"] = result
+            record.stage_details = details  # reassign: JSON mutation is not tracked
+
+            if result.get("applied") and result.get("output_path"):
+                record.working_path = result["output_path"]
+                record_metrics.refresh_delivery_metrics(record, cfg)
+            # The check itself is processing: it is what flips the
+            # `stage_updated_at IS NOT NULL` signal the home/gallery pages read.
+            record.stage_updated_at = utcnow()
+
+            # applied = clamped; verified-but-unchanged = already pure white.
+            # Only a non-white background is reported as skipped.
+            item.status = "succeeded" if result.get("applied") or result.get("verified") else "skipped"
+            item.message = result.get("reason", "")
+            item.progress = 100.0
+            item.finished_at = time.time()
+            db = db_factory()
+            try:
+                db.merge(record)
+                db.commit()
+            finally:
+                db.close()
+        except Exception as exc:  # noqa: BLE001 - one bad file must not stop the batch
+            logger.exception("Pure white clamp failed for record %s", record.id)
+            item.status = "failed"
+            item.message = f"Pure white error: {exc}"
+            item.finished_at = time.time()
+
+    counts = _counts(job)
+    status = STATUS_CANCELLED if job.cancel_requested else STATUS_COMPLETED
+    registry.finish(job, status)
+    return _outcome_for_job(job, counts)
+
+
 # --------------------------------------------------------------------------- #
 # Dispatch to the legacy stage runners
 # --------------------------------------------------------------------------- #
@@ -385,6 +474,7 @@ def _run_stage_step(
 
 _DISPATCH: dict[str, Callable[..., dict]] = {
     "bg_remove": _step_bg_remove,
+    "pure_white": _step_pure_white,
     "ocr": lambda db_f, recs, cfg_d, job, cfg: _run_stage_step(
         "ocr", db_f, [r.id for r in recs], cfg_d, job, cfg
     ),
@@ -464,7 +554,7 @@ def run_batch(
     batch_id: str,
     settings: Settings | None = None,
 ) -> None:
-    """Run every picked step of a batch, in canonical order.
+    """Run every picked step of a batch, in the order the operator stored.
 
     Never raises: a step-level failure marks the batch ``failed`` and stops, so
     a FastAPI background task cannot die silently with the UI polling forever.

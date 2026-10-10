@@ -75,6 +75,17 @@ MAX_BRAVE_RATE = 10.0
 MIN_TOOL_CALLS = 4
 MAX_TOOL_CALLS = 80
 
+#: Bounds on the metadata generator. Adobe's CSV ceiling is 49 keywords; asking
+#: for fewer is an economy choice, never more than the portal accepts.
+MIN_KEYWORD_TARGET = 5
+MAX_KEYWORD_TARGET = 49
+#: Seconds between metadata calls (the gateway routes to free, rate-limited models).
+MIN_METADATA_DELAY = 0.0
+MAX_METADATA_DELAY = 30.0
+#: Operator notes appended verbatim to the metadata prompt. Bounded so a paste
+#: cannot blow past the model's context window.
+MAX_EXTRA_INSTRUCTIONS = 2_000
+
 #: Only http(s) endpoints are accepted; a stray scheme would be a silent no-op.
 _ALLOWED_SCHEMES = ("http://", "https://")
 
@@ -114,6 +125,20 @@ class SearchConfig:
     #: True when Brave will actually be tried first. Derived rather than stored,
     #: so the UI cannot show "active" for a provider with no key.
     uses_brave: bool
+
+
+@dataclass(frozen=True)
+class MetadataConfig:
+    """Effective metadata-generation options (title/keywords/category).
+
+    Kept apart from :class:`LlmConfig` because these are *content* choices -
+    how many keywords to ask for, how hard to pace the calls, what extra
+    instruction to append - not endpoint choices.
+    """
+
+    keyword_target: int
+    delay_seconds: float
+    extra_instructions: str
 
 
 # --------------------------------------------------------------------------- #
@@ -322,6 +347,47 @@ def resolve_search() -> SearchConfig:
     )
 
 
+def _env_keyword_target() -> int:
+    value = _int_or(getattr(settings, "METADATA_KEYWORD_TARGET", 49), 49)
+    return max(MIN_KEYWORD_TARGET, min(MAX_KEYWORD_TARGET, value))
+
+
+def _env_metadata_delay() -> float:
+    try:
+        value = float(getattr(settings, "METADATA_CALL_DELAY_SECONDS", 2.0))
+    except (TypeError, ValueError):
+        value = 2.0
+    return max(MIN_METADATA_DELAY, min(MAX_METADATA_DELAY, value))
+
+
+def resolve_metadata() -> MetadataConfig:
+    """The effective metadata-generation options.
+
+    Resolved per call (not at import) so a Settings change reaches the very next
+    metadata generation with no restart - the same contract as the LLM endpoint.
+    """
+    raw = load_raw()
+
+    target = raw.get("metadata_keyword_target")
+    keyword_target = (
+        max(MIN_KEYWORD_TARGET, min(MAX_KEYWORD_TARGET, _int_or(target, 49)))
+        if target is not None
+        else _env_keyword_target()
+    )
+    delay = raw.get("metadata_delay_seconds")
+    delay_seconds = (
+        max(MIN_METADATA_DELAY, min(MAX_METADATA_DELAY, _clean_delay(delay)))
+        if delay is not None
+        else _env_metadata_delay()
+    )
+    extra = str(raw.get("metadata_extra_instructions") or "").strip()
+    return MetadataConfig(
+        keyword_target=keyword_target,
+        delay_seconds=delay_seconds,
+        extra_instructions=extra[:MAX_EXTRA_INSTRUCTIONS],
+    )
+
+
 def resolve_tool_budget() -> int:
     """The research agent's tool budget, from the store or the built-in default.
 
@@ -359,6 +425,7 @@ def read_public() -> dict[str, Any]:
     raw = load_raw()
     effective = resolve()
     search = resolve_search()
+    meta = resolve_metadata()
     return {
         "llm_base_url": str(raw.get("llm_base_url") or "").strip(),
         "llm_model": str(raw.get("llm_model") or "").strip(),
@@ -381,6 +448,11 @@ def read_public() -> dict[str, Any]:
             "brave" if search.uses_brave else "duckduckgo"
         ),
         "research_max_tool_calls": resolve_tool_budget(),
+        # Metadata generation - content choices, resolved so the UI shows what
+        # the next generation will actually use.
+        "metadata_keyword_target": meta.keyword_target,
+        "metadata_delay_seconds": meta.delay_seconds,
+        "metadata_extra_instructions": meta.extra_instructions,
         "defaults": {
             "llm_base_url": settings.LLM_BASE_URL,
             "llm_model": settings.LLM_MODEL,
@@ -393,6 +465,11 @@ def read_public() -> dict[str, Any]:
             "max_brave_rate": MAX_BRAVE_RATE,
             "min_tool_calls": MIN_TOOL_CALLS,
             "max_tool_calls": MAX_TOOL_CALLS,
+            "min_keyword_target": MIN_KEYWORD_TARGET,
+            "max_keyword_target": MAX_KEYWORD_TARGET,
+            "min_metadata_delay": MIN_METADATA_DELAY,
+            "max_metadata_delay": MAX_METADATA_DELAY,
+            "max_extra_instructions": MAX_EXTRA_INSTRUCTIONS,
         },
     }
 
@@ -465,6 +542,43 @@ def _clean_tool_calls(value: Any) -> int:
     return calls
 
 
+def _clean_keyword_target(value: Any) -> int:
+    """Validate the number of keywords the metadata model is asked for."""
+    target = _int_or(value, -1)
+    if target < MIN_KEYWORD_TARGET or target > MAX_KEYWORD_TARGET:
+        raise SettingsValidationError(
+            f"Keyword target must be between {MIN_KEYWORD_TARGET} and "
+            f"{MAX_KEYWORD_TARGET}."
+        )
+    return target
+
+
+def _clean_delay(value: Any) -> float:
+    """Validate the pause between metadata calls."""
+    try:
+        delay = float(value)
+    except (TypeError, ValueError):
+        raise SettingsValidationError(
+            "Metadata delay must be a number of seconds."
+        ) from None
+    if delay < MIN_METADATA_DELAY or delay > MAX_METADATA_DELAY:
+        raise SettingsValidationError(
+            f"Metadata delay must be between {MIN_METADATA_DELAY:g} and "
+            f"{MAX_METADATA_DELAY:g} seconds."
+        )
+    return delay
+
+
+def _clean_extra_instructions(value: Any) -> str:
+    """Validate the operator's appended metadata instructions."""
+    text = str(value or "").strip()
+    if len(text) > MAX_EXTRA_INSTRUCTIONS:
+        raise SettingsValidationError(
+            f"Extra instructions must be {MAX_EXTRA_INSTRUCTIONS} characters or fewer."
+        )
+    return text
+
+
 def validate(payload: dict[str, Any]) -> None:
     """Check a payload without storing it.
 
@@ -481,6 +595,12 @@ def validate(payload: dict[str, Any]) -> None:
         _clean_brave_rate(payload["brave_search_rate_limit"])
     if payload.get("research_max_tool_calls") is not None:
         _clean_tool_calls(payload["research_max_tool_calls"])
+    if payload.get("metadata_keyword_target") is not None:
+        _clean_keyword_target(payload["metadata_keyword_target"])
+    if payload.get("metadata_delay_seconds") is not None:
+        _clean_delay(payload["metadata_delay_seconds"])
+    if payload.get("metadata_extra_instructions") is not None:
+        _clean_extra_instructions(payload["metadata_extra_instructions"])
     # Enabling Brave without a usable key is refused *here* rather than at search
     # time. A configuration that looks enabled and silently is not is worse than a
     # rejected save: the operator would believe their searches were going through
@@ -598,6 +718,20 @@ def update(payload: dict[str, Any]) -> dict[str, Any]:
     if "research_max_tool_calls" in payload and payload["research_max_tool_calls"] is not None:
         stored["research_max_tool_calls"] = _clean_tool_calls(
             payload["research_max_tool_calls"]
+        )
+
+    # --- metadata generation ------------------------------------------- #
+    if "metadata_keyword_target" in payload and payload["metadata_keyword_target"] is not None:
+        stored["metadata_keyword_target"] = _clean_keyword_target(
+            payload["metadata_keyword_target"]
+        )
+    if "metadata_delay_seconds" in payload and payload["metadata_delay_seconds"] is not None:
+        stored["metadata_delay_seconds"] = _clean_delay(
+            payload["metadata_delay_seconds"]
+        )
+    if "metadata_extra_instructions" in payload and payload["metadata_extra_instructions"] is not None:
+        stored["metadata_extra_instructions"] = _clean_extra_instructions(
+            payload["metadata_extra_instructions"]
         )
 
     save_raw(stored)
