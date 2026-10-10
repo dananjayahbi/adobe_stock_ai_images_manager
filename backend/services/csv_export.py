@@ -217,6 +217,20 @@ def _render(rows: list[list[str]]) -> str:
     return buffer.getvalue()
 
 
+def _row_bytes(row: list[str]) -> int:
+    """Encoded size of one row, measured exactly as `_render` would write it.
+
+    Quoting and the CRLF terminator are decided per row and never depend on a
+    neighbouring row, so a document's size is simply ``header + sum(rows)``.
+    That identity is what lets :func:`build_csv` enforce the 1 MB ceiling in
+    one pass instead of re-rendering the whole file after every dropped row.
+    """
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, quoting=csv.QUOTE_MINIMAL, lineterminator="\r\n")
+    writer.writerow(row)
+    return len(buffer.getvalue().encode("utf-8"))
+
+
 def build_csv(
     records: list[ImageRecord],
     *,
@@ -298,11 +312,18 @@ def build_csv(
     if apply_names:
         asset_naming.patch_download_names(row_records, unique_names)
 
-    # Enforce the 1 MB ceiling by dropping whole rows from the tail. Each probe
-    # re-renders, which is cheap relative to the network round trip that a
-    # rejected upload would cost.
+    # Enforce the 1 MB ceiling by dropping whole rows from the tail.
+    #
+    # Every row's encoded size is measured exactly once and then subtracted as
+    # it is dropped, so this is a single linear pass. The version this replaced
+    # re-rendered and re-encoded the *whole* document after every dropped row:
+    # correct, but quadratic — a 4 MB batch spent minutes re-serialising itself,
+    # which is both a stalled export endpoint and a test that never finished.
+    row_sizes = [_row_bytes(row) for row in rows]
+    total_bytes = len(_render([]).encode("utf-8")) + sum(row_sizes)
     size_trimmed = False
-    while rows and len(_render(rows).encode("utf-8")) > MAX_FILE_SIZE_BYTES:
+    while rows and total_bytes > MAX_FILE_SIZE_BYTES:
+        total_bytes -= row_sizes.pop()
         overflowed.append(row_ids.pop())
         rows.pop()
         size_trimmed = True

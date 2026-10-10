@@ -69,6 +69,7 @@ from routers.batches import router as batches_router
 from routers.step_profiles import router as step_profiles_router
 from routers.groups import router as groups_router
 from routers.gallery_files import router as gallery_files_router
+from routers.setup import router as setup_router
 
 app.include_router(upload_router)
 app.include_router(records_router)
@@ -86,6 +87,7 @@ app.include_router(batches_router)
 app.include_router(step_profiles_router)
 app.include_router(groups_router)
 app.include_router(gallery_files_router)
+app.include_router(setup_router)
 
 # Serve generated thumbnails to the frontend grid.
 create_data_directories()

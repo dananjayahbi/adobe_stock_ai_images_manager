@@ -3,6 +3,10 @@ data/
 backend/storage/
 storage/
 
+# Downloaded model weights (~3.4 GB). Kept in the workspace so they can be
+# copied to another machine, but never committed — see backend/services/model_paths.py.
+models/
+
 # Python
 backend/.venv/
 __pycache__/

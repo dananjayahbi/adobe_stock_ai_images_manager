@@ -1,0 +1,20 @@
+# Optional, heavy dependencies installed at runtime by the in-app installer
+# (POST /api/setup/dependencies/install — see backend/services/model_installer.py).
+#
+# Deliberately NOT part of requirements.txt: together they are ~150 MB, the app
+# starts fine without them, and the Setup modal shows exactly what is missing.
+# The installer runs `pip install` for the entries below into the active venv
+# and caches every downloaded wheel under <repo>/models/wheels so a re-install
+# is fully offline.
+#
+#   torch          PyTorch CPU build, required by ViTMatte
+#                  (install group "torch-cpu", ~124.1 MB)
+#   transformers   ViTMatte runtime: VitMatteForImageMatting and its processor
+#                  (install group "matting-stack", ~22.9 MB)
+#
+# The ViTMatte weights are not a pip package: install group "vitmatte-weights"
+# snapshots hustvl/vitmatte-small-composition-1k from Hugging Face into
+# <repo>/models/huggingface-vitmatte (configs, *.txt and *.safetensors only —
+# the duplicate pytorch_model.bin is excluded).
+torch
+transformers

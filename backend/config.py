@@ -208,3 +208,17 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# ---------------------------------------------------------------------------
+# Model storage
+# ---------------------------------------------------------------------------
+# Every downloaded weight lives under <repo>/models so the whole setup can be
+# copied to another machine as a single folder (see services/model_paths).
+#
+# Applied here, at config import — which happens before anything pulls in rembg
+# or transformers — because those libraries read their home directories the
+# first time they resolve a model. Both rembg variables are defaulted, so an
+# explicitly exported U2NET_HOME still wins.
+from services import model_paths  # noqa: E402  (side-effect import, by design)
+
+model_paths.apply_env()

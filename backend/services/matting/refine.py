@@ -12,9 +12,10 @@ Two refiners:
   model, no network. This is the default.
 * ``vitmatte`` — ViTMatte via ``transformers`` when it is installed. A neural
   matte that solves the unknown band properly (sub-pixel transparency on hairs
-  and antennae). Opt-in: the dependency is heavy and weights download on first
-  use, so the caller must ask for it explicitly. Any failure degrades to
-  ``guided`` with the reason recorded in the returned note.
+  and antennae). Opt-in: the dependency and its weights are installed from the
+  Config page (``/settings``) and stored under ``<repo>/models``, so this
+  refiner runs offline once installed. Any failure degrades to ``guided`` with
+  the reason recorded in the returned note.
 """
 
 from __future__ import annotations
@@ -22,6 +23,8 @@ from __future__ import annotations
 import logging
 
 import numpy as np
+
+from services import model_paths
 
 from .guided import DEFAULT_EPS, DEFAULT_RADIUS, guided_filter, luma
 from .trimap import DEFAULT_RADIUS as DEFAULT_TRIMAP_RADIUS
@@ -31,6 +34,26 @@ logger = logging.getLogger(__name__)
 
 #: Model weights used when ``method="vitmatte"``.
 VITMATTE_MODEL_ID = "hustvl/vitmatte-small-composition-1k"
+
+#: Folder the Config-page installer snapshots the weights into (inside
+#: ``<repo>/models``), so every weight this app uses stays in one copyable tree.
+VITMATTE_LOCAL_DIRNAME = "huggingface-vitmatte"
+
+
+def vitmatte_source() -> str:
+    """Where ``from_pretrained`` should load ViTMatte from.
+
+    The installer downloads the snapshot to
+    ``<repo>/models/huggingface-vitmatte``. A bare repo id would send
+    ``from_pretrained`` to the Hugging Face cache instead — and, on a metered
+    connection, re-download the ~103 MB already sitting on disk. The local
+    copy wins when it actually holds weights; otherwise the repo id is used
+    and the cache takes over.
+    """
+    local = model_paths.MODELS_DIR / VITMATTE_LOCAL_DIRNAME
+    if any(local.glob("*.safetensors")):
+        return str(local)
+    return VITMATTE_MODEL_ID
 
 #: Every refiner is keyed here; unknown methods fall back to ``guided``.
 METHODS = ("guided", "vitmatte", "off")
@@ -74,17 +97,28 @@ def _vitmatte_alpha(rgb: np.ndarray, trimap: np.ndarray) -> np.ndarray:
     """Refine the band with ViTMatte. Raises :class:`MattingUnavailable`."""
     try:
         import torch
-        from transformers import VitMatteForImageMatting, VitMatteImageProcessor
+        from transformers import VitMatteForImageMatting
     except ImportError as exc:  # pragma: no cover - optional dependency
         raise MattingUnavailable(f"transformers/torch not installed ({exc})") from exc
+
+    # transformers >= 5 ships two processor backends for ViTMatte: the default
+    # one is torchvision-backed, and torchvision is *not* a dependency of this
+    # project (it would double the download and drag in its own CUDA wheels).
+    # The PIL/numpy backend is a drop-in, so prefer it and only fall back to
+    # the torchvision class for older transformers that predate it.
+    try:
+        from transformers import VitMatteImageProcessorPil as Processor
+    except ImportError:
+        from transformers import VitMatteImageProcessor as Processor
 
     try:
         from PIL import Image
 
         image = Image.fromarray(np.ascontiguousarray(rgb), "RGB")
         hint = Image.fromarray(np.ascontiguousarray(trimap), "L")
-        processor = VitMatteImageProcessor.from_pretrained(VITMATTE_MODEL_ID)
-        model = VitMatteForImageMatting.from_pretrained(VITMATTE_MODEL_ID)
+        source = vitmatte_source()
+        processor = Processor.from_pretrained(source)
+        model = VitMatteForImageMatting.from_pretrained(source)
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model = model.to(device).eval()
 
