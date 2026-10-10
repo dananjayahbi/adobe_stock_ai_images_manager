@@ -49,8 +49,10 @@ def _create_batch(client, media_type="raster", steps=None, name="Test batch", **
 class TestStepCatalog:
     def test_catalog_lists_all_steps_in_canonical_order(self, client):
         data = client.get("/api/batches/steps").json()
+        # Upscale leads so masking happens on the high-res pixels, never on a
+        # copy whose alpha has already been resampled.
         assert data["order"] == [
-            "bg_remove", "ocr", "upscale", "refine", "compatibility", "metadata",
+            "upscale", "bg_remove", "ocr", "refine", "compatibility", "metadata",
         ]
         keys = [s["key"] for s in data["steps"]]
         assert keys == data["order"]
@@ -64,7 +66,7 @@ class TestStepCatalog:
     def test_png_catalog_excludes_refine_and_compatibility(self, client):
         data = client.get("/api/batches/steps", params={"media_type": "png"}).json()
         keys = {s["key"] for s in data["steps"]}
-        assert keys == {"bg_remove", "ocr", "upscale", "metadata"}
+        assert keys == {"upscale", "bg_remove", "ocr", "metadata"}
 
     def test_invalid_media_type_is_400(self, client):
         response = client.get("/api/batches/steps", params={"media_type": "gif"})
@@ -79,9 +81,19 @@ class TestStepCatalog:
     def test_media_types_block_lists_match_the_order(self, client):
         data = client.get("/api/batches/steps").json()
         assert data["media_types"]["raster"] == [
-            "ocr", "upscale", "refine", "compatibility", "metadata"
+            "upscale", "ocr", "refine", "compatibility", "metadata"
         ]
-        assert data["media_types"]["png"] == ["bg_remove", "ocr", "upscale", "metadata"]
+        assert data["media_types"]["png"] == ["upscale", "bg_remove", "ocr", "metadata"]
+
+    def test_bg_remove_defaults_expose_the_stock_grade_pipeline(self, client):
+        steps = client.get(
+            "/api/batches/steps", params={"media_type": "png"}
+        ).json()["steps"]
+        config = next(s for s in steps if s["key"] == "bg_remove")["default_config"]
+        # GPU segmentation + SOTA model + the three post-mask stages + audit.
+        assert config["gpu"] is True
+        assert config["model"].startswith("birefnet")
+        assert {"matting", "defringe", "sanitize", "edge_check"} <= set(config)
 
 
 # --------------------------------------------------------------------------- #
@@ -105,7 +117,7 @@ class TestBatchCrud:
             ],
         )
         keys = [s["key"] for s in batch["steps"]]
-        assert keys == ["ocr", "upscale"]  # canonical order, junk removed
+        assert keys == ["upscale", "ocr"]  # canonical order, junk removed
         upscale = next(s for s in batch["steps"] if s["key"] == "upscale")
         assert upscale["config"]["target_long_edge"] == 2560
         assert "gpu_id" in upscale["config"]  # defaults merged in
@@ -275,7 +287,7 @@ class TestStepProfiles:
         )
         assert created.status_code == 201, created.text
         profile = created.json()
-        assert [s["key"] for s in profile["steps"]] == ["ocr", "upscale"]
+        assert [s["key"] for s in profile["steps"]] == ["upscale", "ocr"]
 
         listing = client.get(
             "/api/step-profiles", params={"media_type": "raster"}
@@ -432,6 +444,71 @@ class TestPipelineRunner:
         assert seen == ["png"]
         session = db_session_factory()
         assert session.get(Batch, batch["id"]).status == "completed"
+        session.close()
+
+    def test_bg_remove_passes_its_config_and_records_the_dual_matte_audit(
+        self, client, db_session_factory, monkeypatch, tmp_path
+    ):
+        """The step config must reach the model, and the QC must be the audit.
+
+        A stubbed remover proves the *plumbing* (config in, ``dual_matte`` out)
+        without needing ONNX weights in CI; the matting maths itself is covered
+        by ``tests/test_matting.py``.
+        """
+        from services import bg_remover, pipeline_runner
+        from services.bg_remover import RemoveResult
+
+        batch = _create_batch(
+            client,
+            media_type="png",
+            steps=[{"key": "bg_remove", "config": {"model": "u2net", "matting": "off"}}],
+        )
+        client.post(
+            f"/api/batches/{batch['id']}/files",
+            files=[("files", ("a.png", _png_bytes(), "image/png"))],
+        )
+
+        seen: dict = {}
+
+        def fake_remove(source, record_id, *, model, cfg, options):
+            seen["model"] = model
+            seen["options"] = options
+            out = tmp_path / f"{record_id}.png"
+            rgba = np.zeros((64, 64, 4), np.uint8)
+            rgba[16:48, 16:48] = (40, 90, 160, 255)
+            rgba[24:40, 24:40, 3] = 200  # soft band, so the audit has an edge
+            Image.fromarray(rgba, "RGBA").save(out)
+            return RemoveResult(
+                success=True, output_path=str(out), model=model, width=64, height=64
+            )
+
+        monkeypatch.setattr(bg_remover, "remove_background", fake_remove)
+        released: list[bool] = []
+        monkeypatch.setattr(
+            bg_remover, "release_sessions", lambda: released.append(True) or 0
+        )
+        pipeline_runner.run_batch(db_session_factory, batch["id"])
+
+        # The ~1 GB ONNX session must not outlive the step that used it.
+        assert released, "the runner must hand the model back when the step ends"
+
+        assert seen["model"] == "u2net"
+        assert seen["options"]["gpu"] is True  # default merged in
+        assert seen["options"]["matting"] == "off"
+        assert seen["options"]["edge_check"] is True  # default merged in
+
+        session = db_session_factory()
+        row = session.get(Batch, batch["id"])
+        assert row.status == "completed", row.error
+        record = session.query(ImageRecord).filter_by(batch_id=batch["id"]).one()
+        detail = record.stage_details["bg_remove"]
+        assert detail["model"] == "u2net"
+        audit = detail["edge_quality"]
+        assert {"coverage", "fringe_px", "jaggedness", "halo", "verdict"} <= set(audit)
+        assert {"contour_jaggedness", "halo_black", "halo_white", "exposed_on"} <= set(
+            audit["dual_matte"]
+        )
+        assert audit["verdict"] in {"pass", "warn", "fail"}
         session.close()
 
     def test_recover_interrupted_batches(self):

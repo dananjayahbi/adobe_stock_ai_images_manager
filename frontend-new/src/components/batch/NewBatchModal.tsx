@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createBatch } from "@/lib/batches";
+import { canonicalOrder } from "@/lib/steps";
 import type { BatchStep, MediaType, StepProfile } from "@/lib/types";
 import Modal from "@/components/ui/Modal";
 import Button from "@/components/ui/Button";
@@ -88,9 +89,7 @@ export default function NewBatchModal({ open, onClose }: NewBatchModalProps) {
 
   const buildSteps = (): BatchStep[] => {
     if (profile) return profile.steps;
-    const ordered = [...customSteps].sort(
-      (a, b) => STEP_SORT.indexOf(a) - STEP_SORT.indexOf(b)
-    );
+    const ordered = canonicalOrder(customSteps);
     return ordered.map((key) => ({ key, config: {} }));
   };
 
@@ -222,13 +221,3 @@ export default function NewBatchModal({ open, onClose }: NewBatchModalProps) {
     </Modal>
   );
 }
-
-/** Local mirror of the canonical order for sorting selections. */
-const STEP_SORT = [
-  "bg_remove",
-  "ocr",
-  "upscale",
-  "refine",
-  "compatibility",
-  "metadata",
-];

@@ -9,11 +9,17 @@
  */
 import type { MediaType, StepConfig, StepDefinition } from "./types";
 
-/** Canonical execution order — must match pipeline_defs.STEP_ORDER. */
+/**
+ * Canonical execution order — must match pipeline_defs.STEP_ORDER.
+ *
+ * Upscale leads so background removal masks an already-upscaled image: a
+ * super-resolution pass *after* matting resamples the alpha channel and is
+ * what leaves stair-stepped, haloed edges.
+ */
 export const STEP_ORDER = [
+  "upscale",
   "bg_remove",
   "ocr",
-  "upscale",
   "refine",
   "compatibility",
   "metadata",
@@ -22,7 +28,7 @@ export const STEP_ORDER = [
 /** Steps pickable per media type — must match pipeline_defs.STEP_MEDIA_TYPES. */
 export const MEDIA_STEPS: Record<MediaType, string[]> = {
   raster: ["ocr", "upscale", "refine", "compatibility", "metadata"],
-  png: ["bg_remove", "ocr", "upscale", "metadata"],
+  png: ["upscale", "bg_remove", "ocr", "metadata"],
 };
 
 interface FieldDef {
@@ -42,20 +48,53 @@ interface FieldDef {
 export const STEP_FIELDS: Record<string, FieldDef[]> = {
   bg_remove: [
     {
+      key: "gpu",
+      label: "Run on GPU (CUDA)",
+      type: "toggle",
+      hint: "Segmentation on the CUDA provider. Falls back to CPU automatically if CUDA is unavailable.",
+    },
+    {
       key: "model",
       label: "Model",
       type: "select",
       options: [
-        { value: "isnet-general-use", label: "ISNet General (strongest)" },
-        { value: "u2net", label: "U²-Net (fast)" },
+        { value: "birefnet-general", label: "BiRefNet General (fine edges)" },
+        { value: "birefnet-massive", label: "BiRefNet Massive (most detail)" },
+        { value: "birefnet-general-lite", label: "BiRefNet Lite (fast)" },
+        { value: "bria-rmbg", label: "BRIA RMBG (commercial cut-outs)" },
+        { value: "isnet-general-use", label: "ISNet General" },
+        { value: "u2net", label: "U²-Net (fastest)" },
       ],
-      hint: "The cut-out model. ISNet keeps fine edges best.",
+      hint: "BiRefNet keeps hair-thin antennae and root hairs that SOD models sever.",
+    },
+    {
+      key: "matting",
+      label: "Boundary matting",
+      type: "select",
+      options: [
+        { value: "guided", label: "Guided (sub-pixel, offline)" },
+        { value: "vitmatte", label: "ViTMatte (neural, needs transformers)" },
+        { value: "off", label: "Off (raw mask)" },
+      ],
+      hint: "Rebuilds the transition band from an auto-trimap for true sub-pixel alpha.",
+    },
+    {
+      key: "defringe",
+      label: "Defringe edge colour",
+      type: "toggle",
+      hint: "Un-blends the old backdrop's colour out of the soft edge (kills halos).",
+    },
+    {
+      key: "sanitize",
+      label: "Sanitise alpha",
+      type: "toggle",
+      hint: "0.5px choke, alpha < 8 → 0, and stray-island removal.",
     },
     {
       key: "edge_check",
       label: "Check edge quality after removal",
       type: "toggle",
-      hint: "Measures halos, jaggedness and fringe width on the alpha edge.",
+      hint: "Stress-tests the cut-out on pure white and pure black and scores jaggedness and halo.",
     },
   ],
   ocr: [],
@@ -124,9 +163,9 @@ export const STEP_LABELS: Record<string, string> = {
 };
 
 export const STEP_BLURBS: Record<string, string> = {
-  bg_remove: "Cuts the object out and checks the alpha edge.",
+  bg_remove: "Segments, mattes, defringes and audits the cut-out on both canvases.",
   ocr: "Scans for embedded text (text = rejection).",
-  upscale: "Raises resolution to the Adobe target.",
+  upscale: "Raises resolution to the Adobe target — runs before masking.",
   refine: "Corrective adjustments until the score clears 80%.",
   compatibility: "Full acceptance algorithm, gates at 80%.",
   metadata: "Titles, description, keywords, category.",
@@ -143,7 +182,14 @@ export function canonicalOrder(keys: string[]): string[] {
 export function defaultConfig(key: string): StepConfig {
   switch (key) {
     case "bg_remove":
-      return { model: "isnet-general-use", edge_check: true };
+      return {
+        gpu: true,
+        model: "birefnet-general",
+        matting: "guided",
+        defringe: true,
+        sanitize: true,
+        edge_check: true,
+      };
     case "upscale":
       return { model: "4xNomos8kSC", target_long_edge: 3840, gpu_id: 0, tta: false };
     case "refine":

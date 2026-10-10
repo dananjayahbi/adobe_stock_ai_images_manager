@@ -1,8 +1,9 @@
 "use client";
 
 import Badge from "@/components/ui/Badge";
-import { STEP_BLURBS, STEP_LABELS, STEP_ORDER } from "@/lib/steps";
+import { MEDIA_STEPS, STEP_BLURBS, STEP_LABELS, STEP_ORDER } from "@/lib/steps";
 import type { MediaType } from "@/lib/types";
+import SaveAsProfileControl from "./SaveAsProfileControl";
 
 interface Props {
   mediaType: MediaType;
@@ -20,9 +21,7 @@ interface Props {
  */
 export default function StepsPicker({ mediaType, selected, onToggle }: Props) {
   const available = STEP_ORDER.filter((key) =>
-    mediaType === "png"
-      ? ["bg_remove", "ocr", "upscale", "metadata"].includes(key)
-      : key !== "bg_remove"
+    MEDIA_STEPS[mediaType].includes(key)
   );
 
   return (
@@ -78,6 +77,8 @@ export default function StepsPicker({ mediaType, selected, onToggle }: Props) {
           Pick at least one step to continue.
         </p>
       )}
+
+      <SaveAsProfileControl mediaType={mediaType} selected={selected} />
     </div>
   );
 }

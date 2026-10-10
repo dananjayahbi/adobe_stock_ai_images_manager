@@ -35,7 +35,7 @@ from config import Settings, settings as default_settings
 from models import Batch, ImageRecord, PipelineStage, utcnow
 from services import (
     bg_remover,
-    edge_quality,
+    matting,
     pipeline_defs,
     png_ops,
     record_metrics,
@@ -188,7 +188,9 @@ def _step_bg_remove(
         item.started_at = time.time()
         try:
             source = _current_path(record)
-            result = bg_remover.remove_background(source, record.id, model=model, cfg=cfg)
+            result = bg_remover.remove_background(
+                source, record.id, model=model, cfg=cfg, options=config
+            )
             if not result.success:
                 item.status = "failed"
                 item.message = result.reason
@@ -197,8 +199,9 @@ def _step_bg_remove(
 
             detail = dict(result.to_dict())
             if edge_check and result.output_path:
-                report = edge_quality.check_edges(result.output_path)
-                detail["edge_quality"] = report.to_dict()
+                # Dual-matte audit: base edge metrics + the black/white stress
+                # test, so a cut-out that only fails on one canvas is caught.
+                detail["edge_quality"] = matting.audit(result.output_path)
 
             record.working_path = result.output_path
             # Regenerate the thumbnail so the grid shows the cut-out, not the
@@ -221,8 +224,15 @@ def _step_bg_remove(
             record_metrics.refresh_delivery_metrics(record, cfg)
 
             verdict = (detail.get("edge_quality") or {}).get("verdict")
+            stages = detail.get("stages") or {}
+            matting_note = stages.get("matting", {}).get("method")
+            providers = (stages.get("device") or {}).get("providers") or []
+            device = "CUDA" if "CUDAExecutionProvider" in providers else "CPU"
+            label = f"{result.model}/{device}"
+            if matting_note and matting_note != "off":
+                label = f"{label} + {matting_note}"
             item.status = "succeeded"
-            item.message = f"{result.model} · edges {verdict}" if verdict else result.model
+            item.message = f"{label} · edges {verdict}" if verdict else label
             item.finished_at = time.time()
             db = db_factory()
             try:
@@ -235,6 +245,11 @@ def _step_bg_remove(
             item.status = "failed"
             item.message = f"Background removal error: {exc}"
             item.finished_at = time.time()
+
+    # Hand the ~1 GB ONNX session back the moment the step is over: the rest of
+    # the batch (and other jobs on this box) should not pay for a model that is
+    # not running.
+    bg_remover.release_sessions()
 
     counts = _counts(job)
     status = STATUS_CANCELLED if job.cancel_requested else STATUS_COMPLETED
@@ -568,6 +583,10 @@ def run_batch(
             break
         finally:
             monitor.stop()
+            # Whatever happened above — completed, failed or cancelled — no
+            # model stays resident between steps. Sessions are rebuilt lazily
+            # by the next step that needs one.
+            bg_remover.release_sessions()
             with _active_lock:
                 _active_jobs.pop(batch_id, None)
 

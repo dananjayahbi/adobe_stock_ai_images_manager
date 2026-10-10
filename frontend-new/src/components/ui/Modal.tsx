@@ -1,7 +1,18 @@
 "use client";
 
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+
+/**
+ * Ids of the currently open dialogs, outermost first.
+ *
+ * Two dialogs can be open at once (the New Batch wizard opens the save-profile
+ * dialog from inside itself) and both listen on `document` for Escape — without
+ * this stack, one keypress would pop both layers. Only the top of the stack
+ * reacts.
+ */
+const openStack: number[] = [];
+let nextId = 0;
 
 interface ModalProps {
   open: boolean;
@@ -30,19 +41,28 @@ export default function Modal({
   labelledBy,
 }: ModalProps) {
   const [mounted, setMounted] = useState(false);
+  const idRef = useRef<number>(-1);
 
   useEffect(() => setMounted(true), []);
 
   useEffect(() => {
     if (!open) return;
+    const id = ++nextId;
+    idRef.current = id;
+    openStack.push(id);
+
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose();
+      if (event.key !== "Escape") return;
+      if (openStack[openStack.length - 1] !== id) return;
+      onClose();
     };
     document.addEventListener("keydown", onKey);
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.removeEventListener("keydown", onKey);
+      const index = openStack.indexOf(id);
+      if (index >= 0) openStack.splice(index, 1);
       document.body.style.overflow = previousOverflow;
     };
   }, [open, onClose]);

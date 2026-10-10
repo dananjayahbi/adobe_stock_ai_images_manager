@@ -8,8 +8,23 @@ Pillow>=10.2.0
 opencv-python-headless>=4.9.0
 pytesseract>=0.3.10
 
-# Background removal (PNG batches) — needs an ONNX backend at runtime.
-rembg[cpu]>=2.0.50
+# Background removal (PNG batches) — runs on the CUDA execution provider.
+#
+# `rembg[cpu]` would pull the CPU-only `onnxruntime`, which shadows the GPU
+# build (both install the `onnxruntime` module), so the extra is deliberately
+# omitted and the GPU wheel is declared explicitly.
+#
+# PINNED <1.27 ON PURPOSE: since 1.27 the PyPI onnxruntime-gpu wheels are
+# built against CUDA 13, which needs driver R580+. On a CUDA 12.x driver the
+# CUDA provider silently fails to load and inference drops to CPU (or the
+# session init blows up) — so keep the last CUDA-12 line unless the driver
+# moves to CUDA 13. A CPU-only host swaps this for `onnxruntime>=1.26,<1.27`;
+# services/gpu_env.py then reports CUDA unusable and steps fall back to CPU.
+rembg>=2.0.50
+onnxruntime-gpu>=1.26.0,<1.27.0
+# ORT needs cuDNN 9; a CUDA 12.x toolkit only ships cuDNN 8, so the wheel's
+# copy is required and services/gpu_env.py puts it first on PATH.
+nvidia-cudnn-cu12>=9.0
 
 # Testing
 pytest>=8.0.0

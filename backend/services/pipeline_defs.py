@@ -8,8 +8,13 @@ and their validation. The API, the pipeline runner, and the frontend (via
 Design rules
 ------------
 * **Canonical order is fixed.** The operator picks *which* steps run; the runner
-  always executes them in this order (``bg_remove`` must precede OCR so OCR sees
-  the kept object; metadata comes last because it needs the final image).
+  always executes them in this order. It starts with ``upscale`` because a
+  super-resolution pass after masking resamples the alpha channel with a
+  bicubic blur and leaves stair-stepped, haloed edges — the fastest way to fail
+  a 100% crop inspection. So: raise the RGB resolution first, *then* mask it at
+  that resolution. ``bg_remove`` precedes OCR so OCR inspects the kept object
+  rather than the background it is about to throw away, and ``metadata`` comes
+  last because it needs the final image.
 * **Configs are validated per step, leniently.** Unknown keys are dropped and
   missing keys fall back to defaults, so a saved profile from an older version
   never crashes a run.
@@ -22,9 +27,9 @@ from config import Settings, settings as default_settings
 
 #: Canonical step order. The runner sorts picked steps by this list.
 STEP_ORDER: tuple[str, ...] = (
+    "upscale",
     "bg_remove",
     "ocr",
-    "upscale",
     "refine",
     "compatibility",
     "metadata",
@@ -45,8 +50,9 @@ STEP_META: dict[str, dict[str, str]] = {
     "bg_remove": {
         "label": "Background removal",
         "description": (
-            "Cuts the object out of a transparent PNG and checks the cut-out's "
-            "edge quality (halos, jaggedness, leftover fringe)."
+            "Segments the object, rebuilds the boundary with a sub-pixel matte, "
+            "strips backdrop colour from the edge, sanitises the alpha, then "
+            "audits the cut-out on both white and black."
         ),
     },
     "ocr": {
@@ -55,7 +61,11 @@ STEP_META: dict[str, dict[str, str]] = {
     },
     "upscale": {
         "label": "Upscale",
-        "description": "Raises resolution to the Adobe Stock megapixel target.",
+        "description": (
+            "Raises resolution to the Adobe Stock megapixel target. Runs first, "
+            "so background removal masks the high-res pixels rather than a "
+            "resampled copy of them."
+        ),
     },
     "refine": {
         "label": "Refine",
@@ -76,7 +86,22 @@ def default_step_config(key: str, cfg: Settings | None = None) -> dict:
     """Return the default configuration for one step."""
     settings = cfg or default_settings
     if key == "bg_remove":
-        return {"model": "isnet-general-use", "edge_check": True}
+        return {
+            # Segmentation runs on the CUDA execution provider when the local
+            # onnxruntime exposes it; flip this to force the CPU path.
+            "gpu": True,
+            # BiRefNet-general: bilateral-reference segmentation that keeps
+            # hair-thin antennae and root hairs where ISNet/U²Net sever them.
+            "model": "birefnet-general",
+            # Sub-pixel matting on the auto-trimap: guided (offline, always
+            # available) or vitmatte (opt-in, needs transformers).
+            "matting": "guided",
+            # Un-blend backdrop colour out of the soft edge.
+            "defringe": True,
+            # Choke, hard cutoff and stray-island removal.
+            "sanitize": True,
+            "edge_check": True,
+        }
     if key == "upscale":
         # Mirror the Stage 3 defaults the operator already trusts.
         return {
