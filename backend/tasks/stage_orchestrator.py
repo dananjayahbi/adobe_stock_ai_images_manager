@@ -56,9 +56,10 @@ SessionFactory = Callable[[], Session]
 #: Deliberately *not* every terminal stage. A below-threshold (``INCOMPATIBLE``)
 #: record is a judgement call the operator may override, and Stage 6 must still
 #: be able to name it. ``OCR_REJECTED`` is a content-policy violation, so it is
-#: excluded from the deliverable pipeline entirely.
+#: excluded from the deliverable pipeline entirely. ``QUARANTINED`` is a
+#: diversity-gate rejection: it must not be named or uploaded either.
 METADATA_BLOCKED_STAGES: frozenset[PipelineStage] = frozenset(
-    {PipelineStage.OCR_REJECTED}
+    {PipelineStage.OCR_REJECTED, PipelineStage.QUARANTINED}
 )
 
 

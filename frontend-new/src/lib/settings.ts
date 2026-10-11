@@ -23,6 +23,7 @@ export interface SettingsBounds {
   min_metadata_delay: number;
   max_metadata_delay: number;
   max_extra_instructions: number;
+  max_priority_terms_chars: number;
 }
 
 export interface AppSettings {
@@ -41,6 +42,8 @@ export interface AppSettings {
   metadata_keyword_target: number;
   metadata_delay_seconds: number;
   metadata_extra_instructions: string;
+  /** High-intent commercial terms pulled to the first 10 keyword positions. */
+  metadata_priority_terms: string;
   /** Web-search provider for the research agent (Brave → DuckDuckGo fallback). */
   brave_search_enabled: boolean;
   /** Display-only Brave key mask. Never a usable key. */
@@ -75,6 +78,7 @@ export interface SettingsUpdate {
   metadata_keyword_target?: number;
   metadata_delay_seconds?: number;
   metadata_extra_instructions?: string;
+  metadata_priority_terms?: string;
 }
 
 export interface SettingsTestResult {

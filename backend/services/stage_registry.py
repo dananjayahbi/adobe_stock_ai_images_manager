@@ -101,8 +101,11 @@ STAGE_BY_NUMBER: dict[int, StageDefinition] = {
 }
 
 #: Stages that terminate processing; nothing advances out of these automatically.
+#:
+#: ``QUARANTINED`` is set aside by the diversity gate - it is excluded from the
+#: deliverable pipeline but the file is recoverable from ``storage/quarantine``.
 TERMINAL_STAGES: frozenset[PipelineStage] = frozenset(
-    {PipelineStage.OCR_REJECTED, PipelineStage.INCOMPATIBLE}
+    {PipelineStage.OCR_REJECTED, PipelineStage.INCOMPATIBLE, PipelineStage.QUARANTINED}
 )
 
 #: Ordered list used by "run the next stage" batch operations.

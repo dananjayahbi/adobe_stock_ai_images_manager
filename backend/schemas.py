@@ -535,6 +535,7 @@ class SettingsBounds(BaseModel):
     min_metadata_delay: float = 0.0
     max_metadata_delay: float = 30.0
     max_extra_instructions: int = 2000
+    max_priority_terms_chars: int = 2000
 
 
 class SettingsResponse(BaseModel):
@@ -578,6 +579,7 @@ class SettingsResponse(BaseModel):
     metadata_keyword_target: int = 49
     metadata_delay_seconds: float = 2.0
     metadata_extra_instructions: str = ""
+    metadata_priority_terms: str = ""
     defaults: SettingsDefaults
     bounds: SettingsBounds
 
@@ -607,6 +609,7 @@ class SettingsUpdateRequest(BaseModel):
     metadata_keyword_target: Optional[int] = None
     metadata_delay_seconds: Optional[float] = None
     metadata_extra_instructions: Optional[str] = None
+    metadata_priority_terms: Optional[str] = None
 
 
 class SettingsTestRequest(BaseModel):
@@ -672,6 +675,8 @@ class PromptResponse(BaseModel):
     negative_prompt: Optional[str] = None
     params: Optional[dict[str, Any]] = None
     tags: Optional[list[str]] = None
+    #: Folder-style grouping label ("Mantis batch 1"); NULL = ungrouped.
+    group_name: Optional[str] = None
     status: PromptStatus
     used_at: Optional[datetime] = None
     created_at: datetime
@@ -697,6 +702,9 @@ class PromptListResponse(BaseModel):
     bound: int = 0
     unbound: int = 0
     archived: int = 0
+    #: Every group with its prompt count, busiest first — served with the list
+    #: so the filter chips cannot drift from the rows they filter.
+    groups: list[dict[str, Any]] = []
 
 
 class PromptCreateRequest(BaseModel):
@@ -712,18 +720,45 @@ class PromptCreateRequest(BaseModel):
     negative_prompt: Optional[str] = None
     params: Optional[dict[str, Any]] = None
     tags: Optional[list[str]] = None
+    group_name: Optional[str] = None
     status: Optional[PromptStatus] = None
 
 
 class PromptUpdateRequest(BaseModel):
-    """Partial update for a prompt; omitted fields are left untouched."""
+    """Partial update for a prompt; omitted fields are left untouched.
+
+    ``group_name`` sent as ``None`` or ``""`` clears the group (the explicit
+    empty contract the other optional text fields use), while omitting it
+    leaves the folder alone.
+    """
 
     title: Optional[str] = None
     body: Optional[str] = None
     negative_prompt: Optional[str] = None
     params: Optional[dict[str, Any]] = None
     tags: Optional[list[str]] = None
+    group_name: Optional[str] = None
     status: Optional[PromptStatus] = None
+
+
+class PromptGroupAssignRequest(BaseModel):
+    """Add one or more prompts to a group (folder).
+
+    The group is *named here*: folders are created by assignment, not up front,
+    so isolating a batch is one round trip. An empty ``group_name`` removes the
+    prompts from their folder.
+    """
+
+    prompt_ids: list[str]
+    group_name: str = ""
+
+
+class PromptGroupAssignResponse(BaseModel):
+    """How many prompts moved, which ids were unknown, and the resulting name."""
+
+    updated: int = 0
+    missing: list[str] = []
+    group_name: Optional[str] = None
 
 
 class PromptBindRequest(BaseModel):

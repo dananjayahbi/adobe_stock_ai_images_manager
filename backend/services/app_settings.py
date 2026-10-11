@@ -85,6 +85,9 @@ MAX_METADATA_DELAY = 30.0
 #: Operator notes appended verbatim to the metadata prompt. Bounded so a paste
 #: cannot blow past the model's context window.
 MAX_EXTRA_INSTRUCTIONS = 2_000
+#: Upper bound on the operator's priority keyword list - the formatter moves
+#: these to the front, and past ~40 terms the "priority" ordering is noise.
+MAX_PRIORITY_TERMS_CHARS = 2_000
 
 #: Only http(s) endpoints are accepted; a stray scheme would be a silent no-op.
 _ALLOWED_SCHEMES = ("http://", "https://")
@@ -139,6 +142,8 @@ class MetadataConfig:
     keyword_target: int
     delay_seconds: float
     extra_instructions: str
+    #: High-intent commercial terms moved to the first keyword positions.
+    priority_terms: tuple[str, ...] = ()
 
 
 # --------------------------------------------------------------------------- #
@@ -381,10 +386,14 @@ def resolve_metadata() -> MetadataConfig:
         else _env_metadata_delay()
     )
     extra = str(raw.get("metadata_extra_instructions") or "").strip()
+    from services.metadata_formatter import parse_priority_terms
+
+    priority = parse_priority_terms(raw.get("metadata_priority_terms"))
     return MetadataConfig(
         keyword_target=keyword_target,
         delay_seconds=delay_seconds,
         extra_instructions=extra[:MAX_EXTRA_INSTRUCTIONS],
+        priority_terms=priority,
     )
 
 
@@ -453,6 +462,7 @@ def read_public() -> dict[str, Any]:
         "metadata_keyword_target": meta.keyword_target,
         "metadata_delay_seconds": meta.delay_seconds,
         "metadata_extra_instructions": meta.extra_instructions,
+        "metadata_priority_terms": ", ".join(meta.priority_terms),
         "defaults": {
             "llm_base_url": settings.LLM_BASE_URL,
             "llm_model": settings.LLM_MODEL,
@@ -470,6 +480,7 @@ def read_public() -> dict[str, Any]:
             "min_metadata_delay": MIN_METADATA_DELAY,
             "max_metadata_delay": MAX_METADATA_DELAY,
             "max_extra_instructions": MAX_EXTRA_INSTRUCTIONS,
+            "max_priority_terms_chars": MAX_PRIORITY_TERMS_CHARS,
         },
     }
 
@@ -579,6 +590,16 @@ def _clean_extra_instructions(value: Any) -> str:
     return text
 
 
+def _clean_priority_terms(value: Any) -> str:
+    """Validate the operator's comma-separated priority keyword list."""
+    text = str(value or "").strip()
+    if len(text) > MAX_PRIORITY_TERMS_CHARS:
+        raise SettingsValidationError(
+            f"Priority terms must be {MAX_PRIORITY_TERMS_CHARS} characters or fewer."
+        )
+    return text
+
+
 def validate(payload: dict[str, Any]) -> None:
     """Check a payload without storing it.
 
@@ -601,6 +622,8 @@ def validate(payload: dict[str, Any]) -> None:
         _clean_delay(payload["metadata_delay_seconds"])
     if payload.get("metadata_extra_instructions") is not None:
         _clean_extra_instructions(payload["metadata_extra_instructions"])
+    if payload.get("metadata_priority_terms") is not None:
+        _clean_priority_terms(payload["metadata_priority_terms"])
     # Enabling Brave without a usable key is refused *here* rather than at search
     # time. A configuration that looks enabled and silently is not is worse than a
     # rejected save: the operator would believe their searches were going through
@@ -732,6 +755,10 @@ def update(payload: dict[str, Any]) -> dict[str, Any]:
     if "metadata_extra_instructions" in payload and payload["metadata_extra_instructions"] is not None:
         stored["metadata_extra_instructions"] = _clean_extra_instructions(
             payload["metadata_extra_instructions"]
+        )
+    if "metadata_priority_terms" in payload and payload["metadata_priority_terms"] is not None:
+        stored["metadata_priority_terms"] = _clean_priority_terms(
+            payload["metadata_priority_terms"]
         )
 
     save_raw(stored)

@@ -33,6 +33,7 @@ const STAGES: { value: string; label: string }[] = [
   { value: "INCOMPATIBLE", label: "Incompatible" },
   { value: "METADATA_READY", label: "Metadata ready" },
   { value: "PUBLISHED", label: "Published" },
+  { value: "QUARANTINED", label: "Quarantined" },
 ];
 
 const USAGE: { value: GalleryFilters["used"]; label: string }[] = [

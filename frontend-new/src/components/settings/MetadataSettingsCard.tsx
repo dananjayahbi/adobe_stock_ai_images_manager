@@ -99,6 +99,37 @@ export default function MetadataSettingsCard({ controller }: Props) {
             )}
           </p>
         </div>
+
+        <div className="sm:col-span-2">
+          <label htmlFor="set-priority-terms" className="label-caps mb-1 block">
+            Priority keyword terms (top-10)
+          </label>
+          <textarea
+            id="set-priority-terms"
+            rows={3}
+            value={draft.metadata_priority_terms}
+            disabled={isLoading}
+            maxLength={bounds?.max_priority_terms_chars}
+            placeholder="e.g. background, texture, wall art, banner"
+            onChange={(event) =>
+              setField("metadata_priority_terms", event.target.value)
+            }
+            className={`${inputClass} resize-y`}
+          />
+          <p className="mt-1 text-xs text-ink-400">
+            Comma-separated high-intent commercial terms, stably moved to the
+            first 10 keyword positions (Adobe weights them most). Aesthetic hype
+            words — photorealistic, hyper-detailed, trending on artstation — are
+            filtered out automatically.
+            {bounds && (
+              <>
+                {" "}
+                {draft.metadata_priority_terms.length}/
+                {bounds.max_priority_terms_chars} characters.
+              </>
+            )}
+          </p>
+        </div>
       </div>
     </section>
   );

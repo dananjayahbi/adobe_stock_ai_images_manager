@@ -1,0 +1,272 @@
+{
+  "version": 1,
+  "sources": [
+    {
+      "url": "https://pages.adobe.com/stock/en/artisthub/get-inspired",
+      "name": "Adobe Stock Artist Hub (Get Inspired & Seasonal Content Needs)",
+      "priority": 1,
+      "notes": "Official Adobe Stock creator portal showing seasonal content needs and inspiration.",
+      "tags": [
+        "official",
+        "demand",
+        "inspiration"
+      ]
+    },
+    {
+      "url": "https://helpx.adobe.com/stock/contributor/help/artist-hub-migration/creat-what-s-in-demand.html",
+      "name": "Adobe Stock Contributor Help — Create What's in Demand",
+      "priority": 1,
+      "notes": "Official guidance on what content is currently in demand on Adobe Stock.",
+      "tags": [
+        "official",
+        "demand",
+        "guidance"
+      ]
+    },
+    {
+      "url": "https://blog.adobe.com/en/publish/2024/12/03/escaping-surreal-familiar-adobe-2025-creative-trends-forecast",
+      "name": "Adobe 2025 Creative Trends Forecast",
+      "priority": 1,
+      "notes": "Adobe's official annual creative trends forecast.",
+      "tags": [
+        "official",
+        "trends"
+      ]
+    },
+    {
+      "url": "https://blog.adobe.com/en/publish/2026/01/08/halftone-nostalgia-more-2025-top-firefly-prompt-trends",
+      "name": "Adobe Firefly Prompt Trends (Top Keywords & Visual Style Surges)",
+      "priority": 1,
+      "notes": "Top Firefly prompt keywords and visual style surges from Adobe's blog.",
+      "tags": [
+        "official",
+        "trends",
+        "prompts"
+      ]
+    },
+    {
+      "url": "https://contributor.stock.adobe.com/en/insights/best/contributors",
+      "name": "Adobe Stock Top Contributors Insights",
+      "priority": 2,
+      "notes": "Insights from top-performing Adobe Stock contributors.",
+      "tags": [
+        "official",
+        "insights"
+      ]
+    },
+    {
+      "url": "https://community.adobe.com/stock-contributors-36",
+      "name": "Adobe Stock Community Forum (Stock Contributors)",
+      "priority": 2,
+      "notes": "Official Adobe community forum for stock contributors.",
+      "tags": [
+        "community",
+        "forum"
+      ]
+    },
+    {
+      "url": "https://helpx.adobe.com/stock/contributor/submit-your-content/submit-generative-ai-content/generative-ai-content-guidelines.html",
+      "name": "Adobe Stock Generative AI Content Submission Guidelines",
+      "priority": 1,
+      "notes": "Authoritative rules for submitting generative AI content to Adobe Stock.",
+      "tags": [
+        "policy",
+        "guidance",
+        "generative-ai"
+      ]
+    },
+    {
+      "url": "https://helpx.adobe.com/stock/contributor/content-moderation/quality-technical-standards-reasons-content-refusal.html",
+      "name": "Adobe Stock Quality and Technical Standards (Reducing Refusals)",
+      "priority": 1,
+      "notes": "Quality and technical standards that cause refusals — key for reducing rejects.",
+      "tags": [
+        "policy",
+        "quality"
+      ]
+    },
+    {
+      "url": "https://helpx.adobe.com/stock/contributor/content-moderation/common-reasons-content-refusal.html",
+      "name": "Common Reasons for Content Refusal in Adobe Stock",
+      "priority": 1,
+      "notes": "Catalogue of the most common reasons submissions get refused.",
+      "tags": [
+        "policy",
+        "quality"
+      ]
+    },
+    {
+      "url": "https://www.shutterstock.com/explore/contributor-content-briefs",
+      "name": "Shutterstock Contributor Content Briefs",
+      "priority": 1,
+      "notes": "Marketplace briefs describing requested content and demand gaps.",
+      "tags": [
+        "marketplace",
+        "demand"
+      ]
+    },
+    {
+      "url": "https://www.shutterstock.com/explore/the-shot-list",
+      "name": "Shutterstock The Shot List (Monthly Requested Content)",
+      "priority": 1,
+      "notes": "Monthly list of content Shutterstock is actively requesting.",
+      "tags": [
+        "marketplace",
+        "demand"
+      ]
+    },
+    {
+      "url": "https://contributor.freepik.com/blog/new-tool-trendy-keywords/",
+      "name": "Freepik Contributor Trendy Keywords Tool",
+      "priority": 2,
+      "notes": "Tool and announcement for finding trendy keywords on Freepik.",
+      "tags": [
+        "marketplace",
+        "keywords"
+      ]
+    },
+    {
+      "url": "https://contributor.freepik.com/blog/category/trends/",
+      "name": "Freepik Contributor Visual Trends & AI Styles",
+      "priority": 2,
+      "notes": "Ongoing visual trend and AI style posts for Freepik contributors.",
+      "tags": [
+        "marketplace",
+        "trends"
+      ]
+    },
+    {
+      "url": "https://www.gettyimages.com/visualgps/insights",
+      "name": "Getty Images VisualGPS Insights",
+      "priority": 2,
+      "notes": "Research-backed visual trend and audience insights from Getty Images.",
+      "tags": [
+        "marketplace",
+        "insights",
+        "trends"
+      ]
+    },
+    {
+      "url": "https://wirestock.io/blog/ai-generated-content-trends",
+      "name": "Wirestock AI Content Trends & Market Insights",
+      "priority": 2,
+      "notes": "AI-generated content trend reporting and market insights.",
+      "tags": [
+        "marketplace",
+        "trends",
+        "generative-ai"
+      ]
+    },
+    {
+      "url": "https://www.microstockgroup.com/",
+      "name": "MicrostockGroup Contributor Forum",
+      "priority": 3,
+      "notes": "Community forum for microstock contributors across agencies.",
+      "tags": [
+        "community",
+        "forum"
+      ]
+    },
+    {
+      "url": "https://www.pinterestpredicts.com/",
+      "name": "Pinterest Predicts Annual Trend Report",
+      "priority": 2,
+      "notes": "Annual trend report based on Pinterest search demand signals.",
+      "tags": [
+        "trends",
+        "demand"
+      ]
+    },
+    {
+      "url": "https://www.behance.net/galleries",
+      "name": "Behance Curated Design & AI Galleries",
+      "priority": 3,
+      "notes": "Curated galleries for design and AI visual inspiration.",
+      "tags": [
+        "inspiration",
+        "community"
+      ]
+    },
+    {
+      "url": "https://youmind.com/prompts/image",
+      "name": "YouMind Free AI Image Prompts Library",
+      "priority": 3,
+      "notes": "Free library of AI image generation prompts.",
+      "tags": [
+        "prompts",
+        "generative-ai"
+      ]
+    },
+    {
+      "url": "https://prompthero.com/",
+      "name": "PromptHero AI Prompt Search & Database",
+      "priority": 3,
+      "notes": "Searchable database of AI image prompts and showcased results.",
+      "tags": [
+        "prompts",
+        "generative-ai"
+      ]
+    },
+    {
+      "url": "https://bananaprompts.org/trend-prompts",
+      "name": "BananaPrompts Trend Prompts",
+      "priority": 3,
+      "notes": "Currently trending AI image prompts.",
+      "tags": [
+        "prompts",
+        "trends"
+      ]
+    },
+    {
+      "url": "https://tinyart.io/image-prompts/trending",
+      "name": "TinyArt Popular AI Image Generation Prompts",
+      "priority": 3,
+      "notes": "Trending/popular AI image generation prompts.",
+      "tags": [
+        "prompts",
+        "trends"
+      ]
+    },
+    {
+      "url": "https://editingprompt.com/unlimited-new-trending-ai-photo-editing-prompts/",
+      "name": "EditingPrompt Trending AI Photo Editing Prompts",
+      "priority": 3,
+      "notes": "Trending AI photo editing prompts.",
+      "tags": [
+        "prompts",
+        "trends"
+      ]
+    },
+    {
+      "url": "https://www.krea.ai/features/ai-image-generator",
+      "name": "Krea AI Generator & Image Showcase",
+      "priority": 3,
+      "notes": "AI image generator with a showcase of generated results.",
+      "tags": [
+        "prompts",
+        "generative-ai",
+        "inspiration"
+      ]
+    },
+    {
+      "url": "https://lexica.art/",
+      "name": "Lexica Art AI Prompt Search Engine",
+      "priority": 3,
+      "notes": "Search engine for AI image prompts and their results.",
+      "tags": [
+        "prompts",
+        "generative-ai"
+      ]
+    },
+    {
+      "url": "https://www.midjourney.com/showcase",
+      "name": "Midjourney Community Showcase",
+      "priority": 3,
+      "notes": "Official Midjourney gallery of community-generated images.",
+      "tags": [
+        "inspiration",
+        "generative-ai"
+      ]
+    }
+  ]
+}

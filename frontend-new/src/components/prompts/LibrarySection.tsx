@@ -8,6 +8,7 @@
  * monotonic-request loading discipline, and the mutations. Rendered under the
  * library route's page header, so this row carries only the count line.
  */
+import GroupBar from "@/components/prompts/GroupBar";
 import LibraryFilters from "@/components/prompts/LibraryFilters";
 import PromptLibraryGrid from "@/components/prompts/PromptLibraryGrid";
 import type { UsePromptLibraryResult } from "@/hooks/usePromptLibrary";
@@ -53,6 +54,19 @@ export default function LibrarySection({ library }: LibrarySectionProps) {
           onFilterChange={library.setFilter}
           totals={library.totals}
         />
+
+        {/* Folders: chips filter the grid; the bar groups the selection. */}
+        <div className="mt-3 border-t border-dashed border-parchment-400 pt-3">
+          <GroupBar
+            groups={library.groups}
+            activeGroup={library.group}
+            onGroupFilter={library.setGroup}
+            selectedCount={library.selectedIds.length}
+            onClearSelection={library.clearSelection}
+            onGroupSelection={library.groupSelection}
+            isBusy={library.isGrouping}
+          />
+        </div>
       </div>
 
       <div className="mt-4">
@@ -62,6 +76,9 @@ export default function LibrarySection({ library }: LibrarySectionProps) {
           busyPromptId={library.busyPromptId}
           filter={library.filter}
           query={library.query}
+          group={library.group}
+          selectedIds={library.selectedIds}
+          onToggleSelected={library.toggleSelected}
           onToggleStatus={(prompt) =>
             void library.setPromptStatus(
               prompt.id,

@@ -45,6 +45,9 @@ ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("image_records", "batch_id", "VARCHAR(36)"),
     # Gallery folder membership. NULL = ungrouped (top level of the gallery).
     ("image_records", "group_id", "VARCHAR(36)"),
+    # Prompt Library folders. NULL = ungrouped; the name IS the folder, so a
+    # batch can be isolated the moment its prompts are assigned.
+    ("prompts", "group_name", "VARCHAR(120)"),
 ]
 
 # Rows that already reached READY under the old two-column model are already

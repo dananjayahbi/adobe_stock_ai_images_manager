@@ -36,6 +36,12 @@ STEP_ORDER: tuple[str, ...] = (
     "refine",
     "compatibility",
     "pure_white",
+    # After the image is final but before metadata/upload costs are paid:
+    # near-duplicate variants are quarantined here, so they never reach the
+    # CSV, the IPTC embed, or Adobe's "similar content" batch rejection.
+    "diversity_gate",
+    # Last touch on the pixels: tags the file Adobe explicitly requires.
+    "embed_srgb",
     "metadata",
 )
 
@@ -47,6 +53,11 @@ STEP_MEDIA_TYPES: dict[str, tuple[str, ...]] = {
     "refine": ("raster",),        # writes JPEG — photo pipeline only
     "compatibility": ("raster",),  # 80% photo gate — photo pipeline only
     "pure_white": ("raster",),     # white-background photos only
+    # Adobe's similar-content limit applies to every submission type.
+    "diversity_gate": ("raster", "png"),
+    # JPEG gets the ICC tag; transparent PNG carries one too (Adobe requires
+    # sRGB for PNG as well, and the old upscale-only embed never covered it).
+    "embed_srgb": ("raster", "png"),
     "metadata": ("raster", "png"),
 }
 
@@ -88,6 +99,23 @@ STEP_META: dict[str, dict[str, str]] = {
             "reviewers see a mathematically pure white background."
         ),
     },
+    "diversity_gate": {
+        "label": "Batch diversity gate",
+        "description": (
+            "Perceptual-hash gate against Adobe's 3-variants-of-similar-content "
+            "limit: variants above the similarity threshold keep only the best "
+            "few by sharpness; the rest are quarantined for a future batch "
+            "instead of triggering an automatic batch rejection."
+        ),
+    },
+    "embed_srgb": {
+        "label": "Embed sRGB profile",
+        "description": (
+            "Tags the file with an sRGB ICC profile (JPEG injection without "
+            "re-encoding; lossless for PNG). A missing sRGB profile is a "
+            "documented Adobe refusal reason."
+        ),
+    },
     "metadata": {
         "label": "Metadata & keywords",
         "description": "Generates titles, descriptions, keywords, and the category.",
@@ -127,6 +155,10 @@ def default_step_config(key: str, cfg: Settings | None = None) -> dict:
             "target_long_edge": 3840,
             "gpu_id": 0,
             "tta": False,
+            # Kept on by default so the legacy "upscale alone" flow still
+            # exports tagged JPEGs; turn it off when the dedicated embed_srgb
+            # step is in the pipeline (it then owns the final pixels).
+            "embed_srgb": True,
         }
     if key in ("refine", "compatibility"):
         return {"use_semantic": True}
@@ -140,6 +172,25 @@ def default_step_config(key: str, cfg: Settings | None = None) -> dict:
             # Clamp only border-connected pixels: protects specular highlights
             # on the subject from being blown out.
             "protect_subject": True,
+        }
+    if key == "diversity_gate":
+        return {
+            # Two images at or above this perceptual similarity (1.0 = equal)
+            # count as variants of the same subject.
+            "similarity_threshold": 0.85,
+            # Keep the N sharpest variants of each similar cluster; the rest
+            # are quarantined (Adobe tolerates at most 3 similar iterations).
+            "keep_top": 2,
+            # "quarantine" moves the file to storage/quarantine (recoverable);
+            # "reject" keeps the file in place but removes it from the batch's
+            # deliverable set. Both mark the record QUARANTINED.
+            "action": "quarantine",
+        }
+    if key == "embed_srgb":
+        return {
+            # Only used by the PNG/fallback re-encode path; JPEG injection is
+            # lossless and ignores this.
+            "jpeg_quality": 95,
         }
     if key == "metadata":
         # Stored setting first (Settings page), then .env, then the built-in.

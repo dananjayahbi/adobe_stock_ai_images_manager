@@ -13,11 +13,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  assignPromptGroup,
   deletePrompt,
   fetchPrompts,
   updatePrompt,
   type Prompt,
   type PromptFilter,
+  type PromptGroup,
   type PromptListResponse,
 } from "@/lib/prompts";
 
@@ -40,6 +42,18 @@ export interface UsePromptLibraryResult {
   /** The live search-box text (updates immediately). */
   query: string;
   setQuery: (next: string) => void;
+  /** Folder filter — committed immediately (chips, not keystrokes). */
+  group: string;
+  setGroup: (next: string) => void;
+  /** Folders with their counts, for the filter chips. */
+  groups: PromptGroup[];
+  /** Multi-select (batch grouping): ids currently ticked. */
+  selectedIds: string[];
+  toggleSelected: (promptId: string) => void;
+  clearSelection: () => void;
+  /** Move the selection into a folder ("" ungroups). */
+  groupSelection: (groupName: string) => Promise<void>;
+  isGrouping: boolean;
   isLoading: boolean;
   /** Id of the prompt currently being mutated, for row-level spinners. */
   busyPromptId: string | null;
@@ -63,8 +77,12 @@ const EMPTY_TOTALS: PromptLibraryTotals = {
 export function usePromptLibrary(): UsePromptLibraryResult {
   const [prompts, setPrompts] = useState<Prompt[]>([]);
   const [totals, setTotals] = useState<PromptLibraryTotals>(EMPTY_TOTALS);
+  const [groups, setGroups] = useState<PromptGroup[]>([]);
   const [filter, setFilter] = useState<PromptFilter>("all");
   const [query, setQuery] = useState("");
+  const [group, setGroup] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [isGrouping, setGrouping] = useState(false);
   /** The value that actually reaches the request, after the debounce. */
   const [committedQuery, setCommittedQuery] = useState("");
   const [isLoading, setLoading] = useState(true);
@@ -79,6 +97,8 @@ export function usePromptLibrary(): UsePromptLibraryResult {
   filterRef.current = filter;
   const queryRef = useRef(committedQuery);
   queryRef.current = committedQuery;
+  const groupRef = useRef(group);
+  groupRef.current = group;
 
   const reload = useCallback(async (silent = false) => {
     const id = ++requestId.current;
@@ -86,10 +106,12 @@ export function usePromptLibrary(): UsePromptLibraryResult {
     try {
       const listing: PromptListResponse = await fetchPrompts(
         filterRef.current,
-        queryRef.current
+        queryRef.current,
+        groupRef.current
       );
       if (id !== requestId.current) return;
       setPrompts(listing.items);
+      setGroups(listing.groups ?? []);
       // Counts as the server reports them, status axis only — the binding
       // counts are still on the response but no tab reads them.
       setTotals({
@@ -116,12 +138,60 @@ export function usePromptLibrary(): UsePromptLibraryResult {
     return () => clearTimeout(timer);
   }, [query]);
 
-  // Refetch on tab change, committed-search change, or first mount.
+  // Refetch on tab change, committed-search change, folder change, or first
+  // mount. A filter change also clears the selection: ticked prompts may no
+  // longer be on screen, and grouping an invisible selection is a mis-click
+  // waiting to happen.
   useEffect(() => {
+    setSelectedIds([]);
     void reload();
-  }, [reload, filter, committedQuery]);
+  }, [reload, filter, committedQuery, group]);
 
   const clearNotice = useCallback(() => setNotice(null), []);
+
+  const toggleSelected = useCallback((promptId: string) => {
+    setSelectedIds((current) =>
+      current.includes(promptId)
+        ? current.filter((id) => id !== promptId)
+        : [...current, promptId]
+    );
+  }, []);
+
+  const clearSelection = useCallback(() => setSelectedIds([]), []);
+
+  const groupSelection = useCallback(
+    async (groupName: string) => {
+      if (selectedIds.length === 0) return;
+      setGrouping(true);
+      setError(null);
+      try {
+        const result = await assignPromptGroup(selectedIds, groupName);
+        // A selection now outside the active folder filter would be invisible
+        // after the move, so the selection is dropped either way.
+        setSelectedIds([]);
+        await reload(true);
+        const where = result.group_name
+          ? `moved to “${result.group_name}”`
+          : result.updated === 1
+            ? "removed from its folder"
+            : "removed from their folders";
+        const missing =
+          result.missing.length > 0
+            ? ` (${result.missing.length} unknown id${
+                result.missing.length === 1 ? "" : "s"
+              } skipped)`
+            : "";
+        setNotice(
+          `${result.updated} prompt${result.updated === 1 ? "" : "s"} ${where}.${missing}`
+        );
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Could not update the folder.");
+      } finally {
+        setGrouping(false);
+      }
+    },
+    [reload, selectedIds]
+  );
 
   const setPromptStatus = useCallback(
     async (promptId: string, status: Prompt["status"]) => {
@@ -164,6 +234,14 @@ export function usePromptLibrary(): UsePromptLibraryResult {
     setFilter,
     query,
     setQuery,
+    group,
+    setGroup,
+    groups,
+    selectedIds,
+    toggleSelected,
+    clearSelection,
+    groupSelection,
+    isGrouping,
     isLoading,
     busyPromptId,
     error,

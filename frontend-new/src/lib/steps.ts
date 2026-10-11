@@ -26,13 +26,26 @@ export const STEP_ORDER = [
   "refine",
   "compatibility",
   "pure_white",
+  // Quarantine similar variants before metadata/upload costs are paid.
+  "diversity_gate",
+  // Last touch on the pixels: the ICC tag Adobe requires.
+  "embed_srgb",
   "metadata",
 ] as const;
 
 /** Steps pickable per media type — must match pipeline_defs.STEP_MEDIA_TYPES. */
 export const MEDIA_STEPS: Record<MediaType, string[]> = {
-  raster: ["ocr", "upscale", "refine", "compatibility", "pure_white", "metadata"],
-  png: ["upscale", "bg_remove", "ocr", "metadata"],
+  raster: [
+    "ocr",
+    "upscale",
+    "refine",
+    "compatibility",
+    "pure_white",
+    "diversity_gate",
+    "embed_srgb",
+    "metadata",
+  ],
+  png: ["upscale", "bg_remove", "ocr", "diversity_gate", "embed_srgb", "metadata"],
 };
 
 interface FieldDef {
@@ -126,6 +139,13 @@ export const STEP_FIELDS: Record<string, FieldDef[]> = {
       type: "toggle",
       hint: "Slower, marginally cleaner.",
     },
+    {
+      key: "embed_srgb",
+      label: "Embed sRGB profile during upscale",
+      type: "toggle",
+      hint:
+        "Legacy single-pass flow. Turn it off when the dedicated embed_srgb step runs later, so the final pixels are the tagged ones.",
+    },
   ],
   refine: [
     {
@@ -167,6 +187,49 @@ export const STEP_FIELDS: Record<string, FieldDef[]> = {
       hint: "Clamps only the border-connected background, so specular highlights on the subject are never blown out.",
     },
   ],
+  diversity_gate: [
+    {
+      key: "similarity_threshold",
+      label: "Similarity threshold",
+      type: "number",
+      min: 0.5,
+      max: 0.99,
+      step: 0.01,
+      hint: "At or above this (dHash) similarity two images count as the same shot. 0.85 ≈ Adobe's similar-content bar.",
+    },
+    {
+      key: "keep_top",
+      label: "Keep top N variants",
+      type: "number",
+      min: 1,
+      max: 5,
+      hint: "Sharpest variants kept per similar cluster; the rest are quarantined for a future batch.",
+    },
+    {
+      key: "action",
+      label: "Quarantined files",
+      type: "select",
+      options: [
+        {
+          value: "quarantine",
+          label: "Quarantine — move file to storage/quarantine (recoverable)",
+        },
+        { value: "reject", label: "Reject — keep file in place" },
+      ],
+      hint: "Either way the record lands in the terminal Quarantined stage and drops out of metadata, CSV and upload.",
+    },
+  ],
+  embed_srgb: [
+    {
+      key: "jpeg_quality",
+      label: "JPEG quality (fallback re-encode)",
+      type: "number",
+      min: 1,
+      max: 100,
+      hint:
+        "JPEG injection is lossless APP2 segments — this quality is only used if a file must be re-encoded. PNG re-encodes are lossless.",
+    },
+  ],
   metadata: [
     {
       key: "delay_seconds",
@@ -188,6 +251,8 @@ export const STEP_LABELS: Record<string, string> = {
   refine: "Refine",
   compatibility: "Acceptance QC",
   pure_white: "Pure white background",
+  diversity_gate: "Batch diversity gate",
+  embed_srgb: "Embed sRGB profile",
   metadata: "Metadata & keywords",
 };
 
@@ -198,6 +263,9 @@ export const STEP_BLURBS: Record<string, string> = {
   refine: "Corrective adjustments until the score clears 80%.",
   compatibility: "Full acceptance algorithm, gates at 80%.",
   pure_white: "Verifies the border and clamps the background to pure #FFFFFF.",
+  diversity_gate:
+    "Clusters near-duplicate variants, keeps the sharpest few, quarantines the rest.",
+  embed_srgb: "Tags the file with the sRGB ICC profile Adobe requires.",
   metadata: "Titles, description, keywords, category.",
 };
 
@@ -214,12 +282,22 @@ export function defaultConfig(key: string): StepConfig {
         edge_check: true,
       };
     case "upscale":
-      return { model: "4xNomos8kSC", target_long_edge: 3840, gpu_id: 0, tta: false };
+      return {
+        model: "4xNomos8kSC",
+        target_long_edge: 3840,
+        gpu_id: 0,
+        tta: false,
+        embed_srgb: true,
+      };
     case "refine":
     case "compatibility":
       return { use_semantic: true };
     case "pure_white":
       return { threshold: 245, border_min: 248, protect_subject: true };
+    case "diversity_gate":
+      return { similarity_threshold: 0.85, keep_top: 2, action: "quarantine" };
+    case "embed_srgb":
+      return { jpeg_quality: 95 };
     case "metadata":
       return { delay_seconds: 2 };
     default:

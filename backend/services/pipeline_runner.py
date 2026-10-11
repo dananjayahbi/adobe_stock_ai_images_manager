@@ -23,6 +23,7 @@ step actually does.
 from __future__ import annotations
 
 import logging
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -36,6 +37,7 @@ from config import Settings, settings as default_settings
 from models import Batch, ImageRecord, PipelineStage, utcnow
 from services import (
     bg_remover,
+    diversity_gate,
     matting,
     pipeline_defs,
     png_ops,
@@ -432,6 +434,190 @@ def _step_pure_white(
     return _outcome_for_job(job, counts)
 
 
+def _step_diversity_gate(
+    db_factory: SessionFactory,
+    records: list[ImageRecord],
+    config: dict,
+    job: Job,
+    cfg: Settings,
+) -> dict:
+    """Perceptual similarity gating: keep the sharpest variants, quarantine the rest.
+
+    Scores every record in the batch with dHash similarity + Laplacian
+    sharpness, clusters near-duplicates, and keeps only the top ``keep_top``
+    of each cluster. Set-aside records move to ``storage/quarantine`` (action
+    "quarantine", recoverable) or stay in place (action "reject"); either way
+    they land in the terminal ``QUARANTINED`` stage, so metadata, CSV export
+    and publish all skip them automatically.
+    """
+    threshold = float(config.get("similarity_threshold") or diversity_gate.DEFAULT_SIMILARITY_THRESHOLD)
+    keep_top = int(config.get("keep_top") if config.get("keep_top") is not None else diversity_gate.DEFAULT_KEEP_TOP)
+    action = str(config.get("action") or "quarantine")
+
+    # Score only what is eligible: terminal/cancelled records are out of the
+    # batch already and unreadable files are kept by the gate itself.
+    candidates = [
+        record
+        for record in records
+        if record.stage not in TERMINAL_STAGES
+        and not (record.stage_details or {}).get("diversity_gate")
+    ]
+    entries = [(record.id, _current_path(record)) for record in candidates]
+    plan = diversity_gate.gate_batch(entries, threshold=threshold, keep_top=keep_top)
+
+    quarantine_dir = Path(cfg.QUARANTINE_DIR)
+    if action == "quarantine":
+        quarantine_dir.mkdir(parents=True, exist_ok=True)
+
+    for record in records:
+        item = next(i for i in job.items if i.record_id == record.id)
+        if job.cancel_requested:
+            item.status = "skipped"
+            item.message = "Cancelled."
+            continue
+
+        item.status = "running"
+        item.started_at = time.time()
+        if record.stage in TERMINAL_STAGES:
+            item.status = "skipped"
+            item.message = f"Terminal stage ({record.stage.value})."
+            item.finished_at = time.time()
+            continue
+
+        decision = plan.get(record.id)
+        if decision is None:
+            item.status = "skipped"
+            item.message = "Already gated in a previous run."
+            item.finished_at = time.time()
+            continue
+
+        try:
+            if decision["keep"]:
+                details = dict(record.stage_details or {})
+                details["diversity_gate"] = decision
+                record.stage_details = details
+                record.stage_updated_at = utcnow()
+                item.status = "succeeded"
+                item.message = decision["reason"]
+                item.progress = 100.0
+                item.finished_at = time.time()
+            else:
+                moved_to: str | None = None
+                if action == "quarantine":
+                    source = _current_path(record)
+                    if source.exists():
+                        destination = quarantine_dir / f"{record.id}-{source.name}"
+                        shutil.move(str(source), str(destination))
+                        moved_to = str(destination)
+                        record.working_path = moved_to
+                details = dict(record.stage_details or {})
+                details["diversity_gate"] = {**decision, "action": action, "moved_to": moved_to}
+                record.stage_details = details
+                record.stage = PipelineStage.QUARANTINED
+                record.queued_stage = None
+                record.stage_updated_at = utcnow()
+                item.status = "succeeded"
+                item.message = decision["reason"]
+                item.progress = 100.0
+                item.finished_at = time.time()
+
+            db = db_factory()
+            try:
+                db.merge(record)
+                db.commit()
+            finally:
+                db.close()
+        except Exception as exc:  # noqa: BLE001 - one bad file must not stop the batch
+            logger.exception("Diversity gate failed for record %s", record.id)
+            item.status = "failed"
+            item.message = f"Diversity gate error: {exc}"
+            item.finished_at = time.time()
+
+    counts = _counts(job)
+    status = STATUS_CANCELLED if job.cancel_requested else STATUS_COMPLETED
+    registry.finish(job, status)
+    return _outcome_for_job(job, counts)
+
+
+def _step_embed_srgb(
+    db_factory: SessionFactory,
+    records: list[ImageRecord],
+    config: dict,
+    job: Job,
+    cfg: Settings,
+) -> dict:
+    """Embed a verified sRGB ICC profile into JPEG/PNG working files.
+
+    A separate step so PNG batches get it too (the upscale path only embeds
+    for JPEG) and so an operator can place it after the last pixel-changing
+    step. Lossless for JPEG (APP2 segment injection); PNG re-encodes
+    losslessly with the profile appended. Already-tagged files skip.
+    """
+    from services.srgb_profile import ensure_srgb_profile
+
+    quality = int(config.get("jpeg_quality") or 95)
+    out_dir = Path(cfg.SRGB_DIR)
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    for record in records:
+        item = next(i for i in job.items if i.record_id == record.id)
+        if job.cancel_requested:
+            item.status = "skipped"
+            item.message = "Cancelled."
+            continue
+
+        item.status = "running"
+        item.started_at = time.time()
+        if record.stage in TERMINAL_STAGES:
+            item.status = "skipped"
+            item.message = f"Terminal stage ({record.stage.value})."
+            item.finished_at = time.time()
+            continue
+
+        try:
+            source = _current_path(record)
+            destination = out_dir / f"{record.id}-srgb{source.suffix.lower() or '.jpg'}"
+            result = ensure_srgb_profile(source, destination, quality=quality)
+
+            details = dict(record.stage_details or {})
+            details["embed_srgb"] = result
+            record.stage_details = details  # reassign: JSON mutation is not tracked
+
+            if result.get("applied") and result.get("output_path"):
+                record.working_path = result["output_path"]
+                record_metrics.refresh_delivery_metrics(record, cfg)
+            record.stage_updated_at = utcnow()
+
+            if not result.get("ok"):
+                item.status = "failed"
+                item.message = result.get("reason", "sRGB embed failed.")
+            elif result.get("applied"):
+                item.status = "succeeded"
+                item.message = result.get("reason", "sRGB profile embedded.")
+            else:
+                # Already tagged: nothing to rewrite.
+                item.status = "skipped"
+                item.message = result.get("reason", "Already sRGB-tagged.")
+            item.progress = 100.0
+            item.finished_at = time.time()
+            db = db_factory()
+            try:
+                db.merge(record)
+                db.commit()
+            finally:
+                db.close()
+        except Exception as exc:  # noqa: BLE001 - one bad file must not stop the batch
+            logger.exception("sRGB embed failed for record %s", record.id)
+            item.status = "failed"
+            item.message = f"sRGB embed error: {exc}"
+            item.finished_at = time.time()
+
+    counts = _counts(job)
+    status = STATUS_CANCELLED if job.cancel_requested else STATUS_COMPLETED
+    registry.finish(job, status)
+    return _outcome_for_job(job, counts)
+
+
 # --------------------------------------------------------------------------- #
 # Dispatch to the legacy stage runners
 # --------------------------------------------------------------------------- #
@@ -475,6 +661,8 @@ def _run_stage_step(
 _DISPATCH: dict[str, Callable[..., dict]] = {
     "bg_remove": _step_bg_remove,
     "pure_white": _step_pure_white,
+    "diversity_gate": _step_diversity_gate,
+    "embed_srgb": _step_embed_srgb,
     "ocr": lambda db_f, recs, cfg_d, job, cfg: _run_stage_step(
         "ocr", db_f, [r.id for r in recs], cfg_d, job, cfg
     ),

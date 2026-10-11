@@ -17,12 +17,28 @@ interface PromptLibraryGridProps {
   busyPromptId: string | null;
   filter: PromptFilter;
   query: string;
+  /** Active folder filter ("" = none) — named in the empty state. */
+  group: string;
+  /** Ids ticked for batch grouping. */
+  selectedIds: string[];
+  onToggleSelected: (promptId: string) => void;
   onToggleStatus: (prompt: Prompt) => void;
   onDelete: (prompt: Prompt) => void;
 }
 
 /** Empty-state copy per filter, so the panel never says "no prompts" wrongly. */
-function emptyCopy(filter: PromptFilter, query: string): { title: string; body: string } {
+function emptyCopy(
+  filter: PromptFilter,
+  query: string,
+  group: string
+): { title: string; body: string } {
+  if (group.trim()) {
+    return {
+      title: `“${group.trim()}” is empty`,
+      body:
+        "No prompts in this folder right now — pick some cards and move them in, or clear the folder filter.",
+    };
+  }
   if (query.trim()) {
     return {
       title: "No matches",
@@ -51,6 +67,9 @@ export default function PromptLibraryGrid({
   busyPromptId,
   filter,
   query,
+  group,
+  selectedIds,
+  onToggleSelected,
   onToggleStatus,
   onDelete,
 }: PromptLibraryGridProps) {
@@ -65,7 +84,7 @@ export default function PromptLibraryGrid({
   }
 
   if (prompts.length === 0) {
-    const copy = emptyCopy(filter, query);
+    const copy = emptyCopy(filter, query, group);
     return <EmptyState title={copy.title} body={copy.body} glyph="№" />;
   }
 
@@ -76,6 +95,8 @@ export default function PromptLibraryGrid({
           key={prompt.id}
           prompt={prompt}
           isBusy={busyPromptId === prompt.id}
+          isSelected={selectedIds.includes(prompt.id)}
+          onToggleSelected={onToggleSelected}
           onToggleStatus={onToggleStatus}
           onDelete={onDelete}
         />

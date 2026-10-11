@@ -36,6 +36,7 @@ class PipelineStage(str, enum.Enum):
        INCOMPATIBLE    - could not reach the acceptance gate (terminal)
     6. METADATA_READY  - title/description/keywords generated
     7. PUBLISHED       - staged for Adobe Stock upload
+       QUARANTINED     - set aside by the diversity gate (terminal)
     """
     COLLECTED = "COLLECTED"
     OCR_CLEAR = "OCR_CLEAR"
@@ -46,6 +47,7 @@ class PipelineStage(str, enum.Enum):
     INCOMPATIBLE = "INCOMPATIBLE"
     METADATA_READY = "METADATA_READY"
     PUBLISHED = "PUBLISHED"
+    QUARANTINED = "QUARANTINED"
 
 
 #: Stage -> the stage number it belongs to (1-7).
@@ -59,6 +61,7 @@ STAGE_NUMBERS: dict["PipelineStage", int] = {
     PipelineStage.INCOMPATIBLE: 5,
     PipelineStage.METADATA_READY: 6,
     PipelineStage.PUBLISHED: 7,
+    PipelineStage.QUARANTINED: 5,
 }
 
 #: Human-readable stage names for the UI.
@@ -72,6 +75,7 @@ STAGE_LABELS: dict["PipelineStage", str] = {
     PipelineStage.INCOMPATIBLE: "Incompatible",
     PipelineStage.METADATA_READY: "Metadata Ready",
     PipelineStage.PUBLISHED: "Published",
+    PipelineStage.QUARANTINED: "Quarantined",
 }
 
 
@@ -204,6 +208,11 @@ class Prompt(Base):
     params: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     #: Optional grouping label, e.g. "Ayurvedic herbs".
     tags: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    #: Folder-style grouping for the library, e.g. "Mantis batch 1" — the
+    #: operator uses prompts in batches and wants to isolate each one.
+    #: NULL = ungrouped. A plain label rather than an id: folders are created
+    #: by naming them at assignment time, not up front.
+    group_name: Mapped[str | None] = mapped_column(String(120), nullable=True, index=True)
 
     status: Mapped[PromptStatus] = mapped_column(
         Enum(PromptStatus), default=PromptStatus.DRAFT, nullable=False

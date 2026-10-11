@@ -9,6 +9,14 @@ logger = logging.getLogger(__name__)
 
 EXIFTOOL_TIMEOUT = 30  # seconds
 
+#: IPTC controlled-vocabulary URI declaring the asset as algorithmically
+#: generated. Adobe requires AI-generated submissions to carry this Digital
+#: Source Type; it is a disclosure, not a flag to hide, so it is written on
+#: every embed at this single point (the approval -> delivered-file step).
+DIGITAL_SOURCE_TYPE_TRAINED = (
+    "http://cv.iptc.org/newscodes/digitalsourcetype/trainedAlgorithmicMedia"
+)
+
 # Well-known install locations, checked when `exiftool` is not on PATH
 # (e.g. the process was started before PATH was updated).
 _FALLBACK_PATHS = (
@@ -97,6 +105,13 @@ def embed_metadata(file_path: str | Path, metadata_dict: dict) -> bool:
         if kw_str:
             cmd.append(f"-IPTC:Keywords={kw_str}")
             cmd.append(f"-XMP-dc:Subject={kw_str}")
+
+    # Mandatory AI disclosure: IPTC DigitalSourceType = trainedAlgorithmicMedia.
+    # The writable tag lives in XMP-iptcExt (verified against ExifTool 13.x);
+    # the value is the IPTC controlled-vocabulary URI, not the short name.
+    cmd.append(
+        f"-XMP-iptcExt:DigitalSourceType={DIGITAL_SOURCE_TYPE_TRAINED}"
+    )
 
     # File path must be the final argument
     cmd.append(str(abs_path))

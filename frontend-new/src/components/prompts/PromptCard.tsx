@@ -7,7 +7,7 @@
  * The status badge reads `status`; `bound_count` stays on the type (the server
  * sends it) but is not rendered — the library no longer surfaces bindings.
  */
-import { Check, Copy, Eye, EyeOff, Trash2 } from "lucide-react";
+import { Check, Copy, Eye, EyeOff, Folder, Square, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import Badge from "@/components/ui/Badge";
@@ -19,6 +19,9 @@ interface PromptCardProps {
   prompt: Prompt;
   /** True while this prompt's own mutation is in flight. */
   isBusy: boolean;
+  /** Batch-grouping selection. */
+  isSelected: boolean;
+  onToggleSelected: (promptId: string) => void;
   onToggleStatus: (prompt: Prompt) => void;
   onDelete: (prompt: Prompt) => void;
 }
@@ -26,6 +29,8 @@ interface PromptCardProps {
 export default function PromptCard({
   prompt,
   isBusy,
+  isSelected,
+  onToggleSelected,
   onToggleStatus,
   onDelete,
 }: PromptCardProps) {
@@ -61,13 +66,47 @@ export default function PromptCard({
     );
 
   return (
-    <article className="frame-card flex flex-col px-4 py-3">
+    <article
+      className={`frame-card flex flex-col px-4 py-3 transition-colors ${
+        isSelected ? "border-oxblood-500/70 ring-1 ring-oxblood-400/40" : ""
+      }`}
+    >
       <div className="flex items-start justify-between gap-2">
-        <h3 className="font-display text-base leading-snug text-ink-800">
-          {prompt.title}
-        </h3>
+        <div className="flex min-w-0 items-start gap-2">
+          {/* Selection toggle: the whole card is busy with mutations, so the
+              tick lives in its own hit area rather than the whole card. */}
+          <button
+            type="button"
+            role="checkbox"
+            aria-checked={isSelected}
+            aria-label={
+              isSelected
+                ? `Deselect “${prompt.title}”`
+                : `Select “${prompt.title}” for grouping`
+            }
+            onClick={() => onToggleSelected(prompt.id)}
+            className="mt-0.5 shrink-0 text-ink-400 transition-colors hover:text-oxblood-400"
+          >
+            {isSelected ? (
+              <span className="flex h-4 w-4 items-center justify-center rounded-sm border border-oxblood-500 bg-oxblood-500/15">
+                <Check className="h-3 w-3 text-oxblood-400" aria-hidden />
+              </span>
+            ) : (
+              <Square className="h-4 w-4" aria-hidden />
+            )}
+          </button>
+          <h3 className="font-display text-base leading-snug text-ink-800">
+            {prompt.title}
+          </h3>
+        </div>
         {statusBadge}
       </div>
+
+      {prompt.group_name && (
+        <p className="mt-1.5 flex items-center gap-1 font-stamp text-[11px] uppercase tracking-[0.14em] text-brass-300">
+          <Folder className="h-3 w-3" aria-hidden /> {prompt.group_name}
+        </p>
+      )}
 
       <div className="mt-2 flex-1">
         <p

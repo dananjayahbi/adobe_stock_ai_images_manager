@@ -53,7 +53,7 @@ class TestStepCatalog:
         # copy whose alpha has already been resampled.
         assert data["order"] == [
             "upscale", "bg_remove", "ocr", "refine", "compatibility",
-            "pure_white", "metadata",
+            "pure_white", "diversity_gate", "embed_srgb", "metadata",
         ]
         keys = [s["key"] for s in data["steps"]]
         assert keys == data["order"]
@@ -63,7 +63,8 @@ class TestStepCatalog:
         keys = {s["key"] for s in data["steps"]}
         assert "bg_remove" not in keys
         assert keys == {
-            "ocr", "upscale", "refine", "compatibility", "pure_white", "metadata"
+            "ocr", "upscale", "refine", "compatibility", "pure_white",
+            "diversity_gate", "embed_srgb", "metadata",
         }
 
     def test_pure_white_is_raster_only(self, client):
@@ -82,7 +83,9 @@ class TestStepCatalog:
     def test_png_catalog_excludes_refine_and_compatibility(self, client):
         data = client.get("/api/batches/steps", params={"media_type": "png"}).json()
         keys = {s["key"] for s in data["steps"]}
-        assert keys == {"upscale", "bg_remove", "ocr", "metadata"}
+        assert keys == {
+            "upscale", "bg_remove", "ocr", "diversity_gate", "embed_srgb", "metadata"
+        }
 
     def test_invalid_media_type_is_400(self, client):
         response = client.get("/api/batches/steps", params={"media_type": "gif"})
@@ -97,9 +100,12 @@ class TestStepCatalog:
     def test_media_types_block_lists_match_the_order(self, client):
         data = client.get("/api/batches/steps").json()
         assert data["media_types"]["raster"] == [
-            "upscale", "ocr", "refine", "compatibility", "pure_white", "metadata"
+            "upscale", "ocr", "refine", "compatibility", "pure_white",
+            "diversity_gate", "embed_srgb", "metadata",
         ]
-        assert data["media_types"]["png"] == ["upscale", "bg_remove", "ocr", "metadata"]
+        assert data["media_types"]["png"] == [
+            "upscale", "bg_remove", "ocr", "diversity_gate", "embed_srgb", "metadata"
+        ]
 
     def test_bg_remove_defaults_expose_the_stock_grade_pipeline(self, client):
         steps = client.get(

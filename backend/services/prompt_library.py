@@ -107,6 +107,53 @@ def normalise_tags(tags: list[str] | None) -> list[str] | None:
     return cleaned or None
 
 
+#: Longest accepted group (folder) name, matching the column width.
+MAX_GROUP_LENGTH = 120
+
+
+def normalise_group_name(value: object) -> str | None:
+    """Normalise a submitted group name; empty means *clear* (``None``).
+
+    Whitespace runs collapse so "Mantis  batch" and "Mantis batch" are one
+    folder — two spellings would silently split a batch. Over-long names are
+    truncated rather than rejected: the operator typed a folder name, not a
+    schema violation.
+    """
+    text = "" if value is None else str(value)
+    text = " ".join(text.split())
+    if not text:
+        return None
+    return text[:MAX_GROUP_LENGTH]
+
+
+def matches_group(prompt: Prompt, group: str) -> bool:
+    """Whether a prompt belongs to the requested group filter.
+
+    Empty filter matches everything — the no-filter state must be identical to
+    the pre-filter list, or opening the page would silently hide prompts.
+    """
+    wanted = (group or "").strip()
+    if not wanted:
+        return True
+    return (prompt.group_name or "") == wanted
+
+
+def group_counts(db: Session) -> list[dict]:
+    """Every group with its prompt count, busiest first.
+
+    Derived from the rows rather than a folder table: a folder exists because
+    prompts were put in it, so counting *is* the listing. Returned as dicts so
+    the endpoint can embed them in the list response without a second model.
+    """
+    rows = db.execute(
+        select(Prompt.group_name, func.count(Prompt.id))
+        .where(Prompt.group_name.is_not(None))
+        .group_by(Prompt.group_name)
+    ).all()
+    groups = [{"name": name, "count": count} for name, count in rows if name]
+    return sorted(groups, key=lambda g: (-g["count"], g["name"].lower()))
+
+
 def binding_counts(db: Session) -> Counter[str]:
     """How many records are bound to each prompt.
 
@@ -224,6 +271,7 @@ def prompt_to_dict(prompt: Prompt, bound_count: int = 0) -> dict:
         "negative_prompt": prompt.negative_prompt,
         "params": params,
         "tags": tags,
+        "group_name": prompt.group_name,
         "status": prompt.status,
         "used_at": prompt.used_at,
         "created_at": prompt.created_at,

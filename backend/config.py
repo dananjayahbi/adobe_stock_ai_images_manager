@@ -107,6 +107,12 @@ class Settings(BaseSettings):
     REMOVED_DIR: Path = STORAGE_ROOT / "removed"
     #: Raster images whose background was verified/clamped to pure #FFFFFF.
     WHITE_DIR: Path = STORAGE_ROOT / "white"
+    #: Files written by the `embed_srgb` step (tagged copies when the input
+    #: profile was missing — kept separate so the source is never mutated).
+    SRGB_DIR: Path = STORAGE_ROOT / "srgb"
+    #: Near-duplicate variants quarantined by the batch diversity gate. Kept on
+    #: disk (never deleted by the step) so they can seed a later batch.
+    QUARANTINE_DIR: Path = STORAGE_ROOT / "quarantine"
     #: Quality for the PNG -> JPEG conversion. 100 keeps the result visually
     #: lossless so the conversion cannot itself introduce an acceptance issue.
     PNG_CONVERSION_QUALITY: int = 100

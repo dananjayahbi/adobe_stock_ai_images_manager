@@ -31,6 +31,14 @@ export interface Prompt {
   updated_at: string;
   /** How many image records are currently bound to this prompt. */
   bound_count: number;
+  /** Folder name (batch grouping); null when ungrouped. */
+  group_name: string | null;
+}
+
+/** Folder (group) name + how many prompts it holds, busiest first. */
+export interface PromptGroup {
+  name: string;
+  count: number;
 }
 
 export interface PromptListResponse {
@@ -45,6 +53,8 @@ export interface PromptListResponse {
   bound: number;
   unbound: number;
   archived: number;
+  /** Folders derived from group_name, for the filter chips. */
+  groups: PromptGroup[];
 }
 
 /**
@@ -55,14 +65,40 @@ export type PromptFilter = "all" | "draft" | "used" | "unused" | "archived";
 
 /**
  * Fetch prompts. `status` filters one axis, `q` is a case-insensitive substring
- * search over title, body, negative prompt and tags — the server composes them.
+ * search over title, body, negative prompt and tags, `group` narrows to one
+ * folder (empty matches everything) — the server composes them.
  */
 export async function fetchPrompts(
   status: PromptFilter = "all",
-  q = ""
+  q = "",
+  group = ""
 ): Promise<PromptListResponse> {
   const { data } = await api.get<PromptListResponse>("/api/prompts", {
-    params: { status, q: q || undefined },
+    params: { status, q: q || undefined, group: group || undefined },
+  });
+  return data;
+}
+
+/** Response of the bulk folder assignment. */
+export interface PromptGroupAssignResponse {
+  updated: number;
+  /** Ids the server did not recognise (reported, never fatal). */
+  missing: string[];
+  /** The folder the prompts landed in; null when ungrouped. */
+  group_name: string | null;
+}
+
+/**
+ * Add (or remove, with `groupName = ""`) many prompts from a folder in one
+ * round trip — the batch-use flow: select the prompts, name the folder once.
+ */
+export async function assignPromptGroup(
+  promptIds: string[],
+  groupName: string
+): Promise<PromptGroupAssignResponse> {
+  const { data } = await api.post<PromptGroupAssignResponse>("/api/prompts/group", {
+    prompt_ids: promptIds,
+    group_name: groupName,
   });
   return data;
 }

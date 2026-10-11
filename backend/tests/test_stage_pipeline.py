@@ -199,7 +199,13 @@ def test_next_stage_advances_and_stops_at_terminal():
 
 
 def test_ordered_stages_cover_every_stage():
-    assert set(ORDERED_STAGES) == set(PipelineStage)
+    # QUARANTINED is deliberately off-flow: set aside by the diversity gate,
+    # it belongs to no numbered stage and is terminal.
+    from services.stage_registry import TERMINAL_STAGES
+
+    off_flow = {PipelineStage.QUARANTINED}
+    assert set(ORDERED_STAGES) == set(PipelineStage) - off_flow
+    assert off_flow <= TERMINAL_STAGES
 
 
 # --------------------------------------------------------------------------- #

@@ -23,6 +23,8 @@ from schemas import (
     PromptBindRequest,
     PromptBindResponse,
     PromptCreateRequest,
+    PromptGroupAssignRequest,
+    PromptGroupAssignResponse,
     PromptListResponse,
     PromptResponse,
     PromptUpdateRequest,
@@ -98,6 +100,14 @@ async def list_prompts(
             "Case-insensitive; empty matches everything."
         ),
     ),
+    group: str = Query(
+        default="",
+        max_length=120,
+        description=(
+            "Exact folder name to filter by. Empty matches every prompt, "
+            "grouped or not."
+        ),
+    ),
     db: Session = Depends(get_db),
 ) -> PromptListResponse:
     """Return every prompt newest-first with its binding count.
@@ -107,8 +117,10 @@ async def list_prompts(
     separate is what lets the operator answer two different questions: "have I
     consumed this prompt?" and "have I collected what it produced?".
 
-    ``q`` narrows ``items`` only: the tab counts stay library-wide, because they
-    answer "how many does the library hold", not "how many match this search".
+    ``q`` and ``group`` narrow ``items`` only: the tab counts stay
+    library-wide, because they answer "how many does the library hold", not
+    "how many match this filter". ``groups`` (name + count for every folder)
+    is served with the list so the folder chips cannot drift from the rows.
     """
     key = (status or "all").lower()
     if key not in STATUS_FILTERS:
@@ -129,6 +141,8 @@ async def list_prompts(
             continue
         if not prompt_library.matches_query(prompt, q):
             continue
+        if not prompt_library.matches_group(prompt, group):
+            continue
         items.append(
             PromptResponse.model_validate(
                 prompt_library.prompt_to_dict(prompt, bound_count=bound)
@@ -136,7 +150,11 @@ async def list_prompts(
         )
 
     totals = prompt_library.library_totals(db)
-    return PromptListResponse(items=items, **totals)
+    return PromptListResponse(
+        items=items,
+        groups=prompt_library.group_counts(db),
+        **totals,
+    )
 
 
 @router.get("/api/prompts/{prompt_id}", response_model=PromptResponse)
@@ -171,6 +189,7 @@ async def create_prompt(
         negative_prompt=(request.negative_prompt or "").strip() or None,
         params=request.params,
         tags=prompt_library.normalise_tags(request.tags),
+        group_name=prompt_library.normalise_group_name(request.group_name),
         status=request.status or PromptStatus.DRAFT,
     )
     if prompt.status == PromptStatus.USED:
@@ -218,6 +237,9 @@ async def update_prompt(
     if "tags" in payload:
         prompt.tags = prompt_library.normalise_tags(payload["tags"])
 
+    if "group_name" in payload:
+        prompt.group_name = prompt_library.normalise_group_name(payload["group_name"])
+
     if "status" in payload and payload["status"] is not None:
         prompt.status = payload["status"]
         if prompt.status == PromptStatus.USED and prompt.used_at is None:
@@ -235,6 +257,58 @@ async def update_prompt(
     db.refresh(prompt)
 
     return _response(db, prompt)
+
+
+# --------------------------------------------------------------------------- #
+# Grouping (folders)
+# --------------------------------------------------------------------------- #
+
+#: Maximum prompts one group assignment may touch — same cap as a bind call:
+#: a selection that large is a mis-click, not a folder.
+MAX_GROUP_BATCH = 500
+
+
+@router.post("/api/prompts/group", response_model=PromptGroupAssignResponse)
+async def assign_prompt_group(
+    request: PromptGroupAssignRequest,
+    db: Session = Depends(get_db),
+) -> PromptGroupAssignResponse:
+    """Add (or remove) a batch of prompts from a folder in one round trip.
+
+    The folder is *named in the payload*: isolating a batch the operator just
+    saved should not require creating a folder first and then assigning to it.
+    An empty ``group_name`` is the ungroup action — the same
+    reset-by-clearing contract the optional text fields use. Unknown ids are
+    reported in ``missing`` rather than failing the whole selection.
+    """
+    ids = list(dict.fromkeys(str(pid) for pid in request.prompt_ids if str(pid).strip()))
+    if not ids:
+        raise HTTPException(status_code=400, detail="prompt_ids must not be empty.")
+    if len(ids) > MAX_GROUP_BATCH:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot group more than {MAX_GROUP_BATCH} prompts at once.",
+        )
+
+    name = prompt_library.normalise_group_name(request.group_name)
+    found = {
+        prompt.id: prompt
+        for prompt in db.query(Prompt).filter(Prompt.id.in_(ids)).all()
+    }
+    updated = 0
+    for prompt_id in ids:
+        prompt = found.get(prompt_id)
+        if prompt is None:
+            continue
+        prompt.group_name = name
+        updated += 1
+    db.commit()
+
+    return PromptGroupAssignResponse(
+        updated=updated,
+        missing=[pid for pid in ids if pid not in found],
+        group_name=name,
+    )
 
 
 @router.delete("/api/prompts/{prompt_id}")

@@ -130,6 +130,8 @@ def generate_metadata(file_path: str | Path, api_key: str | None = None) -> dict
     meta_cfg = app_settings.resolve_metadata()
     keyword_target = min(meta_cfg.keyword_target, MAX_KEYWORDS)
 
+    from services import metadata_formatter
+
     prompt = METADATA_PROMPT.format(
         categories=_CATEGORY_LIST,
         title_target=TITLE_TARGET,
@@ -195,9 +197,16 @@ def generate_metadata(file_path: str | Path, api_key: str | None = None) -> dict
             ", ".join(blocked[:5]),
         )
 
-    # Cap at the operator's target (never above Adobe's ceiling), keeping the
-    # most relevant first.
-    cleaned_keywords = cleaned_keywords[:keyword_target]
+    # Commercial pass: drop aesthetic hype adjectives ("photorealistic",
+    # "hyper-detailed", "trending on artstation"...) that add no search intent
+    # and flag the asset as AI-flavoured copy, then stably move the operator's
+    # high-intent priority terms into the first positions - Adobe weights the
+    # top-10 keyword slots most - and only then cap at the target.
+    cleaned_keywords = metadata_formatter.format_keywords(
+        cleaned_keywords,
+        priority_terms=meta_cfg.priority_terms,
+        limit=keyword_target,
+    )
 
     if not title:
         logger.warning("Generated metadata has empty title for %s", file_path)
