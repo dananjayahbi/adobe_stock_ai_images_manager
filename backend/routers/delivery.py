@@ -35,7 +35,7 @@ from schemas import (
     RenameResultItem,
 )
 from services import asset_naming, csv_export, forced_acceptance
-from services.storage import resolve_ready_path
+from services.storage import resolve_current_path, resolve_ready_path
 from tasks import stage_orchestrator
 
 logger = logging.getLogger(__name__)
@@ -392,44 +392,57 @@ async def download_bundle(
 
     records = _load_records(db, request.record_ids)
 
-    # Resolve the staged files FIRST, then build the CSV from exactly those
-    # records.
+    # Resolve the file for each record FIRST, then build the CSV from exactly
+    # those records.
     #
     # Building the CSV from the *requested* selection instead is a precision bug:
-    # a record that has no staged file yet would contribute a CSV row for a file
-    # that is not in the archive. Adobe matches rows to files by name, so that
-    # orphan row is not merely untidy — it is an asset that silently never gets
-    # its metadata. The archive and the CSV must describe the same set.
-    staged: list[tuple[ImageRecord, Path]] = []
+    # a record that contributes no file would add a CSV row for a file that is
+    # not in the archive. Adobe matches rows to files by name, so that orphan
+    # row is not merely untidy — it is an asset that silently never gets its
+    # metadata. The archive and the CSV must describe the same set.
+    #
+    # Staged file first: a published record's staged copy is the bytes that
+    # actually shipped. Otherwise fall back to the working file — publishing
+    # is what creates the staged copy, and the gallery's "Ready to publish"
+    # records are exactly the ones bundled *before* that happens. The fallback
+    # resolves the way publish does (working → original), so the archive
+    # carries what a later publish would stage.
+    bundled: list[tuple[ImageRecord, Path]] = []
     for record in records:
         path = resolve_ready_path(record, settings.READY_DIR)
         if path is None:
-            logger.warning("Skipping unstaged record %s in bundle", record.id)
+            path = resolve_current_path(record)
+        if path is None:
+            logger.warning(
+                "Skipping record %s in bundle: no staged, working, or "
+                "original file on disk",
+                record.id,
+            )
             continue
-        staged.append((record, path))
+        bundled.append((record, path))
 
-    if not staged:
+    if not bundled:
         raise HTTPException(
             status_code=409,
             detail=(
-                "None of the selected records have a staged file yet. Publishing "
-                "is what stages the upload copy, so publish them first (or "
-                "download just the CSV)."
+                "None of the selected records have a file to bundle: no staged "
+                "copy exists and neither the working nor the original file is "
+                "on disk. You can still download just the CSV."
             ),
         )
 
     result = stage_orchestrator.build_metadata_csv(
         SessionLocal,
-        [record.id for record, _ in staged],
-        # Eligibility was already decided by the staged-file check above, so the
-        # stage filter must not second-guess it: a published asset is not
-        # METADATA_READY, and filtering here would empty the CSV of exactly the
-        # images the archive contains.
+        [record.id for record, _ in bundled],
+        # Eligibility was already decided by the file-resolution check above,
+        # so the stage filter must not second-guess it: a published asset is
+        # not METADATA_READY, and filtering here would empty the CSV of
+        # exactly the images the archive contains.
         only_ready=False,
         db=db,
         # Pin the batch-resolved names, so the ZIP entry written below and the
-        # CSV row describe the same file. Without this the archive could contain
-        # `fleet-of-autonomous-1.jpg` while the CSV named
+        # CSV row describe the same file. Without this the archive could
+        # contain `fleet-of-autonomous-1.jpg` while the CSV named
         # `fleet-of-autonomous-transpor.jpg`.
         apply_names=True,
     )
@@ -440,7 +453,7 @@ async def download_bundle(
 
     try:
         with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as archive:
-            for record, path in staged:
+            for record, path in bundled:
                 name = asset_naming.effective_download_name(record, path)
                 archive.write(path, arcname=name)
 

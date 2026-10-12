@@ -125,6 +125,29 @@ def resolve_ready_path(record, ready_dir: Path | str | None = None) -> Path | No
     return None
 
 
+def resolve_current_path(record) -> Path | None:
+    """The record's best file **on disk right now**, or ``None`` if it has none.
+
+    Working copy first, then the inbox original — the same preference the
+    publish path uses (``audit_orchestrator._resolve_staging_source``), so
+    bundling a not-yet-published record ships exactly the bytes a later
+    publish would stage.
+
+    Existence is checked, unlike ``_current_path`` in the orchestrators: a
+    path column can outlive the file behind it (tests, moved storage), and
+    handing a missing file to the ZIP archiver is a 500, not a fallback.
+    """
+    if record is None:
+        return None
+    for candidate in (
+        getattr(record, "working_path", None),
+        getattr(record, "original_path", None),
+    ):
+        if candidate and Path(candidate).is_file():
+            return Path(candidate)
+    return None
+
+
 def delete_record_files(record, cfg=None) -> list[str]:
     """Remove every on-disk artifact owned by a record.
 

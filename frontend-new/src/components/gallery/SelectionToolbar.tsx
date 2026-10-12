@@ -7,6 +7,8 @@ interface SelectionToolbarProps {
   onSelectAll: () => void;
   onClear: () => void;
   onDownload: () => void;
+  /** Direct Adobe-template CSV export for the selection (optional). */
+  onExportCsv?: () => void;
   onGroup: () => void;
   onDelete: () => void;
   /** Total images visible, so "select all" can say what it selects. */
@@ -25,6 +27,7 @@ export default function SelectionToolbar({
   onSelectAll,
   onClear,
   onDownload,
+  onExportCsv,
   onGroup,
   onDelete,
   visibleCount,
@@ -44,6 +47,11 @@ export default function SelectionToolbar({
         <Button variant="secondary" size="sm" onClick={onDownload}>
           ↓ Download
         </Button>
+        {onExportCsv && (
+          <Button variant="secondary" size="sm" onClick={onExportCsv}>
+            ⇪ CSV
+          </Button>
+        )}
         <Button variant="secondary" size="sm" onClick={onGroup}>
           ▸ Group
         </Button>

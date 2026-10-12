@@ -481,13 +481,14 @@ def test_the_proposal_reaches_the_record_response(client, make_record):
 # 4. The bundle is only offered where it can work
 # --------------------------------------------------------------------------- #
 
-def test_bundle_refusal_explains_that_publishing_stages_the_file(
+def test_bundle_refusal_explains_missing_files_and_points_at_the_csv(
     client, make_record, tmp_path, monkeypatch
 ):
     """The 409 an operator actually hit must say what to do about it.
 
-    The old message ("Publish them first.") never said that *publishing* is what
-    creates the staged file, which is the whole reason the button failed.
+    With no staged, working, or original file on disk there is nothing to
+    archive — the message must say that plainly and offer the CSV, which
+    needs no files at all.
     """
     from config import settings
 
@@ -501,8 +502,8 @@ def test_bundle_refusal_explains_that_publishing_stages_the_file(
 
     assert response.status_code == 409
     detail = response.json()["detail"]
-    assert "Publishing" in detail
-    # It must also point at the action that does work in this state.
+    assert "no staged" in detail or "file to bundle" in detail
+    # It must point at the action that does work in this state.
     assert "CSV" in detail
 
 

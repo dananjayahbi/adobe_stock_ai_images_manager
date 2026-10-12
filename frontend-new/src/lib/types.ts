@@ -16,6 +16,15 @@ export type StepStatus =
   | "failed"
   | "cancelled";
 
+/** Mirrors backend `ImageStatus` (models.py) — the record's audit lifecycle. */
+export type ImageStatus =
+  | "PENDING"
+  | "AUDITING"
+  | "PASSED"
+  | "FLAGGED"
+  | "APPROVED"
+  | "READY";
+
 export interface StepConfig {
   [key: string]: string | number | boolean | null;
 }
@@ -53,20 +62,47 @@ export interface StepProgress {
 export interface ImageRecord {
   id: string;
   filename: string;
+  /** Absolute path of the source file on disk (backend-only concept, shown read-only). */
+  original_path?: string;
+  /** Absolute path of the current working file (cut-out after bg removal, etc.). */
+  working_path?: string | null;
   thumbnail_path: string | null;
+  status?: ImageStatus;
   stage: string;
   width: number | null;
   height: number | null;
   megapixels: number | null;
+  file_size_bytes?: number;
+  laplacian_variance?: number | null;
+  ocr_text_detected?: boolean;
+  ocr_text_content?: string | null;
+  semantic_confidence_score?: number | null;
+  semantic_flags?: string[] | null;
   generated_title: string | null;
+  generated_description?: string | null;
   generated_keywords: string[] | null;
+  /** Operator-chosen upload filename; null = derive from the title. */
+  download_name?: string | null;
+  /** Filename proposed by the metadata model (a proposal, not a decision). */
+  suggested_filename?: string | null;
+  /** The name actually uploaded — what the CSV Filename column carries. */
+  upload_filename?: string | null;
   batch_id: string | null;
   /** Gallery folder this image lives in; null = ungrouped (top level). */
   group_id: string | null;
+  /** Prompt Library link; null when the image has no known source prompt. */
+  prompt_id?: string | null;
   is_used: boolean;
+  used_at?: string | null;
   created_at: string;
+  updated_at?: string;
   stage_updated_at: string | null;
   acceptance_score: number | null;
+  acceptance_report?: Record<string, unknown> | null;
+  stage_details?: Record<string, unknown> | null;
+  refine_passes?: number;
+  queued_stage?: string | null;
+  category?: number | null;
 }
 
 export interface GalleryGroup {

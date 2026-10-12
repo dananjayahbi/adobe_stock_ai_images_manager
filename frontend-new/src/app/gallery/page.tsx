@@ -18,6 +18,7 @@ import DeleteDialog from "@/components/gallery/DeleteDialog";
 import GroupDialog from "@/components/gallery/GroupDialog";
 import ViewerModal from "@/components/viewer/ViewerModal";
 import { downloadRecordFile } from "@/lib/downloads";
+import { downloadSelectionCsv } from "@/lib/delivery";
 import { deleteGroup, fetchGroups, renameGroup } from "@/lib/groups";
 import type { GalleryGroup, ImageRecord } from "@/lib/types";
 
@@ -47,7 +48,10 @@ function GalleryView() {
   const [search, setSearch] = useState("");
   const [draft, setDraft] = useState("");
   const [filters, setFilters] = useState<GalleryFilters>({
-    stage: "",
+    // Default lens: only what can be published (or already was). The whole
+    // pipeline's worth of images stays reachable via the stage filter — the
+    // gallery opens on the operator's next action, not on history.
+    stage: "METADATA_READY,PUBLISHED",
     used: "all",
   });
   const [groups, setGroups] = useState<GalleryGroup[]>([]);
@@ -193,6 +197,15 @@ function GalleryView() {
     // One image → direct download; many → the option dialog (task rule).
     if (selectedIds.length === 1) downloadRecordFile(selectedIds[0]);
     else setDownloadOpen(true);
+  }, [selectedIds]);
+
+  // Direct Adobe-template CSV for the selection (toolbar shortcut); failures
+  // surface in the page's action-error banner like every other action here.
+  const handleExportCsv = useCallback(() => {
+    if (selectedIds.length === 0) return;
+    downloadSelectionCsv(selectedIds).catch((err) =>
+      setActionError(err instanceof Error ? err.message : String(err))
+    );
   }, [selectedIds]);
 
   const refreshAll = useCallback(() => {
@@ -419,6 +432,7 @@ function GalleryView() {
         onSelectAll={selectAll}
         onClear={clearSelection}
         onDownload={handleDownload}
+        onExportCsv={handleExportCsv}
         onGroup={() => setGroupDialogOpen(true)}
         onDelete={() => setDeleteOpen(true)}
       />

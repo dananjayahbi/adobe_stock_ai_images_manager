@@ -731,24 +731,68 @@ def test_bundle_requires_an_explicit_selection(client, make_record):
     assert "explicit selection" in response.json()["detail"]
 
 
-def test_bundle_reports_when_nothing_is_staged(client, make_record, tmp_path, monkeypatch):
+def test_bundle_falls_back_to_the_working_file_before_publishing(
+    client, make_record, tmp_path, monkeypatch
+):
+    """The gallery's default "Ready to publish" selection has no staged copy.
+
+    Publishing is what creates the staged file, so a bundle of METADATA_READY
+    records must ship the working file — the exact bytes a later publish would
+    stage — paired with a CSV row naming that same file.
+    """
+    from config import settings
+
+    ready_dir = tmp_path / "ready-unused"
+    ready_dir.mkdir(exist_ok=True)
+    monkeypatch.setattr(settings, "READY_DIR", ready_dir)
+
+    working = tmp_path / "working.jpg"
+    working.write_bytes(b"WORKING-QUALITY-COPY")
+    record_id = make_record(
+        "ready-but-unpublished.jpg",
+        title="Ready But Unpublished",
+        working_path=str(working),
+    )
+
+    response = client.post(
+        "/api/assets/bundle",
+        json={"record_ids": [record_id], "only_ready": False},
+    )
+
+    assert response.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        names = archive.namelist()
+        csv_text = archive.read("adobe-stock-metadata.csv").decode("utf-8-sig")
+        image_names = [name for name in names if not name.endswith(".csv")]
+        assert len(image_names) == 1
+        assert archive.read(image_names[0]) == b"WORKING-QUALITY-COPY"
+
+    csv_names = [line.split(",")[0] for line in csv_text.splitlines()[1:] if line.strip()]
+    # The invariant, on the fallback path too: CSV row == archived file.
+    assert set(csv_names) == set(image_names)
+
+
+def test_bundle_reports_when_no_file_exists_anywhere(
+    client, make_record, tmp_path, monkeypatch
+):
     from config import settings
 
     ready_dir = tmp_path / "ready-empty"
     ready_dir.mkdir(exist_ok=True)
     monkeypatch.setattr(settings, "READY_DIR", ready_dir)
 
+    # original_path points at /tmp/... which does not exist in the test
+    # environment — neither staged nor working nor original is on disk.
     record_id = make_record("unstaged.jpg", title="Unstaged")
 
     response = client.post("/api/assets/bundle", json={"record_ids": [record_id]})
 
     assert response.status_code == 409
-    # The message must say *why* nothing can be staged, not just that it cannot:
-    # publishing is what creates the staged file, which is the whole reason the
-    # operator's "Zip + CSV" click failed.
+    # The message must say *why* nothing can be bundled, and point at the
+    # action that still works in this state.
     detail = response.json()["detail"]
-    assert "staged file" in detail
-    assert "Publishing" in detail
+    assert "file to bundle" in detail
+    assert "CSV" in detail
 
 
 # --------------------------------------------------------------------------- #

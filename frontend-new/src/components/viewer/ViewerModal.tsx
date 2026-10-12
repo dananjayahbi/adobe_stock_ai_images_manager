@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { API_BASE_URL, thumbnailUrl } from "@/lib/client";
 import { useViewerTransform } from "@/hooks/useViewerTransform";
 import Badge from "@/components/ui/Badge";
+import InfoPanel from "@/components/viewer/InfoPanel";
 import type { ImageRecord } from "@/lib/types";
 
 interface ViewerModalProps {
@@ -25,6 +26,10 @@ interface ViewerModalProps {
  */
 export default function ViewerModal({ record, onClose, onNavigate }: ViewerModalProps) {
   const [mounted, setMounted] = useState(false);
+  // `showInfo` now drives the right-hand info panel (open by default — the
+  // point of the panel is that the data is *there* without hunting for it).
+  // The in-stage HUD badges stay visible regardless: they carry the live
+  // zoom %, which the panel does not.
   const [showInfo, setShowInfo] = useState(true);
   const imageRef = useRef<HTMLImageElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
@@ -42,6 +47,14 @@ export default function ViewerModal({ record, onClose, onNavigate }: ViewerModal
     setShowInfo(true);
     fit(record.width ?? undefined, record.height ?? undefined);
   }, [record, fit]);
+
+  // Toggling the info panel changes the stage's width — re-fit so the image
+  // re-centers in the new space instead of keeping a stale scale. Running
+  // only while the panel is open keeps a close from resetting the user's zoom.
+  useEffect(() => {
+    if (!record || !showInfo) return;
+    fit(record.width ?? undefined, record.height ?? undefined);
+  }, [record, showInfo, fit]);
 
   useEffect(() => {
     if (!record) return;
@@ -94,6 +107,19 @@ export default function ViewerModal({ record, onClose, onNavigate }: ViewerModal
         <div className="flex shrink-0 items-center gap-2">
           <button
             type="button"
+            onClick={() => setShowInfo((v) => !v)}
+            aria-pressed={showInfo}
+            title="Toggle the info panel (H)"
+            className={`inline-flex h-8 items-center justify-center rounded-sm border px-2.5 font-stamp text-[11px] uppercase tracking-wider ${
+              showInfo
+                ? "border-brass-400/60 bg-brass-300/20 text-brass-300"
+                : "border-parchment-500/50 bg-parchment-50/10 text-ink-50 hover:bg-parchment-50/20"
+            }`}
+          >
+            ☰ Info
+          </button>
+          <button
+            type="button"
             onClick={() => zoomBy(1 / 1.25)}
             className="inline-flex h-8 w-8 items-center justify-center rounded-sm border border-parchment-500/50 bg-parchment-50/10 font-stamp text-ink-50 hover:bg-parchment-50/20"
             aria-label="Zoom out"
@@ -144,41 +170,43 @@ export default function ViewerModal({ record, onClose, onNavigate }: ViewerModal
         </div>
       </header>
 
-      {/* Stage */}
-      <div
-        ref={stageRef}
-        className="relative flex-1 overflow-hidden"
-        onPointerDown={startPan}
-        onPointerMove={movePan}
-        onPointerUp={endPan}
-        onPointerCancel={endPan}
-        onDoubleClick={() => {
-          // Double-click = 100% for pixel inspection; from 100% it returns
-          // to fit so a second double-click is never a dead end.
-          if (Math.abs(transform.scale - 1) < 0.01) fit();
-          else actual();
-        }}
-      >
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          ref={imageRef}
-          src={full}
-          alt={caption}
-          draggable={false}
-          onLoad={() => fit()}
-          onError={(event) => {
-            // No full-size file yet — fall back to the thumbnail.
-            if (thumb && event.currentTarget.src !== thumb) event.currentTarget.src = thumb;
+      {/* Stage (flex-1, zoom/pan behaviour untouched) + right-hand info panel */}
+      <div className="flex min-h-0 flex-1">
+        <div
+          ref={stageRef}
+          className="relative min-w-0 flex-1 overflow-hidden"
+          onPointerDown={startPan}
+          onPointerMove={movePan}
+          onPointerUp={endPan}
+          onPointerCancel={endPan}
+          onDoubleClick={() => {
+            // Double-click = 100% for pixel inspection; from 100% it returns
+            // to fit so a second double-click is never a dead end.
+            if (Math.abs(transform.scale - 1) < 0.01) fit();
+            else actual();
           }}
-          className="absolute left-1/2 top-1/2 max-w-none select-none"
-          style={{
-            transform: `translate(-50%, -50%) translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
-            cursor,
-            imageRendering: transform.scale > 1.5 ? "pixelated" : "auto",
-          }}
-        />
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            ref={imageRef}
+            src={full}
+            alt={caption}
+            draggable={false}
+            onLoad={() => fit()}
+            onError={(event) => {
+              // No full-size file yet — fall back to the thumbnail.
+              if (thumb && event.currentTarget.src !== thumb) event.currentTarget.src = thumb;
+            }}
+            className="absolute left-1/2 top-1/2 max-w-none select-none"
+            style={{
+              transform: `translate(-50%, -50%) translate(${transform.x}px, ${transform.y}px) scale(${transform.scale})`,
+              cursor,
+              imageRendering: transform.scale > 1.5 ? "pixelated" : "auto",
+            }}
+          />
 
-        {showInfo && (
+          {/* Live HUD: minimal facts in place (stage/MP/score/zoom) — kept
+              independent of the info panel, which shows the full record. */}
           <div className="absolute bottom-4 left-4 flex flex-wrap gap-2">
             <Badge tone="info">{record.stage.replace(/_/g, " ")}</Badge>
             {record.megapixels != null && <Badge>{record.megapixels.toFixed(1)} MP</Badge>}
@@ -189,28 +217,38 @@ export default function ViewerModal({ record, onClose, onNavigate }: ViewerModal
             )}
             <Badge>{Math.round(transform.scale * 100)}%</Badge>
           </div>
-        )}
 
-        <div className="absolute bottom-4 right-4 flex gap-2">
-          <button
-            type="button"
-            onClick={() => onNavigate(-1)}
-            className="h-9 rounded-sm border border-parchment-500/50 bg-ink-900/70 px-3 font-stamp text-[11px] uppercase tracking-wider text-ink-50 hover:bg-ink-900"
-          >
-            ← Prev
-          </button>
-          <button
-            type="button"
-            onClick={() => onNavigate(1)}
-            className="h-9 rounded-sm border border-parchment-500/50 bg-ink-900/70 px-3 font-stamp text-[11px] uppercase tracking-wider text-ink-50 hover:bg-ink-900"
-          >
-            Next →
-          </button>
+          <div className="absolute bottom-4 right-4 flex gap-2">
+            <button
+              type="button"
+              onClick={() => onNavigate(-1)}
+              className="h-9 rounded-sm border border-parchment-500/50 bg-ink-900/70 px-3 font-stamp text-[11px] uppercase tracking-wider text-ink-50 hover:bg-ink-900"
+            >
+              ← Prev
+            </button>
+            <button
+              type="button"
+              onClick={() => onNavigate(1)}
+              className="h-9 rounded-sm border border-parchment-500/50 bg-ink-900/70 px-3 font-stamp text-[11px] uppercase tracking-wider text-ink-50 hover:bg-ink-900"
+            >
+              Next →
+            </button>
+          </div>
+
+          <p className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 font-stamp text-[10px] uppercase tracking-[0.14em] text-ink-400/70">
+            Wheel zoom · drag pan · double-click 100% · 0 fit · H info panel
+          </p>
         </div>
 
-        <p className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 font-stamp text-[10px] uppercase tracking-[0.14em] text-ink-400/70">
-          Wheel zoom · drag pan · double-click 100% · 0 fit · H hide HUD
-        </p>
+        {/* Info panel: independently scrollable; the stage keeps the rest. */}
+        {showInfo && (
+          <aside
+            aria-label="Image details"
+            className="w-96 shrink-0 overflow-y-auto border-l border-parchment-500/30 bg-ink-900/95"
+          >
+            <InfoPanel record={record} onClose={() => setShowInfo(false)} />
+          </aside>
+        )}
       </div>
     </div>,
     document.body

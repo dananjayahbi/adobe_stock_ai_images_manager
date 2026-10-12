@@ -24,6 +24,11 @@ interface FilterBarProps {
  */
 const STAGES: { value: string; label: string }[] = [
   { value: "", label: "Any stage" },
+  // The gallery's default lens (mirrors page.tsx's initial state — the value
+  // must match exactly or the <select> would render blank). Backend accepts
+  // comma-separated stage lists, and this pair is the app's own "publishable"
+  // rule (same stages as `only_ready` in the CSV builder).
+  { value: "METADATA_READY,PUBLISHED", label: "Ready to publish" },
   { value: "COLLECTED", label: "Collected" },
   { value: "OCR_CLEAR", label: "OCR clear" },
   { value: "OCR_REJECTED", label: "OCR rejected" },
