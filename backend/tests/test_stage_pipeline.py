@@ -153,7 +153,7 @@ def _stub_metadata(monkeypatch, title="Mountain ridge at golden hour"):
     monkeypatch.setattr(
         gemini_metadata,
         "generate_metadata",
-        lambda path, api_key=None: {
+        lambda *args, **kwargs: {
             "title": title,
             "description": "Layered peaks under warm evening light.",
             "keywords": ["mountains", "sunset", "landscape", "golden hour", "peaks"],
@@ -497,7 +497,7 @@ def test_metadata_stage_survives_a_model_failure(pipeline_env, monkeypatch):
     from tasks import stage_orchestrator
 
     monkeypatch.setattr(
-        gemini_metadata, "generate_metadata", lambda path, api_key=None: None
+        gemini_metadata, "generate_metadata", lambda *args, **kwargs: None
     )
 
     record_id, _ = _make_record(
@@ -524,8 +524,8 @@ def test_metadata_stage_processes_records_sequentially(pipeline_env, monkeypatch
 
     order: list[str] = []
 
-    def recording_generate(path, api_key=None):
-        order.append(str(path))
+    def recording_generate(*args, **kwargs):
+        order.append(str(args[0]))
         return {
             "title": f"Title {len(order)}",
             "description": "d",

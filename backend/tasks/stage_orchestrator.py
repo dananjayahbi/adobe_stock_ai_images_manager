@@ -31,6 +31,7 @@ from services import (
     gemini_auditor,
     gemini_metadata,
     ocr_scanner,
+    prompt_context,
     record_metrics,
     upscaler,
 )
@@ -696,7 +697,19 @@ def run_metadata_stage(
 
             try:
                 metadata = gemini_metadata.generate_metadata(
-                    _current_path(record), api_key=cfg.effective_llm_api_key
+                    _current_path(record),
+                    api_key=cfg.effective_llm_api_key,
+                    # The original name, not the stored path: at this point
+                    # the file on disk is a uuid/record-id copy, while
+                    # `filename` is what the image was uploaded as - often a
+                    # brief description of what it depicts.
+                    original_filename=record.filename,
+                    # The brief this image was generated from, when one was
+                    # bound to the record; "" (no binding / deleted row) is
+                    # rendered as nothing and the prompt stays vision+name.
+                    generation_prompt=prompt_context.brief_for(
+                        db, record.prompt_id
+                    ),
                 )
 
                 if not metadata:

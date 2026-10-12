@@ -19,6 +19,7 @@ Sources (helpx, verified 2026-09):
 """
 
 import logging
+import re
 from pathlib import Path
 
 from config import settings
@@ -110,13 +111,108 @@ def _truncate_title(title: str, limit: int = TITLE_TARGET) -> str:
     return clipped.rstrip(" ,;:-")
 
 
-def generate_metadata(file_path: str | Path, api_key: str | None = None) -> dict | None:
+#: Stems that carry no description to lean on. Storage renames uploads to
+#: ``uuid4().hex`` and later pipeline stages copy them to ``{record_id}.jpg``,
+#: so handing those to the model would put a code where a description was
+#: meant to be - pure noise beside the pixels. Camera-roll defaults
+#: (``IMG_1234``, ``Screenshot 2024-01-02``) name the *take*, not the content.
+#: Whole-stem match only: a real description that merely *starts* like one
+#: ("img_2_layer_cake") must survive, and a false "descriptive" is harmless
+#: anyway because the prompt tells the model to ignore an unhelpful name.
+_NON_DESCRIPTIVE_STEM = re.compile(
+    r"(?:"
+    r"[0-9a-f]{32}"  # uuid4().hex - what the upload path renames files to
+    r"|\d+"  # {record_id}.* - the pipeline's own copies
+    r"|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"  # dashed uuid
+    r"|(?:img|dsc|dscn|pxl|screenshot)[ _-]*\d[\d _.-]*"  # camera-roll defaults
+    r")$",
+    re.IGNORECASE,
+)
+
+
+def _filename_context(original_filename: str | None) -> str:
+    """The prompt block giving the model the image's original file name.
+
+    Empty when the name carries nothing (see :data:`_NON_DESCRIPTIVE_STEM`), so
+    a record without a real name behaves exactly as before this context
+    existed: vision alone.
+
+    Why it exists: generated images are saved under names that *describe* what
+    they depict, and for a picture that is hard to read the name often states
+    what it actually is. The name is a hint, never a source: the block orders
+    the model to use it together with the pixels, drop it when it does not
+    help, and never copy it into the output - an original name may carry dates
+    or identifiers, and the output filename rules forbid exactly that.
+    """
+    if not original_filename:
+        return ""
+    stem = " ".join(Path(str(original_filename)).stem.split())[:200]
+    if not stem or _NON_DESCRIPTIVE_STEM.fullmatch(stem):
+        return ""
+    return (
+        "\n\nOriginal file name (context only - not an output field):\n"
+        f'The image file is named "{stem}". '
+        "If that name describes what the image shows, use it TOGETHER with "
+        "what you can see to understand the subject - a name written for a "
+        "generated image often states what an ambiguous picture depicts. If "
+        "the name says nothing useful, or the picture clearly contradicts it, "
+        "ignore it and rely on the image alone. Never copy this name or any "
+        "part of it into the title, filename, description or keywords - the "
+        "output filename rules above still apply and no identifiers may "
+        "appear."
+    )
+
+
+def _generation_prompt_context(generation_prompt: str | None) -> str:
+    """The prompt block pairing the pixels with the brief that created them.
+
+    Empty when no brief was bound (see :func:`services.prompt_context.brief_for`),
+    so records without one behave exactly as before this context existed.
+
+    The block's core instruction is *trust the pixels*: a generation brief
+    states intent, and generated pictures routinely deviate from it (extra
+    limbs, different settings, dropped subjects) - metadata that describes
+    the brief instead of the picture is wrong on upload. The brief is also
+    never a source of *phrases*: it is often written in a style vocabulary
+    the output rules forbid.
+    """
+    if not generation_prompt or not generation_prompt.strip():
+        return ""
+    brief = generation_prompt.strip()
+    return (
+        "\n\nOriginal generation prompt (context only - not an output field):\n"
+        "The image was created from this brief:\n"
+        "---\n" + brief + "\n---\n"
+        "Use it to understand WHAT the image is meant to show - subject, "
+        "setting, intent - especially where the picture alone is ambiguous. "
+        "It states intent, not the final picture: generated images often "
+        "deviate from the brief, so when the two disagree, TRUST THE PIXELS "
+        "and describe what the image actually shows. Never copy phrases from "
+        "this brief into the title, filename, description or keywords - write "
+        "the metadata yourself under the rules above."
+    )
+
+
+def generate_metadata(
+    file_path: str | Path,
+    api_key: str | None = None,
+    *,
+    original_filename: str | None = None,
+    generation_prompt: str | None = None,
+) -> dict | None:
     """Generate title, description, keywords, and category for an approved image.
 
     Args:
         file_path: Path to the image file.
         api_key: Retained for call-site compatibility; the gateway key comes
             from settings.LLM_API_KEY (or the legacy GEMINI_API_KEY).
+        original_filename: The name the image arrived under, when known - a
+            descriptive name supplements vision in the prompt; ``None`` (or a
+            uuid-shaped name) falls back to vision alone. Must NOT be derived
+            from ``file_path``: at generation time that basename is a uuid.
+        generation_prompt: The brief this image was generated from, when one
+            was bound to the record (see ``services.prompt_context.brief_for``).
+            Supplementary context only; ``None`` falls back to vision alone.
 
     Returns dict with title, description, keywords, category or None on failure.
     """
@@ -146,6 +242,10 @@ def generate_metadata(file_path: str | Path, api_key: str | None = None) -> dict
             "\n\nAdditional instructions from the operator (follow them unless "
             "they contradict the rules above):\n" + meta_cfg.extra_instructions
         )
+    # After .format() for the same reason as the operator text above: a real
+    # file name may contain braces.
+    prompt += _filename_context(original_filename)
+    prompt += _generation_prompt_context(generation_prompt)
 
     try:
         data = chat_json(file_path, prompt, temperature=0.2)

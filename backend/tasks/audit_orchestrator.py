@@ -12,6 +12,7 @@ from services import (
     exiftool_embedder,
     gemini_auditor,
     gemini_metadata,
+    prompt_context,
     qc_engine,
     record_metrics,
 )
@@ -202,7 +203,16 @@ def process_approval(
             metadata = override_metadata
         else:
             metadata = gemini_metadata.generate_metadata(
-                record.original_path, api_key=cfg.effective_llm_api_key
+                record.original_path,
+                api_key=cfg.effective_llm_api_key,
+                # The original name, not `original_path`: the file on disk is
+                # a uuid/record-id copy, while `filename` is what the image
+                # was uploaded as - often a brief content description.
+                original_filename=record.filename,
+                # The brief this image was generated from, when one was
+                # bound to the record; "" (no binding / deleted row) is
+                # rendered as nothing and the prompt stays vision+name.
+                generation_prompt=prompt_context.brief_for(db, record.prompt_id),
             )
             if not metadata:
                 logger.error("Metadata generation failed for record %s", record_id)

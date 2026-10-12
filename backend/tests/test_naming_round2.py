@@ -385,7 +385,7 @@ def test_metadata_stage_stores_the_proposal_without_applying_it(
     monkeypatch.setattr(
         gemini_metadata,
         "generate_metadata",
-        lambda path, api_key=None: {
+        lambda *args, **kwargs: {
             "title": "A Named Asset",
             "description": "d",
             "keywords": ["a"],
