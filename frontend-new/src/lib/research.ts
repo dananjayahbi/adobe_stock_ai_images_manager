@@ -412,3 +412,42 @@ export function sourceHost(source: PrioritySource): string {
     return source.url;
   }
 }
+
+// --------------------------------------------------------------------------- //
+// Blocked fetch URLs (pages fetch_page failed on and refuses to retry)
+// --------------------------------------------------------------------------- //
+
+export interface BlockedUrlEntry {
+  /** The URL as the model asked for it, so it matches the transcript. */
+  url: string;
+  host: string;
+  /** Why the last read failed (e.g. "HTTP 403", a timeout). */
+  error: string;
+  /** UTC ISO timestamp of the most recent failure. */
+  blocked_at: string;
+  /** How many times this URL has failed in total. */
+  failures: number;
+}
+
+export interface BlockedUrlList {
+  entries: BlockedUrlEntry[];
+  total: number;
+}
+
+export async function fetchBlockedUrls(): Promise<BlockedUrlList> {
+  const { data } = await api.get<BlockedUrlList>("/api/research/blocked");
+  return data;
+}
+
+/** Release one blocked URL so the agent may try it again. */
+export async function unblockUrl(url: string): Promise<BlockedUrlList> {
+  const { data } = await api.delete<BlockedUrlList>("/api/research/blocked", {
+    params: { url },
+  });
+  return data;
+}
+
+export async function clearBlockedUrls(): Promise<BlockedUrlList> {
+  const { data } = await api.delete<BlockedUrlList>("/api/research/blocked");
+  return data;
+}

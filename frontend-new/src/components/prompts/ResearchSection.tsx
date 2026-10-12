@@ -91,6 +91,16 @@ export default function ResearchSection({
       ? "Say how many ideas you want in the message."
       : undefined;
 
+  // One card per assessed idea (the ideas mode scores each idea separately);
+  // falls back to the single `validity` so a one-assessment run — or a state
+  // built before the list existed — still renders exactly as it did.
+  const validityCards =
+    state.validities.length > 0
+      ? state.validities
+      : state.validity
+        ? [state.validity]
+        : [];
+
   return (
     <section aria-label="Research workspace">
       <div className="mb-3 flex items-baseline justify-between gap-3">
@@ -150,13 +160,24 @@ export default function ResearchSection({
             </div>
           )}
 
-          {state.validity && (
-            <ConfidenceCard
-              validity={state.validity}
-              followUpActions={state.followUpActions}
-              onFollowUp={onFollowUp}
-              disabled={isBusy}
-            />
+          {validityCards.length > 0 && (
+            <div className="space-y-3">
+              {validityCards.map((validity, index) => (
+                <ConfidenceCard
+                  key={`${index}-${validity.subject ?? ""}`}
+                  validity={validity}
+                  // The gate is one gate: its buttons ride on the latest
+                  // card only, so N ideas do not render N copies of them.
+                  followUpActions={
+                    index === validityCards.length - 1
+                      ? state.followUpActions
+                      : []
+                  }
+                  onFollowUp={onFollowUp}
+                  disabled={isBusy}
+                />
+              ))}
+            </div>
           )}
 
           {state.prompts.length > 0 && (

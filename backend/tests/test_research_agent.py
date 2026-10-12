@@ -2461,6 +2461,104 @@ class TestTheAgentKeepsSearchingUntilTheTargetIsMet:
         assert f"{validity.TARGET_AVERAGE:g}%" in system
 
 
+class TestAnIdeasRunDeliversEveryRequestedIdea:
+    """``give me 3 best ideas`` means three ideas, each with its own scorecard.
+
+    The objective tells the model to read N from the operator's message, but a
+    prompt is a request: a measured-live failure mode is the model assessing
+    one idea, scoring it well and answering — so the loop re-reads the count
+    from the message and sends a reply back while scorecards are missing.
+    """
+
+    @staticmethod
+    def _score(subject: str, value: float) -> str:
+        return (
+            '<tool_call>{"name": "assess_validity", "arguments": {"subject": "%s", '
+            '"customer_download_confidence": %s, "adobe_acceptance_confidence": %s, '
+            '"reasoning": "r"}}</tool_call>' % (subject, value, value)
+        )
+
+    @staticmethod
+    def _notices(emitted: list[dict]) -> list[str]:
+        return [
+            str(event.get("text") or "")
+            for event in emitted
+            if event["type"] == event_module.NOTICE
+        ]
+
+    def test_a_reply_that_collapsed_to_one_idea_is_sent_back_for_the_rest(
+        self, monkeypatch
+    ):
+        stream = scripted_stream(
+            [
+                [("content", self._score("idea one", 70))],
+                # Answers with a single idea after one assessment.
+                [("content", "Here are my thoughts on idea one.")],
+                # Nudged, it assesses the remaining two — one call per reply.
+                [("content", self._score("idea two", 60))],
+                [("content", self._score("idea three", 50))],
+                [("content", "idea one, idea two and idea three — ranked.")],
+            ]
+        )
+        monkeypatch.setattr(agent, "stream_chat", stream)
+        emitted, _ = agent.collect(
+            agent.RunRequest(
+                mode="ideas", message="give me 3 best ideas", validity_check=True
+            )
+        )
+        assert any("asked for 3 ideas" in text for text in self._notices(emitted))
+        # One card per idea, in assessment order — none collapsed.
+        subjects = [
+            event["validity"].get("subject")
+            for event in emitted
+            if event["type"] == event_module.VALIDITY
+        ]
+        assert subjects == ["idea one", "idea two", "idea three"]
+        # All three scored under the target and were still delivered: the
+        # target ranks ideas, it never drops them or hunts for one better one.
+        assert not any("below the" in text for text in self._notices(emitted))
+        assert emitted[-1]["type"] == event_module.RUN_FINISHED
+
+    def test_the_count_nudge_is_bounded_so_a_stubborn_model_still_finishes(
+        self, monkeypatch
+    ):
+        stream = scripted_stream(
+            [
+                [("content", self._score("only idea", 70))],
+                [("content", "One idea: only idea.")],
+                [("content", "Still one idea.")],
+                [("content", "Fine, ending here.")],
+            ]
+        )
+        monkeypatch.setattr(agent, "stream_chat", stream)
+        emitted, _ = agent.collect(
+            agent.RunRequest(
+                mode="ideas", message="give me 3 best ideas", validity_check=True
+            )
+        )
+        nudges = [text for text in self._notices(emitted) if "asked for 3" in text]
+        assert len(nudges) <= agent.MAX_TARGET_ATTEMPTS
+        assert emitted[-1]["type"] == event_module.RUN_FINISHED
+
+    def test_the_objective_asks_for_the_count_the_message_named(self, monkeypatch):
+        stream = scripted_stream(
+            [
+                [("content", self._score("idea one", 70))],
+                [("content", "idea one, idea two, idea three, idea four.")],
+            ]
+        )
+        monkeypatch.setattr(agent, "stream_chat", stream)
+        agent.collect(
+            agent.RunRequest(
+                mode="ideas", message="give me 4 best ideas", validity_check=True
+            )
+        )
+        system = stream.calls[0][0]["content"]
+        # The count comes from the message; "five" stays the unstated default.
+        assert "EXACTLY the number" in system
+        assert "propose five" in system
+
+
 class TestContextWindowInARun:
     def test_a_run_reports_its_context_position(self, monkeypatch):
         """The operator asked for a live indicator, which needs a measurement —

@@ -427,23 +427,27 @@ def _objective(mode: str, validity_check: bool, released: bool = False, count: i
         )
     if mode == "ideas":
         scoring = (
-            " The operator asked for a validity check: call `assess_validity` for "
-            "each idea you propose (pass `subject` = the idea) so each one gets a "
-            "real scorecard, and hold ideas below the target out of your "
-            "recommendation."
+            " The operator asked for a validity check: call `assess_validity` "
+            "separately for EACH idea you propose (pass `subject` = the idea) "
+            "so each one gets its own real scorecard, and present every idea "
+            "together with the score its own call returned."
             if validity_check
             else ""
         )
         return (
             "The operator asked you to find ideas rather than to write prompts. "
             "Research what is in demand and what is over-supplied, then propose "
-            "the number of distinct niche(s) or concept(s) they asked for in "
-            "their message — if they did not say how many, propose five — "
-            "strongest first. Rate each idea against the "
-            f"{_target_text()} collective-confidence target: only recommend one "
-            "when your evidence supports roughly that level, and say plainly when "
-            "it does not. For each, say briefly why it is worth pursuing and what "
-            "the competition looks like. Do NOT write prompts: the operator will "
-            f"pick one and ask for them.{scoring}"
+            "EXACTLY the number of distinct niche(s) or concept(s) they asked "
+            "for in their message — read it from their wording; if they did "
+            "not say how many, propose five — strongest first. Deliver all of "
+            "them: do not stop after one idea and do not drop any from your "
+            "answer. Rate each idea against the "
+            f"{_target_text()} collective-confidence target to rank and "
+            "recommend — recommend the strongest, say plainly when an idea "
+            "falls short of that level, and mark weaker ones as lower "
+            "confidence, but present them with their real scores rather than "
+            "holding them back. For each, say briefly why it is worth pursuing "
+            "and what the competition looks like. Do NOT write prompts: the "
+            f"operator will pick one and ask for them.{scoring}"
         )
     return "Answer the operator's request using the tools available to you."

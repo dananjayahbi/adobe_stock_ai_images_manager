@@ -30,8 +30,10 @@ from typing import Callable
 from services.adobe_categories import CATEGORY_CODES
 from services.adobe_restrictions import scan_metadata
 from services.duplicate_detector import metadata_similarity, tokenize_metadata
+from services.research import blocked_store
 from services.research import fetch as fetch_module
 from services.research import search as search_module
+from services.research import source_store
 # Imported as a module (not by name) because ``validity`` is also the name of a
 # key on :class:`ToolOutcome`; a by-name import of ``TARGET_AVERAGE`` would read
 # as if it belonged to the outcome.
@@ -307,6 +309,23 @@ def _tool_fetch_page(arguments: dict) -> ToolOutcome:
             degraded=True,
         )
 
+    # Refuse a URL that already failed, BEFORE any network I/O. The same page
+    # will fail the same way, and a retry costs a tool call plus the full
+    # timeout to reach an answer we already have — so the check runs first,
+    # with no socket opened, and the message tells the model why (the prior
+    # error) and what to do instead (pick another source).
+    blocked, prior_error = blocked_store.is_blocked(url)
+    if blocked:
+        return ToolOutcome(
+            text=(
+                f"Refused: {url} is on the blocked list — it previously failed "
+                f"({prior_error}) and is not fetched again.\n"
+                "Do not retry blocked URLs; use a different source."
+            ),
+            summary="Blocked: previously failed",
+            degraded=True,
+        )
+
     page = fetch_module.fetch_page(url)
     # A **list**, even on failure. `ToolOutcome.sources` is `list[dict]`, and
     # returning a bare dict here iterates its *keys* downstream: `_merge_sources`
@@ -319,9 +338,37 @@ def _tool_fetch_page(arguments: dict) -> ToolOutcome:
         if page.ok
         else []
     )
+
+    text = page.to_tool_text()
+    summary = (
+        f"Read {_host_of(url) or url} ({len(page.text)} chars)"
+        if page.ok
+        else f"Could not read {url}"
+    )
+    if not page.ok:
+        # Only a URL that *passed* validation counts as a read failure.
+        # `fetch_page` reports validation refusals (bad scheme, private host,
+        # no host) with `ok=False` too, but those are decided without any
+        # request being made — recording them would block a URL that was never
+        # actually tried, so `is_fetchable` separates the two cases.
+        fetchable, _ = fetch_module.is_fetchable(url)
+        if fetchable:
+            blocked_store.add_failure(url, page.error)
+            removed = source_store.remove_url(url)
+            text += (
+                "\nThis URL was added to the blocked list and will not be "
+                "fetched again."
+            )
+            summary = f"Could not read {url}; blocked"
+            if removed:
+                # The model must know its priority set shrank, or it will keep
+                # naming a source that is no longer on the list.
+                text += " It was also removed from your priority sources."
+                summary += "; removed from priority sources"
+
     return ToolOutcome(
-        text=page.to_tool_text(),
-        summary=f"Read {_host_of(url) or url} ({len(page.text)} chars)" if page.ok else f"Could not read {url}",
+        text=text,
+        summary=summary,
         sources=source,
         degraded=not page.ok,
     )
@@ -501,6 +548,11 @@ def _tool_assess_validity(arguments: dict) -> ToolOutcome:
     }
 
     meets = collective >= validity_module.TARGET_AVERAGE
+    # Multi-idea aware: on a "Find new ideas" turn the operator may have asked
+    # for several ideas, and each one must be reported WITH its own score.
+    # Nothing here may tell the model to stop after one assessment or to hide a
+    # below-target idea — the count comes from the operator's message (the
+    # objective), and a below-target score is presented as lower confidence.
     return ToolOutcome(
         text=(
             "Assessment recorded:\n"
@@ -510,17 +562,29 @@ def _tool_assess_validity(arguments: dict) -> ToolOutcome:
             f"- Collective average: {collective}\n"
             f"- Target: {validity_module.TARGET_AVERAGE:g}\n\n"
             + (
-                "This clears the target. Summarise your findings and offer the two "
-                "options — continue with this idea, or research a better one — then "
-                "stop. Do not write the prompts yet."
+                "This clears the target. Report this idea together with its "
+                "scores when you answer. If the operator asked for several "
+                "ideas, assess each remaining idea the same way — one "
+                "`assess_validity` call per idea — before you answer, and "
+                "present every idea with its own score. For a single-idea "
+                "request, summarise your findings and offer the two options — "
+                "continue with this idea, or research a better one. Do not "
+                "write the prompts yet."
                 if meets
                 else (
-                    f"This is BELOW the {validity_module.TARGET_AVERAGE:g}% target. "
-                    "Do not present it as the answer. Research a *different* "
-                    "candidate idea and score that one too, until one reaches the "
+                    f"This is BELOW the {validity_module.TARGET_AVERAGE:g}% "
+                    "target — report it with its real score, never a "
+                    "rounded-up one. Do not drop an idea the operator asked "
+                    "for just because it scored under the target: present it "
+                    "with its real score and mark it as lower confidence. If "
+                    "the operator asked for several ideas, assess each "
+                    "remaining distinct idea too — one `assess_validity` call "
+                    "per idea — and present them all with their scores. For a "
+                    "single-idea request, research a *different* candidate "
+                    "idea and score that one too, until one reaches the "
                     f"target or you have tried {validity_module.MAX_CANDIDATES} "
-                    "candidates. If none reaches it, say so plainly and report the "
-                    "best one with its real score."
+                    "candidates. If none reaches it, say so plainly and report "
+                    "the best one with its real score."
                 )
             )
         ),
@@ -770,8 +834,10 @@ _SIMILARITY_TOOL = Tool(
 _VALIDITY_TOOL = Tool(
     name="assess_validity",
     description=(
-        "Record your confidence assessment for the idea. Call this once, after "
-        "researching and before answering. It computes the collective average."
+        "Record your confidence assessment for one idea. Call it once per "
+        "idea you propose — each call scores the idea named in its `subject` "
+        "— after researching and before answering. Each call computes that "
+        "idea's collective average."
     ),
     parameters={
         "type": "object",

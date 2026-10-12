@@ -90,6 +90,52 @@ def save(text: str, *, filename: str = "") -> sources.SourceSet:
     return parsed
 
 
+def remove_url(url: str) -> sources.PrioritySource | None:
+    """Drop one source by URL, returning it — the auto-prune path.
+
+    Called when a priority source *fails to read*: a site the agent is told to
+    prefer but can never reach only lowers the run's success rate, so the entry
+    is removed automatically rather than retried on every future run. The
+    returned source (or ``None`` when the URL was not listed) lets the caller
+    tell the model the set shrank.
+
+    A miss writes nothing, so pruning a URL that was never listed cannot
+    disturb the stored file — and when the last source goes, the keys are
+    popped entirely so the feature reads as *off* (same state as a fresh
+    install), exactly as :func:`clear` leaves it.
+    """
+    stored = load()
+    if stored is None:
+        return None
+    key = sources.url_key(url)
+    removed = next(
+        (entry for entry in stored.sources if sources.url_key(entry.url) == key),
+        None,
+    )
+    if removed is None:
+        return None
+
+    remaining = [
+        entry for entry in stored.sources if sources.url_key(entry.url) != key
+    ]
+    document = app_settings.load_raw()
+    if remaining:
+        document[_STORE_KEY] = {
+            "version": sources.SCHEMA_VERSION,
+            "sources": [
+                source.to_dict()
+                for source in sorted(
+                    remaining, key=lambda item: (item.priority, item.host)
+                )
+            ],
+        }
+    else:
+        document.pop(_STORE_KEY, None)
+        document.pop(_NAME_KEY, None)
+    app_settings.save_raw(document)
+    return removed
+
+
 def clear() -> None:
     """Remove the stored source list.
 
