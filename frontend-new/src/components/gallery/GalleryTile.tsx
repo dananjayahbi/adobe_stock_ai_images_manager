@@ -93,6 +93,18 @@ export default function GalleryTile({
           {selected ? "✓" : ""}
         </button>
       )}
+
+      {/* Already delivered: the stamp mirrors the selection toolbar's mark,
+          so which images are used is answerable at a glance (the default
+          usage filter is "any"). */}
+      {record.is_used && (
+        <span
+          aria-label="Marked as used"
+          className="absolute right-2 top-2 rounded-sm border border-brass-400/70 bg-ink-900/80 px-1.5 py-0.5 font-stamp text-[10px] uppercase tracking-[0.14em] text-brass-300"
+        >
+          Used
+        </span>
+      )}
     </div>
   );
 }

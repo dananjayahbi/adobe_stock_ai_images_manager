@@ -20,6 +20,7 @@ import ViewerModal from "@/components/viewer/ViewerModal";
 import { downloadRecordFile } from "@/lib/downloads";
 import { downloadSelectionCsv } from "@/lib/delivery";
 import { deleteGroup, fetchGroups, renameGroup } from "@/lib/groups";
+import { setRecordsUsed } from "@/lib/records";
 import type { GalleryGroup, ImageRecord } from "@/lib/types";
 
 /**
@@ -170,6 +171,25 @@ function GalleryView() {
   const active = activeIndex !== null ? records[activeIndex] ?? null : null;
   const selectedIds = useMemo(() => Array.from(selected), [selected]);
 
+  // Which mark-used buttons the selection can use. Selected ids that are no
+  // longer on screen (a usage filter hid them after a reload) count for
+  // nothing — `null` then hides both buttons rather than guessing.
+  const selectedUsage = useMemo<"used" | "unused" | "mixed" | null>(() => {
+    if (selected.size === 0) return null;
+    let anyUsed = false;
+    let anyUnused = false;
+    let seen = 0;
+    for (const record of records) {
+      if (!selected.has(record.id)) continue;
+      seen += 1;
+      if (record.is_used) anyUsed = true;
+      else anyUnused = true;
+      if (anyUsed && anyUnused) return "mixed";
+    }
+    if (seen === 0) return null;
+    return anyUsed ? "used" : "unused";
+  }, [records, selected]);
+
   // Esc leaves select mode — but only when nothing else owns Esc (the viewer
   // and the dialogs close themselves first).
   useEffect(() => {
@@ -207,6 +227,22 @@ function GalleryView() {
       setActionError(err instanceof Error ? err.message : String(err))
     );
   }, [selectedIds]);
+
+  // Mark the selection used/unused in one request. Unlike delete, the
+  // selection is KEPT: marking is not the end of the workflow (the operator
+  // often filters by usage next), and reloading without clearing makes the
+  // used-stamps reappear under the same ticks.
+  const handleMarkUsage = useCallback(
+    (isUsed: boolean) => {
+      if (selectedIds.length === 0) return;
+      setRecordsUsed(selectedIds, isUsed)
+        .then(() => void reload())
+        .catch((err) =>
+          setActionError(err instanceof Error ? err.message : String(err))
+        );
+    },
+    [selectedIds, reload]
+  );
 
   const refreshAll = useCallback(() => {
     void reload();
@@ -433,6 +469,8 @@ function GalleryView() {
         onClear={clearSelection}
         onDownload={handleDownload}
         onExportCsv={handleExportCsv}
+        selectedUsage={selectedUsage}
+        onMarkUsage={handleMarkUsage}
         onGroup={() => setGroupDialogOpen(true)}
         onDelete={() => setDeleteOpen(true)}
       />

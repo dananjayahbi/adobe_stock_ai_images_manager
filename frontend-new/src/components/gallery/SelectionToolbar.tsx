@@ -9,6 +9,13 @@ interface SelectionToolbarProps {
   onDownload: () => void;
   /** Direct Adobe-template CSV export for the selection (optional). */
   onExportCsv?: () => void;
+  /**
+   * Usage state of the selection: which mark buttons make sense. `null`
+   * (nothing selected is still on screen) hides both.
+   */
+  selectedUsage?: "used" | "unused" | "mixed" | null;
+  /** Mark the selection used (true) or unused (false). */
+  onMarkUsage?: (isUsed: boolean) => void;
   onGroup: () => void;
   onDelete: () => void;
   /** Total images visible, so "select all" can say what it selects. */
@@ -28,6 +35,8 @@ export default function SelectionToolbar({
   onClear,
   onDownload,
   onExportCsv,
+  selectedUsage,
+  onMarkUsage,
   onGroup,
   onDelete,
   visibleCount,
@@ -50,6 +59,19 @@ export default function SelectionToolbar({
         {onExportCsv && (
           <Button variant="secondary" size="sm" onClick={onExportCsv}>
             ⇪ CSV
+          </Button>
+        )}
+        {/* Only offer the direction the selection can actually move: an
+            all-used selection needs "unused", anything else needs "used",
+            and a mix offers both. */}
+        {onMarkUsage && selectedUsage && selectedUsage !== "used" && (
+          <Button variant="secondary" size="sm" onClick={() => onMarkUsage(true)}>
+            ✓ Mark used
+          </Button>
+        )}
+        {onMarkUsage && selectedUsage && selectedUsage !== "unused" && (
+          <Button variant="secondary" size="sm" onClick={() => onMarkUsage(false)}>
+            ○ Mark unused
           </Button>
         )}
         <Button variant="secondary" size="sm" onClick={onGroup}>

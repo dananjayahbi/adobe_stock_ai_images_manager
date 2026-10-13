@@ -50,3 +50,20 @@ export async function deleteRecords(recordIds: string[]): Promise<{ deleted: num
   });
   return data;
 }
+
+/**
+ * Mark records as used/unused in one transaction (gallery multi-select).
+ *
+ * `used_at` is the backend's bookkeeping: set when marking used, cleared when
+ * marking unused — the client only decides the flag.
+ */
+export async function setRecordsUsed(
+  recordIds: string[],
+  isUsed: boolean
+): Promise<{ updated: number; missing?: string[] }> {
+  const { data } = await api.patch("/api/records/used", {
+    record_ids: recordIds,
+    is_used: isUsed,
+  });
+  return data;
+}
