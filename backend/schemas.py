@@ -242,6 +242,47 @@ class StageRunRequest(BaseModel):
     upscale: Optional["UpscaleSettingsPayload"] = None
 
 
+# --------------------------------------------------------------------------- #
+# Manual promotion to ready-to-upload (gallery override)
+# --------------------------------------------------------------------------- #
+
+class PromoteStepStatus(BaseModel):
+    """One requirement's state for one record in the promote pre-flight."""
+    key: str
+    label: str
+    ok: bool
+    detail: str = ""
+
+
+class PromoteCheckItem(BaseModel):
+    """Pre-flight report for a single record."""
+    record_id: str
+    filename: str
+    stage: str
+    #: False when the record must not be promoted (e.g. OCR_REJECTED).
+    eligible: bool = True
+    blocker: Optional[str] = None
+    steps: list[PromoteStepStatus] = []
+
+
+class PromoteCheckRequest(BaseModel):
+    """Request body for the promote pre-flight check."""
+    record_ids: list[str]
+
+
+class PromoteCheckResponse(BaseModel):
+    """Which requirements are missing per record, before anything runs."""
+    items: list[PromoteCheckItem] = []
+    missing: list[str] = []
+
+
+class PromoteRunRequest(BaseModel):
+    """Request body for running the missing steps and promoting."""
+    record_ids: list[str]
+    #: Include the LLM semantic audit in the acceptance QC re-run.
+    use_semantic: bool = False
+
+
 class UpscaleSettingsPayload(BaseModel):
     """Stage 3 upscale options as sent by the UI.
 

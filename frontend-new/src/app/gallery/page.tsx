@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useRecords } from "@/hooks/useRecords";
+import { useInfiniteRecords } from "@/hooks/useInfiniteRecords";
 import { useFolderHistory } from "@/hooks/useFolderHistory";
 import { useMarqueeSelect } from "@/hooks/useMarqueeSelect";
 import EmptyState from "@/components/ui/EmptyState";
@@ -16,6 +16,8 @@ import SelectionToolbar from "@/components/gallery/SelectionToolbar";
 import DownloadDialog from "@/components/gallery/DownloadDialog";
 import DeleteDialog from "@/components/gallery/DeleteDialog";
 import GroupDialog from "@/components/gallery/GroupDialog";
+import PromoteDialog from "@/components/gallery/PromoteDialog";
+import LoadSentinel from "@/components/gallery/LoadSentinel";
 import ViewerModal from "@/components/viewer/ViewerModal";
 import { downloadRecordFile } from "@/lib/downloads";
 import { downloadSelectionCsv } from "@/lib/delivery";
@@ -64,6 +66,7 @@ function GalleryView() {
   const [downloadOpen, setDownloadOpen] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [groupDialogOpen, setGroupDialogOpen] = useState(false);
+  const [promoteOpen, setPromoteOpen] = useState(false);
   const [renameTarget, setRenameTarget] = useState<GalleryGroup | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [actionError, setActionError] = useState<string | null>(null);
@@ -99,8 +102,17 @@ function GalleryView() {
     knownGroupIds,
   });
 
-  const { page, loading, error, reload } = useRecords({
-    limit: 500,
+  const {
+    items: records,
+    total,
+    loading,
+    loadingMore,
+    hasMore,
+    error,
+    loadMore,
+    reload,
+  } = useInfiniteRecords({
+    pageSize: 120,
     search,
     stageUpdated: true,
     stage: filters.stage,
@@ -108,7 +120,6 @@ function GalleryView() {
     groupId: groupId ?? "none",
   });
 
-  const records = useMemo(() => page?.items ?? [], [page]);
   const openGroup = useMemo(
     () => groups.find((group) => group.id === groupId) ?? null,
     [groups, groupId]
@@ -201,6 +212,7 @@ function GalleryView() {
         downloadOpen ||
         deleteOpen ||
         groupDialogOpen ||
+        promoteOpen ||
         renameTarget
       ) {
         return;
@@ -210,7 +222,7 @@ function GalleryView() {
     };
     window.addEventListener("keydown", onKey, true);
     return () => window.removeEventListener("keydown", onKey, true);
-  }, [selectMode, activeIndex, downloadOpen, deleteOpen, groupDialogOpen, renameTarget]);
+  }, [selectMode, activeIndex, downloadOpen, deleteOpen, groupDialogOpen, promoteOpen, renameTarget]);
 
   const handleDownload = useCallback(() => {
     if (selectedIds.length === 0) return;
@@ -314,9 +326,9 @@ function GalleryView() {
                 </span>
               </>
             )}
-            {page && (
+            {total > 0 && (
               <span className="ml-3 font-stamp text-sm text-ink-400">
-                {page.total} plates
+                {total} plates
               </span>
             )}
           </h1>
@@ -459,6 +471,13 @@ function GalleryView() {
             ))}
             <MarqueeOverlay rect={marquee.rect} />
           </div>
+          {/* Lazy loading: the next page prefetches as this scrolls into view. */}
+          <LoadSentinel hasMore={hasMore} onLoadMore={loadMore} />
+          {loadingMore && (
+            <p className="pb-6 text-center font-stamp text-[10px] uppercase tracking-[0.14em] text-ink-400">
+              Loading more…
+            </p>
+          )}
         </section>
       )}
 
@@ -471,6 +490,7 @@ function GalleryView() {
         onExportCsv={handleExportCsv}
         selectedUsage={selectedUsage}
         onMarkUsage={handleMarkUsage}
+        onPromote={() => setPromoteOpen(true)}
         onGroup={() => setGroupDialogOpen(true)}
         onDelete={() => setDeleteOpen(true)}
       />
@@ -493,6 +513,16 @@ function GalleryView() {
         open={groupDialogOpen}
         onClose={() => setGroupDialogOpen(false)}
         onChanged={refreshAll}
+      />
+
+      <PromoteDialog
+        recordIds={selectedIds}
+        open={promoteOpen}
+        onClose={() => setPromoteOpen(false)}
+        onPromoted={() => {
+          void reload();
+          loadGroups();
+        }}
       />
 
       {/* Rename folder */}

@@ -16,6 +16,11 @@ interface SelectionToolbarProps {
   selectedUsage?: "used" | "unused" | "mixed" | null;
   /** Mark the selection used (true) or unused (false). */
   onMarkUsage?: (isUsed: boolean) => void;
+  /**
+   * Push the selection toward ready-to-upload, running each image's missing
+   * pipeline steps first (opens the pre-flight dialog).
+   */
+  onPromote?: () => void;
   onGroup: () => void;
   onDelete: () => void;
   /** Total images visible, so "select all" can say what it selects. */
@@ -37,6 +42,7 @@ export default function SelectionToolbar({
   onExportCsv,
   selectedUsage,
   onMarkUsage,
+  onPromote,
   onGroup,
   onDelete,
   visibleCount,
@@ -72,6 +78,11 @@ export default function SelectionToolbar({
         {onMarkUsage && selectedUsage && selectedUsage !== "unused" && (
           <Button variant="secondary" size="sm" onClick={() => onMarkUsage(false)}>
             ○ Mark unused
+          </Button>
+        )}
+        {onPromote && (
+          <Button variant="secondary" size="sm" onClick={onPromote}>
+            ↑ Ready to upload
           </Button>
         )}
         <Button variant="secondary" size="sm" onClick={onGroup}>

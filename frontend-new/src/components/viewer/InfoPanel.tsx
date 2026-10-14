@@ -1,6 +1,7 @@
 "use client";
 
 import Badge from "@/components/ui/Badge";
+import JsonValue, { isEmptyValue } from "@/components/viewer/JsonValue";
 import type { ImageRecord, ImageStatus } from "@/lib/types";
 
 /**
@@ -38,36 +39,6 @@ const STATUS_TONES: Record<ImageStatus, Tone> = {
   APPROVED: "success",
   READY: "success",
 };
-
-/** True when a JSON-column value carries nothing worth rendering. */
-function isEmptyValue(value: unknown): boolean {
-  if (value == null || value === "") return true;
-  if (Array.isArray(value)) return value.length === 0;
-  if (typeof value === "object") return Object.keys(value as object).length === 0;
-  return false;
-}
-
-/** Compact rendering for JSON values: strings as-is, objects as short JSON. */
-function formatValue(value: unknown): string {
-  if (typeof value === "string") return value;
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  try {
-    const json = JSON.stringify(value) ?? String(value);
-    return json.length > 120 ? `${json.slice(0, 117)}…` : json;
-  } catch {
-    return String(value);
-  }
-}
-
-/** Full (untruncated) text for a row's `title` tooltip. */
-function fullValue(value: unknown): string {
-  if (typeof value === "string") return value;
-  try {
-    return JSON.stringify(value) ?? String(value);
-  } catch {
-    return String(value);
-  }
-}
 
 function formatDate(value?: string | null): string | undefined {
   if (!value) return undefined;
@@ -161,15 +132,7 @@ function JsonRows({ data }: { data: Record<string, unknown> }) {
   return (
     <dl className="mt-1 space-y-0.5">
       {rows.map(([key, value]) => (
-        <div key={key} className="flex items-baseline justify-between gap-3 py-0.5">
-          <dt className="label-caps shrink-0">{key.replace(/_/g, " ")}</dt>
-          <dd
-            className="min-w-0 truncate text-right text-[11px] text-ink-200"
-            title={fullValue(value)}
-          >
-            {formatValue(value)}
-          </dd>
-        </div>
+        <JsonValue key={key} label={key.replace(/_/g, " ")} value={value} />
       ))}
     </dl>
   );
@@ -388,12 +351,14 @@ export default function InfoPanel({ record, onClose }: InfoPanelProps) {
             label="Original path"
             value={record.original_path ?? null}
             mono
+            wrap
             title={record.original_path ?? undefined}
           />
           <Row
             label="Working path"
             value={record.working_path ?? null}
             mono
+            wrap
             title={record.working_path ?? undefined}
           />
           <Row label="Batch" value={batch?.value ?? null} mono title={batch?.title} />
