@@ -264,7 +264,10 @@ def _initial_messages(
 
     user_text = (request.message or "").strip()
     if request.wants_prompts and request.count > 0:
-        user_text += synthesis.prompt_format_instruction(request.count)
+        user_text += synthesis.prompt_format_instruction(
+            request.count,
+            aspect_token=prompt_module.aspect_token_for(request.mode),
+        )
     messages.append({"role": "user", "content": user_text})
     return messages, folded
 
@@ -1175,7 +1178,11 @@ def _finalise(
             yield
         return
 
-    drafts, pairs, note, summary = synthesis.build_drafts(answer)
+    from services.research import prompts as prompt_module
+
+    drafts, pairs, note, summary = synthesis.build_drafts(
+        answer, aspect_token=prompt_module.aspect_token_for(request.mode)
+    )
 
     if note:
         yield event_module.event(event_module.NOTICE, text=note)

@@ -268,7 +268,7 @@ headings:
   "prompts": [
     {
       "title": "short human label",
-      "body": "the full generation prompt paragraph, ending with --ar 16:9",
+      "body": "the full generation prompt paragraph, ending with the House Standard's aspect token (e.g. --ar 1:1)",
       "tags": ["2-4 short topical tags"],
       "category": 1,
       "notes": "optional one-line note for the operator"
