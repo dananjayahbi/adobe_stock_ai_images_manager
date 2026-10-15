@@ -21,7 +21,8 @@ import LoadSentinel from "@/components/gallery/LoadSentinel";
 import ViewerModal from "@/components/viewer/ViewerModal";
 import { downloadRecordFile } from "@/lib/downloads";
 import { downloadSelectionCsv } from "@/lib/delivery";
-import { deleteGroup, fetchGroups, renameGroup } from "@/lib/groups";
+import { beginDrag } from "@/lib/dragPayload";
+import { assignRecords, deleteGroup, fetchGroups, renameGroup } from "@/lib/groups";
 import { setRecordsUsed } from "@/lib/records";
 import type { GalleryGroup, ImageRecord } from "@/lib/types";
 
@@ -262,6 +263,33 @@ function GalleryView() {
     clearSelection();
   }, [reload, loadGroups, clearSelection]);
 
+  // Drag a selected tile onto a folder card to move it (and the rest of the
+  // selection) in. An unselected tile — reachable when a filter hid the rest
+  // of the selection — drags itself.
+  const handleTileDragStart = useCallback(
+    (event: React.DragEvent, record: ImageRecord) => {
+      const ids =
+        selected.has(record.id) && selected.size > 1
+          ? Array.from(selected)
+          : [record.id];
+      beginDrag(event.dataTransfer, ids);
+    },
+    [selected]
+  );
+
+  const handleDropOnGroup = useCallback(
+    async (group: GalleryGroup, recordIds: string[]) => {
+      if (recordIds.length === 0) return;
+      try {
+        await assignRecords(recordIds, group.id);
+        refreshAll();
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : String(err));
+      }
+    },
+    [refreshAll]
+  );
+
   const confirmDeleteGroup = useCallback(
     async (group: GalleryGroup) => {
       try {
@@ -424,6 +452,7 @@ function GalleryView() {
                   setRenameValue(g.name);
                 }}
                 onDelete={(g) => void confirmDeleteGroup(g)}
+                onDropRecords={(ids) => void handleDropOnGroup(group, ids)}
               />
             ))}
           </div>
@@ -445,7 +474,8 @@ function GalleryView() {
           )}
           {selectMode && (
             <p className="mb-3 font-stamp text-[10px] uppercase tracking-[0.14em] text-ink-400">
-              Click to tick · drag a box to select · Ctrl+drag adds · Esc exits
+              Click to tick · drag a box to select · Ctrl+drag adds · drag a
+              tile onto a folder to move · Esc exits
             </p>
           )}
           <div
@@ -467,6 +497,8 @@ function GalleryView() {
                 selected={selected.has(record.id)}
                 onToggleSelect={toggleSelect}
                 selectMode={selectMode}
+                draggable={selected.has(record.id)}
+                onDragStart={handleTileDragStart}
               />
             ))}
             <MarqueeOverlay rect={marquee.rect} />

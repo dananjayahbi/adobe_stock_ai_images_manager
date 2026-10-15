@@ -486,7 +486,7 @@ class RenameRequest(BaseModel):
 
     Adobe matches a CSV row to an uploaded file by filename, so the name is part
     of the deliverable. Names are normalised server-side (slugified, forced to a
-    JPEG extension, truncated to Adobe's 30-character cap) and reported back so
+    JPEG extension, truncated to the filename cap) and reported back so
     the operator sees exactly what will be uploaded.
     """
 

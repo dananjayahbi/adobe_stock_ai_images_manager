@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from config import settings
 from database import Base, engine
+from services.filename_backfill import run_filename_backfill
 from services.metric_repair import run_metric_repairs
 from services.migrations import run_additive_migrations
 from services.pipeline_runner import recover_interrupted_batches
@@ -28,6 +29,10 @@ async def lifespan(app: FastAPI):
     # carry the original upload's geometry and size. Repair them once; the pass
     # is self-limiting, so later starts do nothing.
     run_metric_repairs(engine)
+    # Records pinned by an old CSV download still carry the pre-raise
+    # 30-character filename; upgrade those pins to the full derived name
+    # (self-limiting — hand-chosen names never match the old truncation).
+    run_filename_backfill(engine)
     # Batch jobs live in memory: a restart orphans any batch left `running`,
     # which would read as a hung run forever and block re-runs. Fail them once.
     recover_interrupted_batches(engine)

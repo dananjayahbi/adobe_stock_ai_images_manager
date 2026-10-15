@@ -80,9 +80,9 @@ async def rename_assets(
     exporting, and the CSV, the download and the ZIP all then agree.
 
     Names are normalised rather than rejected - the operator types a human name
-    and the tool makes it Adobe-compliant (slugified, JPEG extension, 30-char
-    cap). Genuine problems (an empty name) are reported per record so one bad row
-    cannot fail the whole batch.
+    and the tool makes it uploadable (slugified, JPEG extension, filename
+    cap). Genuine problems (an empty name) are reported per record so one bad
+    row cannot fail the whole batch.
     """
     records = _load_records(db, [item.record_id for item in request.items])
     by_id = {record.id: record for record in records}

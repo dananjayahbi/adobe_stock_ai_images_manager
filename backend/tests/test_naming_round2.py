@@ -84,8 +84,8 @@ def _stage_file(tmp_path, monkeypatch, record_id, suffix=".jpg"):
 # 1. No code in the name
 # --------------------------------------------------------------------------- #
 
-#: Long enough that the derived name is truncated, which is exactly the case that
-#: used to grow an identifier suffix.
+#: Long enough that the old 30-char cap truncated the derived name — the case
+#: that used to grow an identifier suffix.
 LONG_TITLE = "Futuristic automated warehouse with robotic sorting arms"
 
 
@@ -98,7 +98,7 @@ def test_derived_name_carries_no_identifier(make_record, db_session_factory):
 
     name = asset_naming.derive_name(record)
 
-    assert name == "futuristic-automated-wareh.jpg"
+    assert name == "futuristic-automated-warehouse-with-robotic-sorting-arms.jpg"
     assert len(name) <= MAX_FILENAME_LENGTH
     # The id, or any fragment of it, must not appear.
     assert record_id[:6] not in name
@@ -144,10 +144,10 @@ def test_colliding_names_are_made_unique_and_keep_their_opening_words(
 ):
     """Two rows must not ship under one name, and the marker must be readable.
 
-    A hard 30-character cap with no identifier to disambiguate on means the
-    marked name has to give up a word to make room. What matters is that the
+    A filled filename budget with no identifier to disambiguate on means the
+    marked name may have to give up a word to make room. What matters is that the
     marker is a readable ``-2`` in the stem - not a hash - and that both names
-    stay inside Adobe's cap with the extension intact.
+    stay inside the filename cap with the extension intact.
     """
     from services import asset_naming
 
@@ -165,7 +165,7 @@ def test_colliding_names_are_made_unique_and_keep_their_opening_words(
     assert all(len(name) <= MAX_FILENAME_LENGTH for name in names)
     assert all(name.endswith(".jpg") for name in names)
     # Both still open with the same words, and the second carries a plain marker.
-    assert names[0] == "futuristic-automated-wareh.jpg"
+    assert names[0] == "futuristic-automated-warehouse-with-robotic-sorting-arms.jpg"
     assert names[1].endswith("-2.jpg")
     assert names[1].startswith("futuristic-automated")
 
@@ -318,7 +318,7 @@ def test_generate_metadata_normalises_the_model_filename(monkeypatch):
 
     result = gemini_metadata.generate_metadata("whatever.jpg")
 
-    assert result["suggested_filename"] == "robotic-arm-sorting-parcel.jpg"
+    assert result["suggested_filename"] == "robotic-arm-sorting-parcels.jpg"
     assert len(result["suggested_filename"]) <= MAX_FILENAME_LENGTH
 
 
@@ -366,11 +366,9 @@ def test_generate_metadata_keeps_the_proposal_separate_from_the_title(monkeypatc
     result = gemini_metadata.generate_metadata("whatever.jpg")
 
     assert result["title"] == "Robotic arm sorting parcels in a depot"
-    # `robotic-arm-sorting-parcels.jpg` would be 32 characters, so the stem is
-    # clipped to fit Adobe's 30-character cap — the assertion is on the rules, not
-    # on one exact string.
-    assert result["suggested_filename"].startswith("robotic-arm-sorting-parcel")
-    assert result["suggested_filename"].endswith(".jpg")
+    # The full stem now fits — no truncation — so the proposal arrives exactly
+    # as proposed, extension added by the normaliser.
+    assert result["suggested_filename"] == "robotic-arm-sorting-parcels.jpg"
     assert len(result["suggested_filename"]) <= MAX_FILENAME_LENGTH
 
 

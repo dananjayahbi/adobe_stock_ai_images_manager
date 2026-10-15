@@ -250,9 +250,15 @@ def test_title_limit_matches_adobe_published_maximum():
     assert MAX_TITLE_LENGTH == 70
 
 
-def test_filename_limit_matches_adobe_published_maximum():
-    """Adobe's CSV page states "Filename | 30 characters maximum"."""
-    assert MAX_FILENAME_LENGTH == 30
+def test_filename_limit_keeps_full_descriptive_names():
+    """Adobe *lists* "Filename | 30 characters maximum", but that figure is
+    advisory — the uploader accepts longer names and the enforced rule is the
+    exact CSV↔file match. The cap is therefore the tool's filesystem-safe
+    ceiling, high enough that full title-derived names survive unclipped."""
+    from config import settings
+
+    assert MAX_FILENAME_LENGTH == settings.CSV_MAX_FILENAME_LENGTH
+    assert MAX_FILENAME_LENGTH >= 100
 
 
 def test_row_and_size_limits_match_adobe_published_maximums():
@@ -315,7 +321,7 @@ def test_build_row_truncates_title_on_a_word_boundary():
 
 
 def test_build_row_filenames_respect_adobe_length_cap():
-    """Adobe caps the Filename column at 30 characters, extension included."""
+    """Filenames stay within the tool's cap, extension included."""
     record = _record(generated_title="A very long descriptive title indeed" * 3)
     row, _ = build_row(record)
 
@@ -324,21 +330,21 @@ def test_build_row_filenames_respect_adobe_length_cap():
 
 
 def test_build_row_filenames_stay_unique_after_truncation():
-    """Two long titles that share a prefix must not collapse to one filename.
+    """Two rows that derive the same filename must not both ship under it.
 
     Uniqueness is a property of the **batch**, not of a single row: the name is
     derived from the title alone (no record id mixed in), so two records with
-    titles sharing a long prefix necessarily derive the same truncated name. What
-    must not happen is that both are *exported* under it, so the guarantee is
-    asserted on the document - which is also where Adobe reads it from.
+    the same title necessarily derive the same name. What must not happen is
+    that both are *exported* under it, so the guarantee is asserted on the
+    document - which is also where Adobe reads it from.
 
     Asserting it per row would require the row builder to know the other rows,
     which is exactly the coupling that put a meaningless record-id fragment into
     every truncated filename.
     """
-    shared = "a beautifully lit mountain landscape scene with soft golden "
-    left = _record(id="aaaaaaaa-1111", generated_title=shared + "light")
-    right = _record(id="bbbbbbbb-2222", generated_title=shared + "haze")
+    title = "a beautifully lit mountain landscape scene with soft golden light"
+    left = _record(id="aaaaaaaa-1111", generated_title=title)
+    right = _record(id="bbbbbbbb-2222", generated_title=title)
 
     result = build_csv([left, right])
     filenames = [

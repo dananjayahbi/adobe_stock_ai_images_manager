@@ -139,8 +139,8 @@ def test_normalise_name_strips_non_ascii_to_the_ascii_remainder():
     assert asset_naming.normalise_name("Ünïcödé Tïtlé") == "n-c-d-t-tl.jpg"
 
 
-def test_normalise_name_respects_the_thirty_character_cap():
-    """Adobe's cap counts the whole filename, extension included."""
+def test_normalise_name_respects_the_filename_cap():
+    """The cap counts the whole filename, extension included."""
     from services import asset_naming
     from services.upload_table import MAX_FILENAME_LENGTH
 
@@ -159,9 +159,10 @@ def test_validate_name_accepts_a_compliant_name():
 def test_validate_name_reports_the_reason_a_name_is_rejected():
     """Problems are returned, not raised, so a batch can report per record."""
     from services import asset_naming
+    from services.upload_table import MAX_FILENAME_LENGTH
 
-    problems = asset_naming.validate_name("x" * 40 + ".jpg")
-    assert any("30" in problem for problem in problems)
+    problems = asset_naming.validate_name("x" * (MAX_FILENAME_LENGTH + 4))
+    assert any(str(MAX_FILENAME_LENGTH) in problem for problem in problems)
 
     problems = asset_naming.validate_name("photo.png")
     assert any("png" in problem for problem in problems)

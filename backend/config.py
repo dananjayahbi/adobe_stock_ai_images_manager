@@ -134,12 +134,18 @@ class Settings(BaseSettings):
     ADOBE_MAX_MEGAPIXELS: float = 100.0
     ADOBE_MAX_FILE_SIZE_MB: float = 45.0
 
-    #: CSV export limits. Exceeding any of these makes Adobe reject the file
-    #: outright, so the exporter truncates and reports rather than emitting it.
+    #: CSV export limits. Exceeding CSV_MAX_ROWS/CSV_MAX_FILE_SIZE_BYTES makes
+    #: Adobe reject the file outright, so the exporter truncates and reports
+    #: rather than emitting it.
     CSV_MAX_ROWS: int = 5_000
     CSV_MAX_FILE_SIZE_BYTES: int = 1_000_000  # 1 MB
-    #: Filename and Title are hard-truncated to Adobe's published lengths.
-    CSV_MAX_FILENAME_LENGTH: int = 30
+    #: Adobe's console *lists* "Filename: 30 characters maximum", but that figure
+    #: is advisory guidance, not a portal limit: the uploader accepts longer
+    #: names, and the hard requirement is that the CSV Filename matches the
+    #: uploaded file exactly. The tool therefore keeps the full descriptive name
+    #: (titles stay within the real 70-char limit) and only caps at a
+    #: filesystem-safe length. Title is genuinely hard-capped by Adobe at 70.
+    CSV_MAX_FILENAME_LENGTH: int = 100
     CSV_MAX_TITLE_LENGTH: int = 70
     #: Keywords: the CSV page says 50, the titles/keywords page and the portal
     #: dialog say 49. The lower, more specific figure is the safe one.

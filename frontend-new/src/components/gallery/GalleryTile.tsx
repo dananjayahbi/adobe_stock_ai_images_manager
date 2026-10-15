@@ -11,6 +11,13 @@ interface GalleryTileProps {
   onToggleSelect?: (record: ImageRecord) => void;
   /** Select mode: the checkbox is always visible, clicking ticks the tile. */
   selectMode?: boolean;
+  /**
+   * Makes the tile draggable so it can be dropped onto a folder card. Set for
+   * *selected* tiles only — one drag then carries the whole selection (the
+   * desktop convention), and the marquee ignores presses on a drag source.
+   */
+  draggable?: boolean;
+  onDragStart?: (event: React.DragEvent, record: ImageRecord) => void;
 }
 
 /** True when the thumbnail is a transparent PNG cut-out. */
@@ -31,6 +38,8 @@ export default function GalleryTile({
   selected = false,
   onToggleSelect,
   selectMode = false,
+  draggable = false,
+  onDragStart,
 }: GalleryTileProps) {
   const thumb = thumbnailUrl(record.thumbnail_path);
   const cutout = isCutout(record);
@@ -41,9 +50,14 @@ export default function GalleryTile({
   return (
     <div
       data-record-id={record.id}
+      draggable={draggable}
+      // The marquee checks this before starting, so a press on a drag source
+      // belongs to the native drag, not the rubber band.
+      data-drag-src={draggable ? "true" : undefined}
+      onDragStart={onDragStart ? (event) => onDragStart(event, record) : undefined}
       className={`frame-card group relative mb-4 block w-full overflow-hidden break-inside-avoid transition-all hover:-translate-y-0.5 hover:shadow-raised ${
         selected ? "ring-2 ring-oxblood-400" : ""
-      } ${selectMode ? "cursor-pointer" : ""}`}
+      } ${selectMode ? "cursor-pointer" : ""} ${draggable ? "cursor-grab active:cursor-grabbing" : ""}`}
     >
       <button
         type="button"

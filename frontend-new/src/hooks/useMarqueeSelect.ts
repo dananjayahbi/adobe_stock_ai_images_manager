@@ -47,6 +47,9 @@ export function useMarqueeSelect({ enabled, containerRef, onSelect }: MarqueeOpt
   const onPointerDown = useCallback(
     (event: ReactPointerEvent) => {
       if (!enabled || event.button !== 0) return;
+      // A press on a drag source (a selected, draggable tile) belongs to the
+      // native drag — starting the marquee here would fight it for the pointer.
+      if ((event.target as HTMLElement).closest("[data-drag-src]")) return;
       start.current = { x: event.clientX, y: event.clientY };
       dragging.current = false;
     },

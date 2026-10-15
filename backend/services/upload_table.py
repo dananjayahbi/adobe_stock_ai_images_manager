@@ -8,19 +8,21 @@ matches a CSV row to an uploaded file by filename:
 * the single-asset download endpoint,
 * the ZIP bundle endpoint.
 
-Adobe's published CSV requirement is **"Filename: 30 characters maximum"**,
-counted on the complete filename *including* the extension. That is a hard
-portal-side limit, so names are truncated to fit rather than emitted long and
-rejected.
+Adobe's CSV guidance *lists* **"Filename: 30 characters maximum"**, but that
+figure is advisory (the uploader accepts longer names — the enforced rule is
+that the CSV Filename matches the uploaded file exactly). Names are therefore
+kept full and descriptive, truncated only to a filesystem-safe cap
+(``settings.CSV_MAX_FILENAME_LENGTH``, currently 100) rather than clipped at 30.
 
-Because truncation can make two long titles collide, a *batch* de-duplicates its
-names before export (see :func:`services.asset_naming.deduplicate`) and shortens
-the title of the second row so the numeric suffix still fits inside Adobe's cap.
+Because long titles can still collide, a *batch* de-duplicates its names before
+export (see :func:`services.asset_naming.deduplicate`), carving the numeric
+suffix out of the stem so the full name still fits the cap.
 """
 
 import re
 from pathlib import Path
 
+from config import settings
 from models import ImageRecord
 
 #: Characters that are unsafe in a download filename.
@@ -29,12 +31,14 @@ _UNSAFE_FILENAME = re.compile(r"[^A-Za-z0-9._-]+")
 #: Runs of separator characters, collapsed to a single hyphen.
 #:
 #: Without this, a title like "trailing --- hyphens" produced
-#: ``trailing-----hyphens``: ugly in the portal and wasteful of Adobe's
-#: 30-character budget, which is counted per character.
+#: ``trailing-----hyphens``: ugly in the portal and wasteful of the filename
+#: budget, which is counted per character.
 _SEPARATOR_RUN = re.compile(r"[-_]{2,}")
 
-#: Adobe: "Filename | 30 characters maximum". Counted on the whole filename.
-MAX_FILENAME_LENGTH = 30
+#: Full delivered filename cap, including the extension. Adobe's "30 characters"
+#: figure is advisory; this is the tool's filesystem-safe ceiling
+#: (:data:`config.CSV_MAX_FILENAME_LENGTH`).
+MAX_FILENAME_LENGTH = settings.CSV_MAX_FILENAME_LENGTH
 
 
 def _slugify(value: str) -> str:

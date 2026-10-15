@@ -46,11 +46,11 @@ PROHIBITED_TERMS = (
 #: Adobe: "Title | 70 characters maximum". The generator is told a slightly
 #: lower target so a trailing word is never chopped mid-phrase.
 TITLE_TARGET = 68
-#: Characters the model may use for the filename *stem*. Adobe's 30-character
-#: filename cap includes the extension, so the stem gets the remainder; a little
-#: headroom is kept back because the batch de-duplicator may need to append a
-#: ``-2`` marker to a colliding name.
-FILENAME_STEM_TARGET = 26
+#: Characters the model may use for the filename *stem*. Adobe's "30
+#: characters" filename figure is advisory (long names upload fine), so the
+#: model may propose the full descriptive stem; the real ceiling is the tool's
+#: filename cap minus headroom for the batch de-duplicator's ``-2`` marker.
+FILENAME_STEM_TARGET = 90
 #: Adobe's ceiling; the prompt targets the same figure so nothing is wasted.
 MAX_KEYWORDS = settings.CSV_MAX_KEYWORDS
 #: Keywords in these positions influence search ranking most, so the prompt
@@ -318,7 +318,7 @@ def generate_metadata(
 
     # The model was asked to name the file as well as describe it. The name is
     # normalised through the same rules the operator's own renames go through
-    # (slugified, JPEG extension, 30-character cap), so a proposal is always
+    # (slugified, JPEG extension, filename cap), so a proposal is always
     # directly applicable - never something the operator has to fix by hand.
     #
     # An absent or useless answer stays None rather than becoming the generic
