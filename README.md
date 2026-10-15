@@ -2,6 +2,26 @@
 
 A local desktop application for managing, auditing, and preparing AI-generated images for Adobe Stock submission. Uses a Python FastAPI backend with automated quality control and a Next.js frontend dashboard.
 
+## Universal Platform Foundation (2026-10)
+
+The app is now the foundation of a **universal, multi-platform image-upload studio**: after login you land on a master platform picker, with Adobe Stock fully wired as the first platform and five more marketplaces registered behind "Coming Soon" pages — all sharing one backend, one design system, and the shared upscale/QC/metadata processing layer, while keeping completely isolated storage and databases per platform.
+
+**Route map:** `/login` → `/` (platform picker) → `/adobe-stock/*` (live pipeline) plus `/freepik`, `/vecteezy`, `/dreamstime`, `/123rf`, `/wirestock` (coming soon).
+
+**Auth quick-start:** sign in with `admin` / `admin` (defaults), configured in `.env` via `AUTH_ENABLED`, `AUTH_USERNAME`, `AUTH_PASSWORD`, `AUTH_SECRET_KEY`, and `AUTH_SESSION_TTL_HOURS` (see `backend/.env.example`). Browse on **localhost** — the `studio_session` session cookie is host-scoped, so reaching the app through a different hostname or LAN IP drops the session. This is deliberately lightweight local-first auth, not production-hardened.
+
+**Storage layout:**
+
+```text
+storage/
+  app_settings.json             # shared, app-level settings
+  platforms/adobe_stock/        # Adobe data: 10 data dirs + adobe_stock.db (161 records migrated)
+  platforms/<id>/               # one isolated root per future platform (created lazily)
+  _recovery_backup/             # one-time migration recovery snapshot
+```
+
+System design, isolation rules, and the step-by-step add-a-platform checklist live in [ARCHITECTURE.md](ARCHITECTURE.md).
+
 ## Quick Start
 
 ### Prerequisites

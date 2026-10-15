@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
-from config import STORAGE_ROOT, settings
+from config import ADOBE_STOCK_ROOT, settings
 from database import get_db
 from models import ImageRecord, ImageStatus, utcnow
 from schemas import (
@@ -196,7 +196,7 @@ async def download_records_zip(request: DeleteRequest, db: Session = Depends(get
         raise HTTPException(status_code=404, detail="No matching records found.")
 
     tmp = tempfile.NamedTemporaryFile(
-        suffix=".zip", delete=False, dir=str(STORAGE_ROOT)
+        suffix=".zip", delete=False, dir=str(ADOBE_STOCK_ROOT)
     )
     tmp.close()
     zip_path = Path(tmp.name)

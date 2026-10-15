@@ -57,6 +57,13 @@ def db_session_factory():
 def client(db_session_factory, monkeypatch, tmp_path):
     """TestClient with the DB dependency overridden and background audits stubbed."""
 
+    # Auth is off for this fixture: the legacy suite predates login and never
+    # sends a session cookie. Import here so conftest keeps no top-level auth
+    # dependency (auth_config is read per-request by the middleware).
+    from auth_config import auth_settings
+
+    monkeypatch.setattr(auth_settings, "AUTH_ENABLED", False)
+
     def override_get_db():
         session = db_session_factory()
         try:
@@ -91,6 +98,41 @@ def client(db_session_factory, monkeypatch, tmp_path):
     # the caller and are tested through the orchestrator directly.
 
     with TestClient(app) as test_client:
+        yield test_client
+
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def auth_client(db_session_factory, monkeypatch):
+    """TestClient with auth ENABLED and a logged-in session cookie.
+
+    Mirrors ``client`` but keeps the middleware active, logs in through the
+    real endpoint (``TestClient`` persists the resulting cookie across
+    requests), and only tears down dependency overrides afterwards.
+    """
+    from auth_config import auth_settings
+
+    monkeypatch.setattr(auth_settings, "AUTH_ENABLED", True)
+
+    def override_get_db():
+        session = db_session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/api/auth/login",
+            json={
+                "username": auth_settings.AUTH_USERNAME,
+                "password": auth_settings.AUTH_PASSWORD,
+            },
+        )
+        assert response.status_code == 200, response.text
         yield test_client
 
     app.dependency_overrides.clear()

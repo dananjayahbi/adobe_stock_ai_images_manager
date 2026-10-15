@@ -141,7 +141,7 @@ export default function ProcessingPage() {
         title="Could not load this batch"
         body={error}
         action={
-          <Link href="/">
+          <Link href="/adobe-stock">
             <Button variant="secondary">Back to home</Button>
           </Link>
         }
@@ -221,7 +221,7 @@ export default function ProcessingPage() {
                 Run pipeline
               </Button>
             )}
-            <Link href="/gallery">
+            <Link href="/adobe-stock/gallery">
               <Button variant="ghost" size="sm">
                 Gallery →
               </Button>
@@ -317,7 +317,7 @@ export default function ProcessingPage() {
               <p className="text-sm text-ink-400">
                 Results are in the gallery.
               </p>
-              <Link href="/gallery">
+              <Link href="/adobe-stock/gallery">
                 <Button variant="secondary" size="sm" className="mt-2">
                   Open gallery
                 </Button>

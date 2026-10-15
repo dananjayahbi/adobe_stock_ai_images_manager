@@ -103,7 +103,13 @@ export function useResearchStream(): UseResearchStreamResult {
             count: options.count,
             validityCheck: options.validityCheck,
           }),
-          { signal: controller.signal, headers: { Accept: "text/event-stream" } }
+          {
+            signal: controller.signal,
+            headers: { Accept: "text/event-stream" },
+            // Cross-origin to the API host — the session cookie rides along
+            // only when credentials are included, or the stream 401s.
+            credentials: "include",
+          }
         );
       } catch (error) {
         if ((error as Error)?.name === "AbortError") return;

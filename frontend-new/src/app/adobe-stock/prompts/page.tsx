@@ -27,10 +27,10 @@ import { reduceEvents } from "@/lib/researchStream";
 
 /**
  * Prompts: the research workspace. The Prompt Library lives on its own route
- * (`/prompts/library`) and the editors (system prompts, priority sources, tool
- * budget) behind this page's Settings button.
+ * (`/adobe-stock/prompts/library`) and the editors (system prompts, priority
+ * sources, tool budget) behind this page's Settings button.
  *
- * This page owns the top-level state — the vocabulary (`/settings`), the run
+ * This page owns the top-level state — the vocabulary (`/adobe-stock/settings`), the run
  * list, and the active conversation — while every sub-area lives in its own
  * component. Two flows are worth stating because they are easy to get wrong:
  *
@@ -284,7 +284,7 @@ export default function PromptsPage() {
             <h1 className="mt-1 font-display text-3xl text-ink-800">Prompts</h1>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <Link href="/prompts/library">
+            <Link href="/adobe-stock/prompts/library">
               <Button variant="secondary" size="sm" type="button">
                 Prompt library
               </Button>

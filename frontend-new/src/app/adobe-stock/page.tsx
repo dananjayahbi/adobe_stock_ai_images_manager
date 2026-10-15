@@ -29,7 +29,7 @@ export default function HomePage() {
           <Button size="lg" onClick={() => setWizardOpen(true)}>
             New batch
           </Button>
-          <Link href="/gallery">
+          <Link href="/adobe-stock/gallery">
             <Button variant="secondary" size="lg">
               Open gallery
             </Button>

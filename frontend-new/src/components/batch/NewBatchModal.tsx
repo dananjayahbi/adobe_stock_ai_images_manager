@@ -125,7 +125,7 @@ export default function NewBatchModal({ open, onClose }: NewBatchModalProps) {
       });
       reset();
       onClose();
-      router.push(`/batch/${batch.id}`);
+      router.push(`/adobe-stock/batch/${batch.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {

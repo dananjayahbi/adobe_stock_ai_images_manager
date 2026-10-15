@@ -3,6 +3,7 @@ import { EB_Garamond, Playfair_Display, Pinyon_Script, Special_Elite } from "nex
 import "./globals.css";
 
 import Header from "@/components/chrome/Header";
+import { AuthProvider } from "@/components/auth/AuthProvider";
 
 const display = Playfair_Display({
   subsets: ["latin"],
@@ -25,9 +26,9 @@ const script = Pinyon_Script({
 });
 
 export const metadata: Metadata = {
-  title: "Batch Studio — Adobe Stock Pipeline",
+  title: "AI Stock Studio — Universal Stock Pipeline",
   description:
-    "Vintage-styled batch pipeline for processing raster and transparent PNG images for Adobe Stock.",
+    "Local studio for preparing and delivering AI-generated images to stock marketplaces.",
 };
 
 export default function RootLayout({
@@ -40,16 +41,18 @@ export default function RootLayout({
       <body
         className={`${display.variable} ${body.variable} ${stamp.variable} ${script.variable} min-h-screen`}
       >
-        <Header />
-        <main className="w-full px-4 py-8 sm:px-6 lg:px-8 xl:px-10">
-          {children}
-        </main>
-        <footer className="w-full px-4 pb-10 pt-4 sm:px-6 lg:px-8 xl:px-10">
-          <div className="divider-dashed flex items-center justify-between pt-4">
-            <span className="label-caps">Batch Studio</span>
-            <span className="label-caps">Est. MMXXVI · Local Pipeline</span>
-          </div>
-        </footer>
+        <AuthProvider>
+          <Header />
+          <main className="w-full px-4 py-8 sm:px-6 lg:px-8 xl:px-10">
+            {children}
+          </main>
+          <footer className="w-full px-4 pb-10 pt-4 sm:px-6 lg:px-8 xl:px-10">
+            <div className="divider-dashed flex items-center justify-between pt-4">
+              <span className="label-caps">AI Stock Studio</span>
+              <span className="label-caps">Est. MMXXVI · Local Pipeline</span>
+            </div>
+          </footer>
+        </AuthProvider>
       </body>
     </html>
   );

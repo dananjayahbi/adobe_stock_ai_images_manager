@@ -59,6 +59,9 @@ async function postDelivery(path: string, recordIds: string[]): Promise<Response
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ record_ids: recordIds, only_ready: false }),
+    // Cross-origin to the API host — without this the session cookie never
+    // rides along and every delivery would answer 401.
+    credentials: "include",
   });
   if (!response.ok) {
     let detail = `Request failed with status ${response.status}.`;

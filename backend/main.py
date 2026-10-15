@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from config import settings
 from database import Base, engine
 from services.filename_backfill import run_filename_backfill
+from services.legacy_storage_migration import run_legacy_storage_migration
 from services.metric_repair import run_metric_repairs
 from services.migrations import run_additive_migrations
 from services.pipeline_runner import recover_interrupted_batches
@@ -18,6 +19,12 @@ from services.storage import create_data_directories
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown lifecycle: create DB tables and data directories."""
+    # One-time move of legacy storage/* data into the Adobe platform root.
+    # FIRST action: it must run before create_data_directories() builds the
+    # destination skeleton and before Base.metadata.create_all opens the new
+    # DB path. Self-limiting — the .migrated marker makes later starts no-op,
+    # and failures are logged without crashing so the next start retries.
+    run_legacy_storage_migration()
     # Import models to ensure they are registered with Base.metadata
     import models  # noqa: F401
 
@@ -41,8 +48,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Adobe Stock AI Image Studio",
-    description="Local pipeline for auditing and preparing AI-generated images for Adobe Stock.",
+    title="AI Stock Studio",
+    description="Universal local pipeline for preparing AI-generated images for stock marketplaces (Adobe Stock first).",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -56,6 +63,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Session-cookie auth: installed after CORS so preflight responses are not
+# blocked, and before routers so every route is covered when AUTH_ENABLED.
+from services.auth_middleware import install_auth_middleware
+
+install_auth_middleware(app)
 
 # Include routers
 from routers.upload import router as upload_router
@@ -76,6 +89,8 @@ from routers.groups import router as groups_router
 from routers.gallery_files import router as gallery_files_router
 from routers.setup import router as setup_router
 from routers.promote import router as promote_router
+from platforms.routers import router as platforms_router
+from routers.auth import router as auth_router
 
 app.include_router(upload_router)
 app.include_router(records_router)
@@ -95,6 +110,8 @@ app.include_router(groups_router)
 app.include_router(gallery_files_router)
 app.include_router(setup_router)
 app.include_router(promote_router)
+app.include_router(platforms_router)
+app.include_router(auth_router)
 
 # Serve generated thumbnails to the frontend grid.
 create_data_directories()

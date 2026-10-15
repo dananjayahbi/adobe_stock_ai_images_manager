@@ -22,7 +22,7 @@ from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
-from config import STORAGE_ROOT, settings
+from config import ADOBE_STOCK_ROOT, settings
 from database import SessionLocal, get_db
 from models import ImageRecord
 from schemas import (
@@ -447,7 +447,7 @@ async def download_bundle(
         apply_names=True,
     )
 
-    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False, dir=str(STORAGE_ROOT))
+    tmp = tempfile.NamedTemporaryFile(suffix=".zip", delete=False, dir=str(ADOBE_STOCK_ROOT))
     tmp.close()
     zip_path = Path(tmp.name)
 

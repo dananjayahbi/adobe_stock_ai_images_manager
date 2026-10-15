@@ -385,7 +385,11 @@ export async function clearPrioritySources(): Promise<PrioritySourceFile> {
  * instead of saving.
  */
 export async function downloadSourceTemplate(): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/api/research/sources/template`);
+  const response = await fetch(`${API_BASE_URL}/api/research/sources/template`, {
+    // Cross-origin to the API host — the session cookie rides along only
+    // when credentials are included.
+    credentials: "include",
+  });
   if (!response.ok) {
     throw new Error(`Could not download the template (HTTP ${response.status}).`);
   }

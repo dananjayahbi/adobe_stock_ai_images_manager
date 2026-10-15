@@ -2,8 +2,8 @@
 
 /**
  * The Prompt Library's own route: the filters, the grid, and its empty states,
- * lifted off the `/prompts` home page so the research workspace and the
- * library can each breathe.
+ * lifted off the `/adobe-stock/prompts` home page so the research workspace and
+ * the library can each breathe.
  *
  * The header follows the app's standard pattern — label-caps eyebrow, display
  * title, then the reference's double rule — with a back link to the workspace.
@@ -22,7 +22,7 @@ export default function PromptLibraryPage() {
       {/* Header: back link, label + title, then the layered rule lines. */}
       <div>
         <Link
-          href="/prompts"
+          href="/adobe-stock/prompts"
           className="inline-flex items-center gap-1.5 font-stamp text-[11px] uppercase tracking-[0.14em] text-ink-400 transition-colors hover:text-oxblood-400"
         >
           <ArrowLeft className="h-3 w-3" aria-hidden />

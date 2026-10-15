@@ -7,6 +7,16 @@ from pydantic_settings import BaseSettings
 # Resolve repo root (one level above backend/)
 REPO_ROOT = Path(__file__).resolve().parent.parent
 STORAGE_ROOT = REPO_ROOT / "storage"
+# Universal multi-platform layout: every platform owns a dedicated subdirectory
+# under storage/platforms/ holding ITS data directories and ITS SQLite database
+# (zero data leakage between platforms — see platforms/paths.py). APP_SETTINGS_PATH
+# deliberately stays at STORAGE_ROOT because operator settings are app-level, not
+# platform data.
+PLATFORMS_ROOT = STORAGE_ROOT / "platforms"
+#: The one platform that exists today. All Settings dir fields below point here,
+#: so the existing (Adobe Stock-only) pipeline keeps working unchanged while the
+# rest of the app migrates to platforms.paths.get_platform_paths().
+ADOBE_STOCK_ROOT = PLATFORMS_ROOT / "adobe_stock"
 
 
 class Settings(BaseSettings):
@@ -40,8 +50,9 @@ class Settings(BaseSettings):
     #: deliberately small so an unknown model is never assumed to be large.
     LLM_CONTEXT_WINDOW: int = 32_768
 
-    #: JSON document holding operator-editable settings. Lives beside the DB so
-    #: one storage directory holds all mutable state.
+    #: JSON document holding operator-editable settings. Lives at the storage
+    #: ROOT (not inside a platform directory): it is app-level configuration
+    #: shared across platforms, so it must never be migrated with platform data.
     APP_SETTINGS_PATH: Path = STORAGE_ROOT / "app_settings.json"
 
     # ------------------------------------------------------------------ #
@@ -62,17 +73,21 @@ class Settings(BaseSettings):
     # existing .env files keep working.
     GEMINI_API_KEY: str = ""
 
-    # Storage directories (resolved relative to repo root)
-    INBOX_DIR: Path = STORAGE_ROOT / "inbox"
-    THUMBNAILS_DIR: Path = STORAGE_ROOT / "thumbnails"
-    READY_DIR: Path = STORAGE_ROOT / "ready_to_upload"
+    # Storage directories (Adobe Stock platform data; defaults resolve to
+    # <repo>/storage/platforms/adobe_stock/... — see .env.example). Field names
+    # must not change: 40+ services read settings.INBOX_DIR etc. Future platforms
+    # must NOT override these; they use platforms.paths.get_platform_paths().
+    INBOX_DIR: Path = ADOBE_STOCK_ROOT / "inbox"
+    THUMBNAILS_DIR: Path = ADOBE_STOCK_ROOT / "thumbnails"
+    READY_DIR: Path = ADOBE_STOCK_ROOT / "ready_to_upload"
     #: Where the refiner writes corrected copies (originals are never mutated).
-    REFINED_DIR: Path = STORAGE_ROOT / "refined"
+    REFINED_DIR: Path = ADOBE_STOCK_ROOT / "refined"
     #: Where the upscaler writes upscaled copies.
-    UPSCALED_DIR: Path = STORAGE_ROOT / "upscaled"
+    UPSCALED_DIR: Path = ADOBE_STOCK_ROOT / "upscaled"
 
-    # Database
-    DB_PATH: Path = STORAGE_ROOT / "adobe_stock.db"
+    # Database (per-platform: the Adobe Stock DB lives in its platform root so
+    # every platform keeps its own <platform_id>.db — see platforms/paths.py).
+    DB_PATH: Path = ADOBE_STOCK_ROOT / "adobe_stock.db"
 
     # QC Thresholds - Adobe Stock baselines
     MIN_MEGAPIXELS: float = 4.0
@@ -102,17 +117,17 @@ class Settings(BaseSettings):
     PNG_EXTENSIONS: set[str] = {".png"}
     #: Where normalised JPEG copies are written. Kept separate from the inbox so
     #: the uploaded original stays byte-for-byte intact as the audit source.
-    CONVERTED_DIR: Path = STORAGE_ROOT / "converted"
+    CONVERTED_DIR: Path = ADOBE_STOCK_ROOT / "converted"
     #: RGBA cut-outs written by the PNG batch background remover.
-    REMOVED_DIR: Path = STORAGE_ROOT / "removed"
+    REMOVED_DIR: Path = ADOBE_STOCK_ROOT / "removed"
     #: Raster images whose background was verified/clamped to pure #FFFFFF.
-    WHITE_DIR: Path = STORAGE_ROOT / "white"
+    WHITE_DIR: Path = ADOBE_STOCK_ROOT / "white"
     #: Files written by the `embed_srgb` step (tagged copies when the input
     #: profile was missing — kept separate so the source is never mutated).
-    SRGB_DIR: Path = STORAGE_ROOT / "srgb"
+    SRGB_DIR: Path = ADOBE_STOCK_ROOT / "srgb"
     #: Near-duplicate variants quarantined by the batch diversity gate. Kept on
     #: disk (never deleted by the step) so they can seed a later batch.
-    QUARANTINE_DIR: Path = STORAGE_ROOT / "quarantine"
+    QUARANTINE_DIR: Path = ADOBE_STOCK_ROOT / "quarantine"
     #: Quality for the PNG -> JPEG conversion. 100 keeps the result visually
     #: lossless so the conversion cannot itself introduce an acceptance issue.
     PNG_CONVERSION_QUALITY: int = 100
@@ -211,6 +226,12 @@ class Settings(BaseSettings):
         # Accept .env at the repo root or beside the backend code; backend/ wins.
         "env_file": (str(REPO_ROOT / ".env"), str(REPO_ROOT / "backend" / ".env")),
         "env_file_encoding": "utf-8",
+        # .env carries keys this class does not model (e.g. the AUTH_* block
+        # documented in .env.example — see auth_config.py). pydantic-settings
+        # defaults to extra="forbid", which turns any such variable into a
+        # ValidationError at import; ignore extras so documented-but-unmodeled
+        # keys can live in .env safely.
+        "extra": "ignore",
     }
 
     @property
