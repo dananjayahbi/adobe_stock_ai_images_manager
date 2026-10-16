@@ -8,12 +8,12 @@
 import axios from "axios";
 
 export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8001";
+  process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8007";
 
 export const api = axios.create({
   baseURL: API_BASE_URL,
   timeout: 120_000,
-  // The session cookie is set by localhost:8001; XHR from :3100 is a
+  // The session cookie is set by localhost:8007; XHR from :3100 is a
   // different origin, so the browser only attaches it with credentials.
   withCredentials: true,
 });

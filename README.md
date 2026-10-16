@@ -22,6 +22,39 @@ storage/
 
 System design, isolation rules, and the step-by-step add-a-platform checklist live in [ARCHITECTURE.md](ARCHITECTURE.md).
 
+## Mobile app (Flutter)
+
+The `mobile/` Flutter app is the remote control for the studio: review gallery
+images, run pipelines, and watch live progress (live SSE with polling
+fallback) from a phone — anywhere, over a Cloudflare tunnel. The full plan
+lives in [mobile-plan/](mobile-plan/README.md).
+
+**Status: MVP feature-complete and release-verified (milestones M0–M6
+gated green; full journey E2E'd headless against the real backend).**
+Highlights:
+
+- Vintage dark theme matching the web brand; 5-tab shell (Home · Gallery ·
+  Process · Delivery · More) + Platform Hub for all six platforms.
+- Cookie auth against `/api/auth/*`, per-profile session isolation,
+  **tunnel-first** connection profiles (seeded: `https://studio.hotelgo.lk`;
+  LAN/emulator profiles added manually in Settings) with health gating on
+  switch, plus an app-side **DNS fallback** (system → public-resolver chain +
+  loopback CONNECT relay) so the phone resolves even when the device's own
+  resolver fails.
+- Gallery review loop (grid, filters, swipe detail, approve-first with stamp
+  feedback), batch wizard + live progress via `GET /api/batches/{id}/events`,
+  delivery CSV/ZIP/force-accept, settings/account/about + offline matrix.
+
+```powershell
+cd mobile
+flutter pub get
+flutter analyze        # clean
+flutter test           # 312 tests
+flutter build apk --release   # installable release APK → build/app/outputs/flutter-apk/app-release.apk
+flutter build web --release # web build (E2E / browser preview; see mobile/README.md)
+flutter run -d chrome  # quick look (set the app's profile to your backend URL)
+```
+
 ## Quick Start
 
 ### Prerequisites

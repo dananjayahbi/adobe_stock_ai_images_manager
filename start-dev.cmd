@@ -5,7 +5,7 @@ REM ===========================================================================
 REM  Adobe Stock AI Image Studio - development launcher
 REM
 REM  Opens two separate CMD windows:
-REM    * Backend  - FastAPI / uvicorn on http://localhost:8001
+REM    * Backend  - FastAPI / uvicorn on http://localhost:8007
 REM    * Frontend - Next.js dev server on http://localhost:3100 (frontend-new)
 REM
 REM  Usage: double-click this file, or run "start-dev.cmd" from any terminal.
@@ -24,7 +24,7 @@ set "FRONTEND_DIR=%REPO_ROOT%\frontend-new"
 set "VENV_PY=%BACKEND_DIR%\.venv\Scripts\python.exe"
 
 REM --- Ports ----------------------------------------------------------------
-set "BACKEND_PORT=8001"
+set "BACKEND_PORT=8007"
 set "FRONTEND_PORT=3100"
 
 REM --- Re-entrant entry points for the child windows ------------------------
@@ -93,9 +93,12 @@ REM JSON. Without this the browser blocks the frontend's cross-port API calls,
 REM because the default list only allows port 3100.
 set "CORS_ORIGINS=["http://localhost:%FRONTEND_PORT%","http://127.0.0.1:%FRONTEND_PORT%"]"
 
-echo Starting backend on http://localhost:%BACKEND_PORT% ...
+REM Listen on all interfaces so the mobile app can reach the backend over
+REM the LAN via the PC's IPv4 address (the Local profile's physical-device
+REM path); localhost keeps working and the tunnel is unaffected.
+echo Starting backend on http://localhost:%BACKEND_PORT% (LAN: 0.0.0.0) ...
 echo.
-"%VENV_PY%" -m uvicorn main:app --reload --port %BACKEND_PORT%
+"%VENV_PY%" -m uvicorn main:app --reload --port %BACKEND_PORT% --host 0.0.0.0
 
 echo.
 echo Backend process exited.

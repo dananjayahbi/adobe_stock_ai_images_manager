@@ -20,9 +20,14 @@ def _serialize(platform: Platform) -> dict[str, str]:
     }
 
 
+@router.get("")
 @router.get("/")
 def list_platforms() -> list[dict[str, str]]:
-    """All platforms in display order (available first, then coming soon)."""
+    """All platforms in display order (available first, then coming soon).
+
+    Both path forms are served directly so ``/api/platforms`` (no trailing
+    slash) answers 200 instead of a 307 redirect round-trip.
+    """
     return [_serialize(platform) for platform in PLATFORMS]
 
 

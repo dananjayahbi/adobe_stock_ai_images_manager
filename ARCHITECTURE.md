@@ -35,7 +35,7 @@ flowchart TD
 ```
 
 - **Frontend**: Next.js App Router in `frontend-new/` (dev: port 3100 via
-  `start-dev.cmd`, API base `http://localhost:8001` from
+  `start-dev.cmd`, API base `http://localhost:8007` from
   `NEXT_PUBLIC_API_BASE_URL`).
 - **Backend**: FastAPI in `backend/` (flat layout), title **"AI Stock
   Studio"**, mounted routers: `platforms` + `auth` + the legacy Adobe set.

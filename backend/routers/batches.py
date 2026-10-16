@@ -6,6 +6,7 @@ Endpoints are grouped by concern:
 * ``GET    /api/batches``           - list batches, newest first
 * ``POST   /api/batches``           - create a draft batch
 * ``GET    /api/batches/{id}``      - batch + step progress + records
+* ``GET    /api/batches/{id}/events`` - SSE stream of BatchResponse frames
 * ``PATCH  /api/batches/{id}```     - edit name/steps while not running
 * ``DELETE /api/batches/{id}```     - delete a batch (and its records)
 * ``POST   /api/batches/{id}/files``  - upload images into the batch
@@ -17,10 +18,14 @@ The legacy stage workspace endpoints are untouched; batches are additive.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from PIL import Image
 from pydantic import BaseModel, Field
 from sqlalchemy import func
@@ -32,6 +37,7 @@ from models import Batch, ImageRecord, ImageStatus, PipelineStage, generate_uuid
 from schemas import RecordResponse
 from services import pipeline_defs, pipeline_runner
 from services.image_normalizer import convert_png_to_jpeg, needs_conversion
+from services.research.events import SSE_DONE_FRAME, sse_frame
 from services.storage import delete_record_files, generate_thumbnail, save_uploaded_file
 
 logger = logging.getLogger(__name__)
@@ -270,6 +276,106 @@ async def get_batch(batch_id: str, db: Session = Depends(get_db)):
         records=[RecordResponse.model_validate(record) for record in records],
     )
     return detail
+
+
+# --------------------------------------------------------------------------- #
+# Live stream (SSE)
+# --------------------------------------------------------------------------- #
+
+#: Once the batch lands in one of these states the stream sends the final
+#: frame followed by the done event and closes.
+_BATCH_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
+
+#: Seconds between state polls inside the generator: fast enough to feel live,
+#: slow enough not to hammer the database.
+_BATCH_POLL_SECONDS = 0.5
+
+#: Silence after which a comment ping is due, so an idle proxy (or tunnel)
+#: does not close the connection before the batch finishes.
+_BATCH_PING_SECONDS = 15.0
+
+#: SSE comment ping - comment lines are consumed by the parser without
+#: producing a client-visible event, exactly what a keep-alive needs.
+_BATCH_PING_FRAME = ": ping\n\n"
+
+#: Headers that stop a proxy from buffering the SSE stream. Mirrors the set in
+#: routers/research.py so every stream in this app behaves the same behind
+#: Cloudflare.
+_BATCH_SSE_HEADERS = {
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+}
+
+
+def get_batch_session_factory():
+    """Session factory the SSE generator opens its own sessions from.
+
+    A dependency (same pattern as research's ``get_session_factory``): FastAPI
+    closes the request-scoped session before a streaming body is consumed, so
+    the generator must open its own - and tests can override the dependency to
+    point the stream at their database.
+    """
+    return SessionLocal
+
+
+def _current_batch_payload(session_factory, batch_id: str) -> BatchResponse | None:
+    """One poll of the batch's current state; None once the batch is gone."""
+    with session_factory() as session:
+        batch = session.get(Batch, batch_id)
+        if batch is None:
+            return None
+        return _batch_response(batch, _record_count(session, batch_id))
+
+
+@router.get("/api/batches/{batch_id}/events")
+async def stream_batch_events(
+    batch_id: str,
+    db: Session = Depends(get_db),
+    session_factory=Depends(get_batch_session_factory),
+) -> StreamingResponse:
+    """Stream BatchResponse frames while the batch progresses (mobile SSE).
+
+    The frames carry the exact ``BatchResponse`` JSON that
+    ``GET /api/batches/{id}`` serves (without the record list), so a client
+    parses one model for polling and streaming alike: an immediate snapshot,
+    then a frame whenever status/step_progress changes, then the
+    research-style ``event: done`` marker once the batch reaches a terminal
+    state. Idle stretches get a comment ping every 15 seconds so proxies do
+    not time the connection out.
+    """
+    # Probe while the request session is still open, so an unknown id is a
+    # normal 404 instead of a stream that opens and never produces a frame.
+    _get_batch_or_404(db, batch_id)
+
+    async def generate() -> AsyncIterator[str]:
+        last_frame: str | None = None
+        last_ping = time.monotonic()
+        while True:
+            payload = _current_batch_payload(session_factory, batch_id)
+            if payload is None:
+                # Deleted mid-stream: no further state will ever appear, so
+                # close cleanly rather than pinging an id that cannot move.
+                yield SSE_DONE_FRAME
+                return
+            frame = sse_frame(payload.model_dump())
+            if frame != last_frame:
+                yield frame
+                last_frame = frame
+                last_ping = time.monotonic()
+            if payload.status in _BATCH_TERMINAL_STATUSES:
+                yield SSE_DONE_FRAME
+                return
+            if time.monotonic() - last_ping >= _BATCH_PING_SECONDS:
+                yield _BATCH_PING_FRAME
+                last_ping = time.monotonic()
+            await asyncio.sleep(_BATCH_POLL_SECONDS)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers=_BATCH_SSE_HEADERS,
+    )
 
 
 @router.patch("/api/batches/{batch_id}", response_model=BatchResponse)

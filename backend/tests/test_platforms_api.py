@@ -60,6 +60,14 @@ def test_list_platforms_returns_full_catalogue(client):
         assert entry["tagline"]
 
 
+def test_list_platforms_answers_without_trailing_slash(client):
+    """GET /api/platforms without the trailing slash serves directly (B2)."""
+    response = client.get("/api/platforms", follow_redirects=False)
+    assert response.status_code == 200
+    assert "location" not in response.headers
+    assert response.json() == client.get("/api/platforms/").json()
+
+
 def test_get_single_platform_adobe_and_freepik(client):
     """Detail endpoint mirrors the list entry; freepik is coming_soon."""
     listing = client.get("/api/platforms")

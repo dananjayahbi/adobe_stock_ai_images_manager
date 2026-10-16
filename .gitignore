@@ -23,6 +23,17 @@ frontend/node_modules/
 # Crash dumps
 *.stackdump
 
+# Flutter (mobile/) — mobile/.gitignore covers most; kept at root as defaults
+mobile/.dart_tool/
+mobile/build/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/*.iml
+# Web smoke-test artifact: `flutter build web` output copied to
+# frontend-new/public/flutter/ so the app runs from the Next origin
+# (CORS allow-listed). Regenerate anytime — never committed.
+frontend-new/public/flutter/
+
 # Local run logs and incremental build caches
 *.log
 *.tsbuildinfo
