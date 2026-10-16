@@ -53,11 +53,24 @@ class SettingsScreen extends ConsumerWidget {
             const SizedBox(height: AppSpacing.sm),
             AppCard(
               padding: EdgeInsets.zero,
-              child: _NavRow(
-                icon: LucideIcons.plug,
-                title: 'Connection profiles',
-                caption: _activeCaption(ref),
-                onTap: () => context.push('/more/connections'),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: <Widget>[
+                  _NavRow(
+                    icon: LucideIcons.plug,
+                    title: 'Connection profiles',
+                    caption: _activeCaption(ref),
+                    onTap: () => context.push('/more/connections'),
+                  ),
+                  const _RowDivider(),
+                  _NavRow(
+                    icon: LucideIcons.activity,
+                    title: 'Network diagnostics',
+                    caption: 'Layer-by-layer reachability checks',
+                    onTap: () => context.push('/diagnostics'),
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: AppSpacing.xl),

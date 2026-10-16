@@ -138,6 +138,20 @@ app.mount(
     name="thumbnails",
 )
 
+# Serve the Flutter web build under /flutter so the mobile app rides the
+# *same origin as the API* through the Cloudflare tunnel (cookie-auth and
+# CSP-free by construction). Guarded: the directory only exists after
+# `flutter build web` — without it the mount is skipped, never fatal.
+from pathlib import Path as _Path
+
+_FLUTTER_WEB_DIR = _Path(__file__).resolve().parent.parent / "mobile" / "build" / "web"
+if _FLUTTER_WEB_DIR.is_dir():
+    app.mount(
+        "/flutter",
+        StaticFiles(directory=str(_FLUTTER_WEB_DIR), html=True),
+        name="flutter",
+    )
+
 
 @app.get("/health")
 def health_check():

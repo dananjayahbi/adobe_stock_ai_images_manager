@@ -145,17 +145,44 @@ class DnsConnectProxy {
   }
 
   /// Resolve + TCP connect; `null` = failure (caller answers 502).
+  /// Every resolved address races (dual-stack: a network with broken IPv4
+  /// still connects over IPv6 and vice versa) — first connected socket
+  /// wins, the rest are destroyed.
   Future<Socket?> _connect(({String host, int port}) target) async {
+    final List<InternetAddress> addrs;
     try {
-      final List<InternetAddress> addrs = await _resolver.lookup(target.host);
-      return await Socket.connect(
-        addrs.first,
-        target.port,
-        timeout: const Duration(seconds: 10),
-      );
+      addrs = await _resolver.lookup(target.host);
     } catch (_) {
       return null;
     }
+    if (addrs.isEmpty) {
+      return null;
+    }
+    final Completer<Socket?> gate = Completer<Socket?>();
+    int remaining = addrs.length;
+    for (final InternetAddress addr in addrs) {
+      unawaited(
+        Socket.connect(
+          addr,
+          target.port,
+          timeout: const Duration(seconds: 4),
+        ).then<void>(
+          (Socket socket) {
+            if (gate.isCompleted) {
+              socket.destroy();
+            } else {
+              gate.complete(socket);
+            }
+          },
+          onError: (Object _) {
+            if (--remaining == 0 && !gate.isCompleted) {
+              gate.complete(null);
+            }
+          },
+        ),
+      );
+    }
+    return gate.future;
   }
 
   Future<void> _dnsFailure(HttpRequest request) async {

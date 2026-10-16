@@ -15,7 +15,7 @@ import '../domain/connection_profile.dart';
 import 'settings_controller.dart';
 
 /// Field hints per 06 §5: LAN IP, named tunnel host, Android-emulator alias.
-const String kBaseUrlHint = '192.168.x.x · studio.example.com · 10.0.2.2';
+const String kBaseUrlHint = 'studio.hotelgo.lk · 192.168.x.x · 10.0.2.2';
 
 /// URL rule: scheme must be http/https and a host must be present — the
 /// exact message the tests pin; `null` means valid.
@@ -287,7 +287,7 @@ class _ConnectionEditorScreenState
                       textInputAction: TextInputAction.next,
                       decoration: const InputDecoration(
                         labelText: 'Label',
-                        hintText: 'Local network · Tunnel · Hotspot',
+                        hintText: 'Studio tunnel · Backup · Hotspot',
                       ),
                       validator: (String? value) =>
                           value == null || value.trim().isEmpty

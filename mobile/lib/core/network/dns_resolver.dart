@@ -3,6 +3,8 @@ import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'dns_doh.dart';
+
 /// Signature of the platform resolver (`InternetAddress.lookup`) — seam for
 /// tests.
 typedef SystemLookup = Future<List<InternetAddress>> Function(String host);
@@ -14,27 +16,34 @@ typedef UdpDnsQuery = Future<List<int>> Function(
   Duration timeout,
 );
 
-/// Hostname → IPv4 lookup with a public-resolver fallback chain.
-///
-/// Why this exists: some Android devices' **system** resolver fails for
-/// names that Chrome resolves fine (Chrome runs its own DoH). The app must
-/// not depend on a Private DNS setting the user may not know about, so the
-/// lookup order is:
+/// Signature of the DoH tier (`DnsDoh.lookupIps`) — seam for tests.
+typedef DohQuery = Future<List<String>> Function(String host);
+
+/// Hostname → IPv4 lookup with fallback tiers:
 ///
 ///   1. the system resolver — fastest, honours local configuration;
-///   2. plain UDP/53 to a public chain (Google / Cloudflare / NextDNS) —
-///      works whenever the network allows classic DNS at all.
+///   2. **DNS-over-HTTPS** to IP-literal endpoints (1.1.1.1, 8.8.8.8) —
+///      rides HTTPS, which works even on networks that block or hijack
+///      plain UDP/53 (the exact failure mode where Chrome still resolves
+///      and the system reports `Failed host lookup`);
+///   3. plain UDP/53 to a public chain (Google / Cloudflare / NextDNS) —
+///      the last resort when HTTPS egress itself is broken.
 ///
 /// Only A records are used (IPv4 is sufficient for the transports on this
 /// stack). Successful answers are memoised for [cacheTtl] so a burst of
 /// requests costs one round trip, not one per request.
 class DnsResolver {
-  DnsResolver({SystemLookup? systemLookup, UdpDnsQuery? udpQuery})
-      : _system = systemLookup ?? InternetAddress.lookup,
-        _udp = udpQuery ?? udpQueryDefault;
+  DnsResolver({
+    SystemLookup? systemLookup,
+    UdpDnsQuery? udpQuery,
+    DohQuery? dohQuery,
+  })  : _system = systemLookup ?? InternetAddress.lookup,
+        _udp = udpQuery ?? udpQueryDefault,
+        _doh = dohQuery ?? DnsDoh.lookupIps;
 
   final SystemLookup _system;
   final UdpDnsQuery _udp;
+  final DohQuery _doh;
 
   /// Public resolvers tried in order when the system fails.
   static const List<String> publicResolvers = <String>[
@@ -45,8 +54,9 @@ class DnsResolver {
   ];
 
   /// Budget per resolver server — a black-holed UDP packet must not stall
-  /// the chain beyond the health-probe window.
-  static const Duration perServerTimeout = Duration(seconds: 3);
+  /// the chain beyond the health-probe window (DoH runs before this tier
+  /// with its own 2.5 s parallel budget).
+  static const Duration perServerTimeout = Duration(seconds: 2);
 
   /// Answer memoisation window.
   static const Duration cacheTtl = Duration(seconds: 60);
@@ -80,9 +90,20 @@ class DnsResolver {
       systemFailure = e;
     }
 
-    // Public chain — errors are absorbed per server: the system error
-    // above already carries the platform's canonical wording and wins on
-    // exhaustion so HealthApi's copy (and its DNS hint) stays exact.
+    // Tier 2 — DoH over IP-literal HTTPS endpoints (parallel inside).
+    // Rides the transport that demonstrably works on this network; never
+    // throws, so an HTTPS-level outage falls through to plain UDP.
+    final List<String> dohIps = await _doh(host);
+    if (dohIps.isNotEmpty) {
+      return _remember(
+        host,
+        dohIps.map(InternetAddress.new).toList(growable: false),
+      );
+    }
+
+    // Tier 3 — public UDP/53 chain. Errors are absorbed per server: the
+    // system error above carries the platform's canonical wording and wins
+    // on exhaustion so HealthApi's copy (and its DNS hint) stays exact.
     for (final String server in publicResolvers) {
       try {
         final List<String> ips = await _queryA(server, host);
@@ -96,7 +117,51 @@ class DnsResolver {
         // Next server in the chain.
       }
     }
-    throw systemFailure;
+    // Last resort — zero-DNS pins: known Cloudflare edge addresses for our
+    // own tunnel host (orange-clouded → any CF edge serves the hostname via
+    // SNI, so cert validation still checks the real name). Used only when
+    // *every* resolver tier above is dead; CF anycast addresses are stable
+    // enough for an escape hatch, and real resolutions always win first.
+    final List<String>? pinned = pinnedHosts[host];
+    if (pinned != null) {
+      return _remember(
+        host,
+        pinned.map(InternetAddress.new).toList(growable: false),
+      );
+    }
+    throw _exhausted(systemFailure, host);
+  }
+
+  /// Hosts with hard-coded fallback addresses (v4 + v6). Keep tiny: this is
+  /// the app's own tunnel and nothing else.
+  static const Map<String, List<String>> pinnedHosts = <String, List<String>>{
+    'studio.hotelgo.lk': <String>[
+      '104.21.73.125',
+      '172.67.190.8',
+      '2606:4700:3031::6815:497d',
+      '2606:4700:3030::ac43:be08',
+    ],
+  };
+
+  /// Total failure: keep the platform's canonical wording, and say what was
+  /// attempted — when even DoH failed, that is the support signal that
+  /// matters (the Private DNS hint then stands as the remaining workaround).
+  static SocketException _exhausted(Object? systemFailure, String host) {
+    if (systemFailure is SocketException) {
+      return SocketException(
+        '${systemFailure.message} — DoH and public resolvers also failed',
+        osError: systemFailure.osError,
+        address: systemFailure.address,
+        port: systemFailure.port,
+      );
+    }
+    if (systemFailure != null) {
+      return SocketException(
+        '$systemFailure — DoH and public resolvers also failed',
+        osError: const OSError('No address associated with hostname', 7),
+      );
+    }
+    return failedLookup(host);
   }
 
   List<InternetAddress> _remember(String host, List<InternetAddress> addrs) {
@@ -220,7 +285,9 @@ class DnsResolver {
   }
 
   /// Real UDP/53 exchange — [server] is an IP literal, [packet] the encoded
-  /// question; returns the first datagram with enough bytes.
+  /// question; returns the first datagram whose **transaction id** matches
+  /// (source-address filtering is deliberately skipped: some networks
+  /// rewrite sources, and the id check is the real validator).
   static Future<List<int>> udpQueryDefault(
     String server,
     List<int> packet,
@@ -230,20 +297,21 @@ class DnsResolver {
         await RawDatagramSocket.bind(InternetAddress.anyIPv4, 0);
     try {
       socket.send(packet, InternetAddress(server), 53);
+      final int expectId = (packet[0] << 8) | packet[1];
       await for (final RawSocketEvent event in socket.timeout(timeout)) {
         if (event != RawSocketEvent.read) {
           continue;
         }
         final Datagram? datagram = socket.receive();
-        if (datagram == null) {
+        if (datagram == null || datagram.data.length < 12) {
           continue;
         }
-        if (datagram.address.address != server) {
-          continue; // Stray packet from someone else.
+        final List<int> data = datagram.data;
+        final int id = (data[0] << 8) | data[1];
+        if (id != expectId) {
+          continue; // Stray packet — keep listening for ours.
         }
-        if (datagram.data.length >= 12) {
-          return datagram.data;
-        }
+        return data;
       }
       throw SocketException('DNS: no response from $server');
     } finally {

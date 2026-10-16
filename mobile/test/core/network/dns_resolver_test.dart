@@ -102,11 +102,12 @@ void main() {
       expect(udpCalls, 0);
     });
 
-    test('system failure falls back to the first public server', () async {
+    test('system failure falls back to the DoH-free UDP chain', () async {
       final List<String> servers = <String>[];
       final DnsResolver resolver = DnsResolver(
         systemLookup: (String h) async =>
             throw SocketException("Failed host lookup: '$h'"),
+        dohQuery: (String h) async => const <String>[], // offline here
         udpQuery: (String server, List<int> packet, Duration t) async {
           servers.add(server);
           return buildAResponse(
@@ -122,11 +123,34 @@ void main() {
       expect(servers, <String>['8.8.8.8']);
     });
 
+    test('DoH tier resolves before UDP is ever consulted', () async {
+      int udpCalls = 0;
+      bool dohCalled = false;
+      final DnsResolver resolver = DnsResolver(
+        systemLookup: (String h) async =>
+            throw SocketException("Failed host lookup: '$h'"),
+        dohQuery: (String h) async {
+          dohCalled = true;
+          return <String>['104.21.73.125'];
+        },
+        udpQuery: (String s, List<int> p, Duration t) async {
+          udpCalls++;
+          return <int>[];
+        },
+      );
+      final List<InternetAddress> addrs =
+          await resolver.lookup('studio.hotelgo.lk');
+      expect(dohCalled, isTrue);
+      expect(udpCalls, 0);
+      expect(addrs.single.address, '104.21.73.125');
+    });
+
     test('dead first server walks the chain in order', () async {
       final List<String> servers = <String>[];
       final DnsResolver resolver = DnsResolver(
         systemLookup: (String h) async =>
             throw SocketException("Failed host lookup: '$h'"),
+        dohQuery: (String h) async => const <String>[], // offline here
         udpQuery: (String server, List<int> packet, Duration t) async {
           servers.add(server);
           if (server == '8.8.8.8') {
@@ -149,17 +173,26 @@ void main() {
       final DnsResolver resolver = DnsResolver(
         systemLookup: (String h) async =>
             throw SocketException("Failed host lookup: '$h'"),
+        dohQuery: (String h) async => const <String>[], // offline here
         udpQuery: (String s, List<int> p, Duration t) async =>
             throw const SocketException('DNS: unreachable'),
       );
       await expectLater(
         resolver.lookup('gone.example'),
         throwsA(
-          isA<SocketException>().having(
-            (SocketException e) => e.toString(),
-            'message',
-            contains("Failed host lookup: 'gone.example'"),
-          ),
+          isA<SocketException>()
+              .having(
+                (SocketException e) => e.toString(),
+                'message',
+                contains("Failed host lookup: 'gone.example'"),
+              )
+              // Exhaustion says the fallback tiers ran — the support signal
+              // when even DoH failed.
+              .having(
+                (SocketException e) => e.toString(),
+                'tiers',
+                contains('DoH and public resolvers also failed'),
+              ),
         ),
       );
     });
@@ -177,6 +210,32 @@ void main() {
       await resolver.lookup('cached.example');
       await resolver.lookup('cached.example');
       expect(systemCalls, 1);
+    });
+  });
+
+  group('DnsResolver pinned fallback', () {
+    test('zero-DNS rescue for the tunnel host, others still throw',
+        () async {
+      final DnsResolver resolver = DnsResolver(
+        systemLookup: (String h) async =>
+            throw SocketException("Failed host lookup: '$h'"),
+        dohQuery: (String h) async => const <String>[],
+        udpQuery: (String s, List<int> p, Duration t) async =>
+            throw const SocketException('DNS: unreachable'),
+      );
+      final List<InternetAddress> addrs =
+          await resolver.lookup('studio.hotelgo.lk');
+      expect(
+        addrs.map((InternetAddress a) => a.address).toList(),
+        containsAll(<String>[
+          '104.21.73.125',
+          '2606:4700:3031::6815:497d',
+        ]),
+      );
+      await expectLater(
+        resolver.lookup('gone.example'),
+        throwsA(isA<SocketException>()),
+      );
     });
   });
 

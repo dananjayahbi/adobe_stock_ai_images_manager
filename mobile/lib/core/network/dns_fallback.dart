@@ -19,3 +19,7 @@ Future<void> ensureResolves(String host) => impl.ensureResolves(host);
 /// Whether a host needs a DNS pre-check at all — literals/loopback never
 /// do, and the web build never does (the browser resolves, usually via DoH).
 bool needsDnsCheck(String host) => impl.needsDnsCheck(host);
+
+/// Live loopback port of the CONNECT relay (`null` when not running —
+/// diagnostics renders this as "relay not running").
+int? currentRelayPort() => impl.currentRelayPort();

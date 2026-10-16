@@ -17,6 +17,7 @@ import '../features/settings/presentation/about_screen.dart';
 import '../features/settings/presentation/account_screen.dart';
 import '../features/settings/presentation/connection_editor_screen.dart';
 import '../features/settings/presentation/connections_screen.dart';
+import '../features/settings/presentation/diagnostics_screen.dart';
 import '../features/settings/presentation/settings_screen.dart';
 import 'error_screen.dart';
 import 'shell.dart';
@@ -75,6 +76,10 @@ GoRouter createRouter({
         builder: (context, state) => ErrorScreen(
           reason: state.uri.queryParameters['reason'] ?? 'offline',
         ),
+      ),
+      GoRoute(
+        path: '/diagnostics',
+        builder: (context, state) => const DiagnosticsScreen(),
       ),
       GoRoute(
         path: '/more/connections',
@@ -163,12 +168,14 @@ GoRouter createRouter({
 ///
 /// * `unknown` → stay put — the splash probe owns bootstrap navigation.
 /// * `authenticated` → allowed at `/hub`, `/coming-soon/*`, `/error`
-///   (offline recovery, 05 §2.11) and the shell routes (tabs included —
+///   (offline recovery, 05 §2.11), `/diagnostics` (connection triage) and
+///   the shell routes (tabs included —
 ///   the `_shellRoots` prefix match also covers `/more/*` sub-screens);
 ///   anything else bounces to `/hub`
 ///   (covers authenticated-at-`/login`, and auto-advances `/splash`).
-/// * `unauthenticated` → anything but `/login` bounces to `/login`
-///   (covers unauthenticated-at-`/hub` and the `/splash` bail-out).
+/// * `unauthenticated` → anything but `/login` and `/diagnostics` bounces
+///   to `/login` (a failed sign-in must still be diagnosable — covers
+///   unauthenticated-at-`/hub` and the `/splash` bail-out).
 const Set<String> _shellRoots = <String>{
   '/home',
   '/gallery',
@@ -184,12 +191,15 @@ String? _redirect(AuthStatus status, String location) {
     case AuthStatus.authenticated:
       final bool allowed = location == '/hub' ||
           location == '/error' ||
+          location == '/diagnostics' ||
           location.startsWith('/coming-soon/') ||
           _shellRoots.contains(location) ||
           _shellRoots.any((String root) => location.startsWith('$root/'));
       return allowed ? null : '/hub';
     case AuthStatus.unauthenticated:
-      return location == '/login' ? null : '/login';
+      return location == '/login' || location == '/diagnostics'
+          ? null
+          : '/login';
   }
 }
 

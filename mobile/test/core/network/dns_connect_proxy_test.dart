@@ -96,6 +96,7 @@ void main() {
       resolver: DnsResolver(
         systemLookup: (String h) async =>
             throw SocketException("Failed host lookup: '$h'"),
+        dohQuery: (String h) async => const <String>[], // offline here
         // Empty -> malformed -> every public server "answers" nothing.
         udpQuery: (String s, List<int> p, Duration t) async => <int>[],
       ),

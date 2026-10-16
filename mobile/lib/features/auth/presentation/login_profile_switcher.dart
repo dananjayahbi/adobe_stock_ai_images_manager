@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../app/theme/tokens.dart';
@@ -217,6 +218,28 @@ class _ProfilePickerSheetState extends ConsumerState<_ProfilePickerSheet> {
                         ),
                       ),
                       const SizedBox(height: AppSpacing.xs),
+                                      // Pre-login triage: one screen, every layer of the
+                                      // connection ladder, full untruncated detail.
+                                      TextButton(
+                                        onPressed: () {
+                                          final GoRouter router = GoRouter.of(context);
+                                          Navigator.of(context).pop();
+                                          router.push('/diagnostics');
+                                        },
+                                        style: TextButton.styleFrom(
+                                          alignment: Alignment.centerLeft,
+                                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                                        ),
+                                        child: Text(
+                                          'Network diagnostics…',
+                                          style: textTheme.bodySmall?.copyWith(
+                                            color: AppColors.brass400,
+                                            decoration: TextDecoration.underline,
+                                            decorationColor: AppColors.brass400,
+                                          ),
+                                        ),
+                                      ),
+                                      const SizedBox(height: AppSpacing.xs),
                       Text(
                         'Every switch is health-checked first — a dead host '
                         'keeps the current profile.',

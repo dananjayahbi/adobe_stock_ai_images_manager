@@ -7,3 +7,6 @@ Future<void> ensureResolves(String host) async {}
 
 /// The browser owns DNS on web — never pre-check.
 bool needsDnsCheck(String host) => false;
+
+/// No native relay on web.
+int? currentRelayPort() => null;

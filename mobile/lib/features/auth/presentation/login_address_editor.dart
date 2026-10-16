@@ -125,6 +125,9 @@ class _LoginAddressEditorState extends ConsumerState<LoginAddressEditor> {
             labelText: 'Base URL',
             hintText: kBaseUrlHint,
             errorText: _error,
+            // Full failure copy (tiers attempted, OS reason) — never
+            // truncated to one line; this is where phone failures get read.
+            errorMaxLines: 6,
           ),
         ),
         const SizedBox(height: AppSpacing.lg),

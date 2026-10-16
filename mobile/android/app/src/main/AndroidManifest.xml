@@ -1,4 +1,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Release builds merge ONLY this manifest — Flutter's template adds
+         INTERNET to debug/profile only, and without it every socket() in a
+         release APK fails with EPERM (errno 1) on device. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
     <application
         android:label="ai_stock_studio"
         android:name="${applicationName}"

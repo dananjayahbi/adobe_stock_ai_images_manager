@@ -31,14 +31,17 @@ from starlette.responses import Response
 from auth_config import auth_settings
 from services.auth_service import verify_token
 
-#: Exempt prefixes — login/logout must work before a session exists, and the
-#: docs UI serves sub-assets from under its root path.
+#: Exempt prefixes — login/logout must work before a session exists, the
+#: docs UI serves sub-assets from under its root path, and ``/flutter`` is
+#: the public shell of the mobile web build (static JS/HTML only — every
+#: ``/api/*`` call it makes still requires the cookie).
 _ALLOWLIST_PREFIXES = (
     "/api/auth/login",
     "/api/auth/logout",
     "/docs",
     "/redoc",
     "/openapi.json",
+    "/flutter",
 )
 #: Exempt exact paths — single endpoints with no sub-assets.
 _ALLOWLIST_EXACT = frozenset({"/health", "/favicon.ico"})

@@ -42,6 +42,9 @@ Future<void> ensureResolves(String host) async {
 /// Names need the check; literals/loopback never do.
 bool needsDnsCheck(String host) => !DnsResolver.isLiteralHost(host);
 
+/// Live relay port for diagnostics (`null` = relay never started).
+int? currentRelayPort() => _proxy?.port;
+
 /// Direct for literals/loopback; relay for names (where the system resolver
 /// may be the broken part).
 bool useProxyFor(String host) => !DnsResolver.isLiteralHost(host);

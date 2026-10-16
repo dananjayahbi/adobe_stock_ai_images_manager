@@ -37,21 +37,31 @@ Highlights:
   Process · Delivery · More) + Platform Hub for all six platforms.
 - Cookie auth against `/api/auth/*`, per-profile session isolation,
   **tunnel-first** connection profiles (seeded: `https://studio.hotelgo.lk`;
-  LAN/emulator profiles added manually in Settings) with health gating on
-  switch, plus an app-side **DNS fallback** (system → public-resolver chain +
-  loopback CONNECT relay) so the phone resolves even when the device's own
-  resolver fails.
+  the legacy localhost seed is purged once on upgrade, LAN/emulator profiles
+  added manually in Settings) with health gating on switch, plus an
+  app-side **DNS fallback** (system → dual-stack DoH → UDP → pinned tunnel
+  IPs + loopback CONNECT relay that races IPv4/IPv6) so the phone resolves
+  even when the device's own resolver fails, and a pre-login-reachable
+  **Network diagnostics** screen that reports the connection ladder layer
+  by layer with full selectable error text. The Flutter web build is
+  served by the backend at
+  `https://studio.hotelgo.lk/flutter/` (`--base-href /flutter/`).
 - Gallery review loop (grid, filters, swipe detail, approve-first with stamp
   feedback), batch wizard + live progress via `GET /api/batches/{id}/events`,
   delivery CSV/ZIP/force-accept, settings/account/about + offline matrix.
+- **Postmortem:** [missing INTERNET permission in the first release
+  APK](POSTMORTEM-RELEASE-INTERNET-PERMISSION.md) — the symptoms, why
+  Flutter's template caused it, the fix, and the guardrails added
+  (repo note + a global user-level agent instruction) to keep it from
+  recurring in future projects.
 
 ```powershell
 cd mobile
 flutter pub get
 flutter analyze        # clean
-flutter test           # 312 tests
+flutter test           # 339 tests
 flutter build apk --release   # installable release APK → build/app/outputs/flutter-apk/app-release.apk
-flutter build web --release # web build (E2E / browser preview; see mobile/README.md)
+flutter build web --release --base-href /flutter/  # served at https://<tunnel>/flutter (see mobile/README.md)
 flutter run -d chrome  # quick look (set the app's profile to your backend URL)
 ```
 
