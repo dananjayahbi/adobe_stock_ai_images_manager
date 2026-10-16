@@ -158,8 +158,10 @@ class DashboardScreen extends ConsumerWidget {
 
   // -------------------------------------------------------------- stats ---
 
-  /// 2×2 grid of stat tiles. `IntrinsicHeight` + stretched rows keep an
-  /// inline error cell from clipping while peers fill the same row height.
+  /// 2×3 grid of stat tiles: records/queue/jobs around the three
+  /// `state_counts` lenses (ready/approved/rejected). `IntrinsicHeight` +
+  /// stretched rows keep an inline error cell from clipping while peers
+  /// fill the same row height.
   Widget _statsGrid(DashboardStats stats, DashboardController controller) {
     final List<Widget> cells = <Widget>[
       _statCell<StagesSummary>(
@@ -177,9 +179,29 @@ class DashboardScreen extends ConsumerWidget {
         controller,
         section: DashboardSection.stages,
         data: (StagesSummary s) => StatTile(
-          value: '${s.ready}',
+          value: '${s.stateCount('READY_TO_PUBLISH', fallback: s.ready)}',
           label: 'Ready to publish',
           tone: StatusTone.success,
+        ),
+      ),
+      _statCell<StagesSummary>(
+        stats.stages,
+        controller,
+        section: DashboardSection.stages,
+        data: (StagesSummary s) => StatTile(
+          value: '${s.stateCount('APPROVED')}',
+          label: 'Approved',
+          tone: StatusTone.success,
+        ),
+      ),
+      _statCell<StagesSummary>(
+        stats.stages,
+        controller,
+        section: DashboardSection.stages,
+        data: (StagesSummary s) => StatTile(
+          value: '${s.stateCount('REJECTED', fallback: s.rejected)}',
+          label: 'Rejected',
+          tone: StatusTone.failure,
         ),
       ),
       _statCell<QueuesSummary>(
@@ -207,6 +229,8 @@ class DashboardScreen extends ConsumerWidget {
         IntrinsicHeight(child: _gridRow(cells[0], cells[1])),
         const SizedBox(height: AppSpacing.md),
         IntrinsicHeight(child: _gridRow(cells[2], cells[3])),
+        const SizedBox(height: AppSpacing.md),
+        IntrinsicHeight(child: _gridRow(cells[4], cells[5])),
       ],
     );
   }

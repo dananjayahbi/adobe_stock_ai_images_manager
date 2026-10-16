@@ -31,6 +31,7 @@ from services import (
     record_metrics,
 )
 from services.acceptance.scorer import AcceptanceConfig
+from services.image_lifecycle import refresh_state_for_stage
 from services.srgb_profile import ensure_srgb_profile, has_srgb_profile
 
 logger = logging.getLogger(__name__)
@@ -283,6 +284,9 @@ def run_missing_steps(
     record.stage_updated_at = utcnow()
     if record.status != ImageStatus.READY:
         record.status = ImageStatus.PASSED
+    # Reaching Stage 6 through the manual promote counts as a pipeline pass:
+    # APPROVED, unless the operator already queued or accepted the record.
+    refresh_state_for_stage(record)
     db.commit()
     messages.append(f"Promoted to {PipelineStage.METADATA_READY.value}.")
     return True, messages

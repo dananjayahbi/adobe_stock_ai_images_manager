@@ -24,7 +24,7 @@ from typing import Callable, Iterable
 from sqlalchemy.orm import Session
 
 from config import Settings, settings as default_settings
-from models import ImageRecord, ImageStatus, PipelineStage, utcnow
+from models import ImageLifecycleState, ImageRecord, ImageStatus, PipelineStage, utcnow
 from services import (
     compatibility_checker,
     csv_export,
@@ -36,6 +36,7 @@ from services import (
     upscaler,
 )
 from services.acceptance.scorer import AcceptanceConfig
+from services.image_lifecycle import DELIVERABLE_STATES, refresh_state_for_stage
 from services.jobs import (
     STATUS_CANCELLED,
     STATUS_COMPLETED,
@@ -240,6 +241,7 @@ def run_ocr_stage(
                     )
                     # OCR rejection is terminal: keep it out of the PASSED queue.
                     record.status = ImageStatus.FLAGGED
+                    refresh_state_for_stage(record)
                     record.semantic_flags = [result.reason or "Text detected"]
                     item.status = "failed"
                     item.message = result.reason or "Text detected."
@@ -610,6 +612,7 @@ def run_compatibility_stage(
                         detail=verdict.to_dict(),
                     )
                     record.status = ImageStatus.FLAGGED
+                    refresh_state_for_stage(record)
                     item.status = "failed"
                     item.message = verdict.summary
 
@@ -738,6 +741,9 @@ def run_metadata_stage(
                         "suggested_filename": record.suggested_filename,
                     },
                 )
+                # Stage 6 complete = the pipeline passed: APPROVED (or stays
+                # put when the operator had already queued/accepted it).
+                refresh_state_for_stage(record)
 
                 item.status = "succeeded"
                 item.message = (
@@ -814,10 +820,13 @@ def publish_records(
                 item.finished_at = time.time()
                 continue
 
-            if record.stage != PipelineStage.METADATA_READY:
+            # Stage 7 is gated by the *manual* queue, not by Stage 6: an image
+            # uploads only when the operator queued it (approve / PATCH state).
+            if record.state != ImageLifecycleState.READY_TO_PUBLISH:
                 item.status = "failed"
                 item.message = (
-                    f"Stage 6 (metadata) must complete first; record is at {record.stage.value}."
+                    "Record must be queued for publish first "
+                    f"(state READY_TO_PUBLISH); record is in {record.state.value}."
                 )
                 item.finished_at = time.time()
                 continue
@@ -849,6 +858,10 @@ def publish_records(
                         detail={"published_at": utcnow().isoformat()},
                     )
                     refreshed.status = ImageStatus.READY
+                    # Published — unless Adobe already accepted it, which
+                    # outranks a (re)publish.
+                    if refreshed.state != ImageLifecycleState.AS_ACCEPTED:
+                        refreshed.state = ImageLifecycleState.PUBLISHED
                     db.commit()
                     item.status = "succeeded"
                     item.message = "Staged in ready_to_upload."
@@ -890,11 +903,11 @@ def build_metadata_csv(
     When ``record_ids`` is omitted every eligible record is included, which is
     what the "download the whole batch" action needs.
 
-    ``only_ready`` restricts the set to records whose metadata is ready or which
-    are already published. It is on by default because Adobe matches rows to
-    files by name and only an uploadable asset belongs in the CSV; the caller can
-    turn it off when the operator deliberately exports a selected set that the
-    gate has not yet cleared.
+    ``only_ready`` restricts the set to the lifecycle states Adobe upload
+    covers — queued, published, or accepted. It is on by default because Adobe
+    matches rows to files by name and only a deliverable asset belongs in the
+    CSV; the caller can turn it off when the operator deliberately exports a
+    selected set that has not been queued yet.
 
     ``db`` lets an HTTP caller pass the session FastAPI already opened. Without
     it the function opens its own session from ``db_session_factory``, which in
@@ -913,11 +926,7 @@ def build_metadata_csv(
         if record_ids:
             query = query.filter(ImageRecord.id.in_(list(dict.fromkeys(record_ids))))
         if only_ready:
-            query = query.filter(
-                ImageRecord.stage.in_(
-                    [PipelineStage.METADATA_READY, PipelineStage.PUBLISHED]
-                )
-            )
+            query = query.filter(ImageRecord.state.in_(sorted(DELIVERABLE_STATES)))
 
         # Ordered, not merely sorted: `created_at` is stored at microsecond
         # resolution and two records inserted in the same call share a value, so

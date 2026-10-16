@@ -14,8 +14,28 @@ import zipfile
 
 import pytest
 
-from models import PipelineStage
+from models import ImageLifecycleState, PipelineStage
 from tests.test_stage_pipeline import pipeline_env  # noqa: F401  (shared fixture)
+
+
+def _default_state(stage: PipelineStage) -> ImageLifecycleState:
+    """The state a fixture record has, given its stage.
+
+    Mirrors the migration backfill's mapping, plus the one manual step these
+    delivery tests stand in for: a METADATA_READY record is *queued* for
+    publish (otherwise nothing here could reach the CSV at all).
+    """
+    if stage == PipelineStage.PUBLISHED:
+        return ImageLifecycleState.PUBLISHED
+    if stage in (
+        PipelineStage.OCR_REJECTED,
+        PipelineStage.INCOMPATIBLE,
+        PipelineStage.QUARANTINED,
+    ):
+        return ImageLifecycleState.REJECTED
+    if stage == PipelineStage.METADATA_READY:
+        return ImageLifecycleState.READY_TO_PUBLISH
+    return ImageLifecycleState.COLLECTED
 
 
 @pytest.fixture()
@@ -26,6 +46,7 @@ def make_record(db_session_factory):
         filename: str = "img.jpg",
         *,
         stage: PipelineStage = PipelineStage.METADATA_READY,
+        state: ImageLifecycleState | None = None,
         title: str | None = None,
         score: float | None = None,
         working_path: str | None = None,
@@ -39,6 +60,7 @@ def make_record(db_session_factory):
             original_path=f"/tmp/{filename}",
             file_size_bytes=1024,
             stage=stage,
+            state=state or _default_state(stage),
             generated_title=title,
             acceptance_score=score,
             working_path=working_path,

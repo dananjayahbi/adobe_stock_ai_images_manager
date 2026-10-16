@@ -55,6 +55,7 @@ class StagesSummary {
     required this.rejected,
     required this.incompatible,
     this.averageScore,
+    this.stateCounts = const <String, int>{},
   });
 
   /// One row per pipeline stage.
@@ -63,10 +64,11 @@ class StagesSummary {
   /// All records regardless of stage.
   final int total;
 
-  /// Records at `PUBLISHED` (ready to upload).
+  /// Records at `PUBLISHED` (ready to upload) — legacy fallback for
+  /// [stateCounts].
   final int ready;
 
-  /// Records at `OCR_REJECTED`.
+  /// Records at `OCR_REJECTED` — legacy fallback for [stateCounts].
   final int rejected;
 
   /// Records at `INCOMPATIBLE`.
@@ -74,6 +76,16 @@ class StagesSummary {
 
   /// Mean acceptance score, `null` when no record has one.
   final double? averageScore;
+
+  /// Record counts per image state (`state_counts: {STATE: n}`); empty
+  /// until the backend ships it, in which case the tiles fall back to the
+  /// legacy stage fields above (tolerates an older backend mid-deploy).
+  final Map<String, int> stateCounts;
+
+  /// Count for one image [state]; [fallback] covers a payload without
+  /// `state_counts`.
+  int stateCount(String state, {int fallback = 0}) =>
+      stateCounts.isEmpty ? fallback : stateCounts[state] ?? 0;
 }
 
 /// Stage-count row inside [StagesSummary.counts].
@@ -271,8 +283,20 @@ class DashboardStats {
   /// "Records total" tile.
   int get recordsTotal => stagesValue?.total ?? 0;
 
-  /// "Ready to publish" tile.
-  int get readyCount => stagesValue?.ready ?? 0;
+  /// "Ready to publish" tile — `state_counts` first, legacy `ready`
+  /// fallback while an older backend has not shipped the map.
+  int get readyCount =>
+      stagesValue?.stateCount('READY_TO_PUBLISH', fallback: stagesValue?.ready ?? 0) ??
+      0;
+
+  /// "Approved" tile — no legacy equivalent, so 0 until `state_counts`
+  /// ships.
+  int get approvedCount => stagesValue?.stateCount('APPROVED') ?? 0;
+
+  /// "Rejected" tile — `state_counts` first, legacy `rejected` fallback.
+  int get rejectedCount =>
+      stagesValue?.stateCount('REJECTED', fallback: stagesValue?.rejected ?? 0) ??
+      0;
 
   /// "Queue depth" tile.
   int get queueDepth => queuesValue?.total ?? 0;

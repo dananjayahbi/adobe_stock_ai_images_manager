@@ -14,7 +14,7 @@ import '../../../core/widgets/thumbnail.dart';
 import '../../settings/data/profile_store.dart';
 import '../../platforms/presentation/platforms_controller.dart';
 import '../domain/image_record.dart';
-import 'metadata_sheet.dart';
+import 'image_state_presentation.dart';
 
 /// Immersive full-resolution image page for the detail pager (05 §2.6).
 ///
@@ -259,8 +259,8 @@ class _ChromeBar extends StatelessWidget {
             ),
             const SizedBox(width: AppSpacing.sm),
             StampBadge(
-              label: record.status,
-              tone: statusTone(record.status),
+              label: stateLabel(record.state),
+              tone: stateTone(record.state),
               rotation: -2,
             ),
             const SizedBox(width: AppSpacing.sm),

@@ -33,7 +33,7 @@ export default function Header() {
   const showUser = status === "authenticated" && !!user && !onLogin;
 
   return (
-    <header className="sticky top-0 z-40 border-b border-parchment-400/70 bg-parchment-100/90 backdrop-blur-sm">
+    <header className="sticky top-0 z-40 safe-top border-b border-parchment-400/70 bg-parchment-100/90 backdrop-blur-sm">
       {/* Two bands on narrow screens (brand+session, then nav), one row from lg. */}
       <div className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 sm:px-6 lg:flex-nowrap lg:px-8 xl:px-10">
         <Link

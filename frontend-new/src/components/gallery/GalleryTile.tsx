@@ -1,6 +1,16 @@
 "use client";
 
 import { thumbnailUrl } from "@/lib/client";
+import Badge from "@/components/ui/Badge";
+import {
+  flagsFromLegacy,
+  flagLabel,
+  flagTone,
+  orderFlags,
+  stateFromLegacy,
+  stateLabel,
+  stateTone,
+} from "@/lib/states";
 import type { ImageRecord } from "@/lib/types";
 
 interface GalleryTileProps {
@@ -46,6 +56,14 @@ export default function GalleryTile({
   const caption =
     record.generated_title ||
     record.filename.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ");
+
+  // Lifecycle at a glance: the state badge plus every flag the tile can
+  // afford (usage keeps its own stamp below); the full list lives in the
+  // detail panel.
+  const state = stateFromLegacy(record);
+  const flags = orderFlags(flagsFromLegacy(record));
+  const stampFlags = flags.filter((flag) => flag !== "USED" && flag !== "UNUSED");
+  const isUsed = flags.includes("USED") || record.is_used;
 
   return (
     <div
@@ -108,17 +126,28 @@ export default function GalleryTile({
         </button>
       )}
 
-      {/* Already delivered: the stamp mirrors the selection toolbar's mark,
-          so which images are used is answerable at a glance (the default
-          usage filter is "any"). */}
-      {record.is_used && (
-        <span
-          aria-label="Marked as used"
-          className="absolute right-2 top-2 rounded-sm border border-brass-400/70 bg-ink-900/80 px-1.5 py-0.5 font-stamp text-[10px] uppercase tracking-[0.14em] text-brass-300"
-        >
-          Used
-        </span>
-      )}
+      {/* Lifecycle stamps over the image's top-right: state badge, then any
+          non-usage flags (contract order), then the used stamp — which keeps
+          its original look and is still driven by flags/is_used, so which
+          images are delivered is answerable at a glance (the default usage
+          filter is "any"). The dark plate keeps tone text legible on any
+          thumbnail. */}
+      <div className="absolute right-2 top-2 flex max-w-[calc(100%_-_3.5rem)] flex-wrap items-start justify-end gap-1 rounded-sm bg-ink-900/70 p-1">
+        <Badge tone={stateTone(state)}>{stateLabel(state)}</Badge>
+        {stampFlags.map((flag) => (
+          <Badge key={flag} tone={flagTone(flag)}>
+            {flagLabel(flag)}
+          </Badge>
+        ))}
+        {isUsed && (
+          <span
+            aria-label="Marked as used"
+            className="rounded-sm border border-brass-400/70 bg-ink-900/80 px-1.5 py-0.5 font-stamp text-[10px] uppercase tracking-[0.14em] text-brass-300"
+          >
+            Used
+          </span>
+        )}
+      </div>
     </div>
   );
 }

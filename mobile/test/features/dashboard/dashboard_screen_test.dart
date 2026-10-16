@@ -200,17 +200,45 @@ void main() {
     expect(find.text('161'), findsOneWidget);
   });
 
-  testWidgets('stages endpoint failing: its two stat cells error, the other '
-      'cells keep live values', (WidgetTester tester) async {
+  testWidgets('stages endpoint failing: its four stat cells error, the '
+      'other cells keep live values', (WidgetTester tester) async {
     final FakeDashboardRepository repo = FakeDashboardRepository()
       ..stagesError = const ServerException(message: 'boom');
     await pumpDashboard(tester, repo);
     await settle(tester);
 
-    expect(find.byType(ErrorView), findsNWidgets(2)); // records + ready cells
+    expect(find.byType(ErrorView), findsNWidgets(4)); // records/ready/
+    // approved/rejected cells — every stages-backed tile errors together.
     expect(find.text('3'), findsOneWidget); // queue depth survives
     expect(find.text('1'), findsOneWidget); // running jobs survives
     expect(find.text('161'), findsNothing);
+  });
+
+  testWidgets('state_counts drives the three state tiles when present', (
+    WidgetTester tester,
+  ) async {
+    final FakeDashboardRepository repo = FakeDashboardRepository()
+      ..stagesValue = const StagesSummary(
+        counts: <StageCount>[],
+        total: 30,
+        ready: 7, // legacy fields must NOT win once state_counts ships
+        rejected: 9,
+        incompatible: 0,
+        stateCounts: <String, int>{
+          'READY_TO_PUBLISH': 4,
+          'APPROVED': 5,
+          'REJECTED': 6,
+        },
+      );
+    await pumpDashboard(tester, repo);
+    await settle(tester);
+
+    expect(find.text('30'), findsOneWidget); // records total
+    expect(find.text('4'), findsOneWidget); // Ready to publish
+    expect(find.text('5'), findsOneWidget); // Approved
+    expect(find.text('6'), findsOneWidget); // Rejected
+    expect(find.text('7'), findsNothing); // legacy ready ignored
+    expect(find.text('9'), findsNothing); // legacy rejected ignored
   });
 
   testWidgets('empty records show the batch CTA EmptyState', (

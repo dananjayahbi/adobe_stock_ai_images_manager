@@ -51,9 +51,10 @@ Widget galleryRecordsSliver({
   required ValueChanged<ImageRecord> onLongPress,
 }) {
   return SliverPadding(
+    // Top inset matches the sibling tabs' 16 dp content top.
     padding: const EdgeInsets.fromLTRB(
       AppSpacing.lg,
-      AppSpacing.xs,
+      AppSpacing.lg,
       AppSpacing.lg,
       AppSpacing.xl,
     ),
@@ -84,7 +85,7 @@ Widget gallerySkeletonSliver({
   return SliverPadding(
     padding: const EdgeInsets.fromLTRB(
       AppSpacing.lg,
-      AppSpacing.xs,
+      AppSpacing.lg,
       AppSpacing.lg,
       AppSpacing.xl,
     ),

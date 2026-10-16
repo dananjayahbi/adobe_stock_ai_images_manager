@@ -16,12 +16,14 @@ class FakeGalleryRepository extends Mock implements GalleryRepository {}
 ImageRecord buildRecord({
   String id = 'r1',
   String status = 'PASSED',
+  String state = 'APPROVED',
   bool? used = false,
 }) {
   return ImageRecord(
     id: id,
     filename: 'wire_loop.jpg',
     status: status,
+    state: state,
     thumbnailPath: null,
     used: used,
     generatedTitle: 'Wire loop sculpting tool',
@@ -116,6 +118,128 @@ void main() {
     expect(find.text('Mark used'), findsOneWidget);
     expect(find.text('Reset stage'), findsOneWidget);
     expect(find.text('Delete'), findsOneWidget);
+    // Base state (APPROVED): no published⇄accepted pair in either
+    // direction.
+    expect(find.text('Mark accepted'), findsNothing);
+    expect(find.text('Undo accepted'), findsNothing);
+  });
+
+  testWidgets('PUBLISHED menu gains Mark accepted, never Undo accepted', (
+    WidgetTester tester,
+  ) async {
+    final FakeGalleryRepository repo = FakeGalleryRepository();
+    await pumpBar(tester, repo: repo, record: buildRecord(state: 'PUBLISHED'));
+
+    await openMenu(tester);
+
+    expect(find.text('Download'), findsOneWidget);
+    expect(find.text('Mark used'), findsOneWidget);
+    expect(find.text('Mark accepted'), findsOneWidget);
+    expect(find.text('Reset stage'), findsOneWidget);
+    expect(find.text('Delete'), findsOneWidget);
+    expect(find.text('Undo accepted'), findsNothing);
+  });
+
+  testWidgets('AS_ACCEPTED menu gains Undo accepted, never Mark accepted', (
+    WidgetTester tester,
+  ) async {
+    final FakeGalleryRepository repo = FakeGalleryRepository();
+    await pumpBar(
+      tester,
+      repo: repo,
+      record: buildRecord(state: 'AS_ACCEPTED'),
+    );
+
+    await openMenu(tester);
+
+    expect(find.text('Download'), findsOneWidget);
+    expect(find.text('Mark used'), findsOneWidget);
+    expect(find.text('Undo accepted'), findsOneWidget);
+    expect(find.text('Reset stage'), findsOneWidget);
+    expect(find.text('Delete'), findsOneWidget);
+    expect(find.text('Mark accepted'), findsNothing);
+  });
+
+  testWidgets('Mark accepted PATCHes the state and reports back', (
+    WidgetTester tester,
+  ) async {
+    final FakeGalleryRepository repo = FakeGalleryRepository();
+    when(() => repo.changeState('r1', 'AS_ACCEPTED'))
+        .thenAnswer((_) async {});
+    bool changed = false;
+    await pumpBar(
+      tester,
+      repo: repo,
+      record: buildRecord(state: 'PUBLISHED'),
+      onRecordChanged: () => changed = true,
+    );
+
+    await openMenu(tester);
+    await tester.tap(find.text('Mark accepted'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    verify(() => repo.changeState('r1', 'AS_ACCEPTED')).called(1);
+    expect(changed, isTrue);
+    expect(find.text('Marked accepted · wire_loop.jpg'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 3)); // Flush toast timer.
+    expect(find.text('Marked accepted · wire_loop.jpg'), findsNothing);
+  });
+
+  testWidgets('Undo accepted PATCHes back to PUBLISHED', (
+    WidgetTester tester,
+  ) async {
+    final FakeGalleryRepository repo = FakeGalleryRepository();
+    when(() => repo.changeState('r1', 'PUBLISHED')).thenAnswer((_) async {});
+    bool changed = false;
+    await pumpBar(
+      tester,
+      repo: repo,
+      record: buildRecord(state: 'AS_ACCEPTED'),
+      onRecordChanged: () => changed = true,
+    );
+
+    await openMenu(tester);
+    await tester.tap(find.text('Undo accepted'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    verify(() => repo.changeState('r1', 'PUBLISHED')).called(1);
+    expect(changed, isTrue);
+    expect(find.text('Back to published · wire_loop.jpg'), findsOneWidget);
+
+    await tester.pump(const Duration(seconds: 3)); // Flush toast timer.
+    expect(find.text('Back to published · wire_loop.jpg'), findsNothing);
+  });
+
+  testWidgets('Approve renders only for APPROVED and REJECTED records', (
+    WidgetTester tester,
+  ) async {
+    final FakeGalleryRepository repo = FakeGalleryRepository();
+
+    for (final String state in <String>['APPROVED', 'REJECTED']) {
+      await pumpBar(tester, repo: repo, record: buildRecord(state: state));
+      expect(find.text('Approve'), findsOneWidget, reason: state);
+    }
+  });
+
+  testWidgets('Approve is absent for every non-approvable state', (
+    WidgetTester tester,
+  ) async {
+    final FakeGalleryRepository repo = FakeGalleryRepository();
+    when(() => repo.approve('r1')).thenAnswer((_) async {});
+
+    for (final String state in <String>[
+      'COLLECTED',
+      'READY_TO_PUBLISH',
+      'PUBLISHED',
+      'AS_ACCEPTED',
+    ]) {
+      await pumpBar(tester, repo: repo, record: buildRecord(state: state));
+      expect(find.text('Approve'), findsNothing, reason: state);
+    }
+    verifyNever(() => repo.approve('r1'));
   });
 
   testWidgets('Delete asks for confirmation; Cancel deletes nothing', (

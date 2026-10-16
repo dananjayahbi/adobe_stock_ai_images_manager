@@ -71,6 +71,9 @@ class _FakeGalleryRepository implements GalleryRepository {
   Future<void> markUsed(String recordId, {required bool used}) async {}
 
   @override
+  Future<void> changeState(String recordId, String state) async {}
+
+  @override
   Future<void> resetStage(String recordId) async {}
 
   @override
@@ -138,7 +141,7 @@ void main() {
     expect(find.text('wire_loop.jpg'), findsOneWidget);
   });
 
-  testWidgets('stage chip tap swaps the lens from offset 0', (
+  testWidgets('state chip tap swaps the lens from offset 0', (
     WidgetTester tester,
   ) async {
     final _FakeGalleryRepository repo = seededRepo();
@@ -151,7 +154,7 @@ void main() {
     await tester.tap(find.text('Collected'));
     await settle(tester);
 
-    expect(repo.queries.last.stage, 'COLLECTED');
+    expect(repo.queries.last.state, 'COLLECTED');
     expect(repo.queries.last.offset, 0);
     expect(repo.pageCalls, 2);
   });
@@ -163,13 +166,12 @@ void main() {
     await pumpGallery(tester, repo);
     await settle(tester);
 
-    // The usage chips sit past the stage strip — scroll them into view.
+    // The usage chips sit past the state strip — scroll them into view.
     final Finder chipList = find.descendant(
       of: find.byType(GalleryFilterBar),
       matching: find.byType(ListView),
     );
-    // Usage chips sit past ~2.6k px of stage chips — one far drag parks at
-    // the end where they live.
+    // One far drag parks at the end of the strip where they live.
     await tester.drag(chipList, const Offset(-3200, 0));
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));

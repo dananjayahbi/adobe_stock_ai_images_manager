@@ -25,6 +25,21 @@ export type ImageStatus =
   | "APPROVED"
   | "READY";
 
+/**
+ * Record lifecycle state (backend wire values, uppercase, exactly one).
+ *
+ * COLLECTED = non-processed · APPROVED = pipeline passed · REJECTED = pipeline
+ * failed · READY_TO_PUBLISH = manually queued for Adobe upload · PUBLISHED =
+ * uploaded · AS_ACCEPTED = accepted by Adobe.
+ */
+export type ImageLifecycleState =
+  | "COLLECTED"
+  | "APPROVED"
+  | "REJECTED"
+  | "READY_TO_PUBLISH"
+  | "PUBLISHED"
+  | "AS_ACCEPTED";
+
 export interface StepConfig {
   [key: string]: string | number | boolean | null;
 }
@@ -69,6 +84,10 @@ export interface ImageRecord {
   thumbnail_path: string | null;
   status?: ImageStatus;
   stage: string;
+  /** Lifecycle state; optional so pre-upgrade responses still type-check (see `stateFromLegacy`). */
+  state?: ImageLifecycleState;
+  /** Lifecycle flags — subset of the contract list; one of USED/UNUSED is always present. */
+  flags?: string[];
   width: number | null;
   height: number | null;
   megapixels: number | null;

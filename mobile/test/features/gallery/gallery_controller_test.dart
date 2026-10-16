@@ -82,6 +82,9 @@ class _FakeGalleryRepository implements GalleryRepository {
   }
 
   @override
+  Future<void> changeState(String recordId, String state) async {}
+
+  @override
   Future<void> resetStage(String recordId) async {}
 
   @override
@@ -123,7 +126,8 @@ void main() {
     expect(page.items, hasLength(2));
     expect(repo.pageQueries, <GalleryQuery>[const GalleryQuery()]);
     expect(repo.pageQueries.single.offset, 0);
-    expect(repo.pageQueries.single.stage, 'METADATA_READY,PUBLISHED');
+    expect(repo.pageQueries.single.state,
+        'READY_TO_PUBLISH,PUBLISHED,AS_ACCEPTED');
     expect(repo.pageQueries.single.used, 'all');
     expect(repo.pageQueries.single.limit, 60);
   });
@@ -140,6 +144,35 @@ void main() {
     expect(repo.pageQueries.last.search, 'fox');
     expect(state().items.first.id, 'r0');
     expect(container.read(galleryControllerProvider).hasValue, isTrue);
+  });
+
+  test('patchRecord swaps a row in place without a fetch', () async {
+    repo.onFetchPage = (GalleryQuery q) => _pageAt(q.offset, 10);
+    await load();
+    final int fetches = repo.pageQueries.length;
+
+    notifier().patchRecord(
+      const ImageRecord(
+        id: 'r0',
+        filename: 'r0.jpg',
+        status: 'PASSED',
+        state: 'READY_TO_PUBLISH',
+        flags: <String>['UNUSED'],
+      ),
+    );
+
+    final ImageRecord patched = state().items.first;
+    expect(patched.state, 'READY_TO_PUBLISH');
+    expect(patched.used, isFalse);
+    expect(state().total, 10); // totals untouched
+    expect(repo.pageQueries, hasLength(fetches)); // zero network
+
+    // An id outside the loaded window is a no-op, never a crash.
+    notifier().patchRecord(
+      const ImageRecord(id: 'ghost', filename: 'g.jpg', status: 'PENDING'),
+    );
+    expect(state().items.first.id, 'r0');
+    expect(repo.pageQueries, hasLength(fetches));
   });
 
   test('loadMore appends until total and then stops asking', () async {

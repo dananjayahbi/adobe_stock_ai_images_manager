@@ -109,6 +109,9 @@ class _FakeGalleryRepository implements GalleryRepository {
   Future<void> markUsed(String recordId, {required bool used}) async {}
 
   @override
+  Future<void> changeState(String recordId, String state) async {}
+
+  @override
   Future<void> resetStage(String recordId) async {}
 
   @override

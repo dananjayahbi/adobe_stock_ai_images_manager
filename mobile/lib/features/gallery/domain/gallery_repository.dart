@@ -48,6 +48,10 @@ abstract class GalleryRepository {
   /// shares the same body minus `record_ids`).
   Future<void> markUsed(String recordId, {required bool used});
 
+  /// `PATCH records/{id}/state` — `StateRequest {state}`; 200 with the full
+  /// record, 400 when the transition is not allowed.
+  Future<void> changeState(String recordId, String state);
+
   /// `POST records/{id}/reset-stage` — stage 1 again (409 once published).
   Future<void> resetStage(String recordId);
 

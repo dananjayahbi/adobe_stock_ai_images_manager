@@ -13,32 +13,7 @@ import '../../../core/widgets/skeleton_loader.dart';
 import '../../../core/widgets/stamp_badge.dart';
 import '../../../core/widgets/status_chip.dart';
 import '../domain/image_record.dart';
-
-/// Status → stamp tone for the detail sheet, mirroring the web
-/// `InfoPanel.STATUS_TONES` map over backend `ImageStatus` (05 §2.6).
-///
-/// Unknown values fall back to [StampTone.neutral] — the raw value is always
-/// rendered by the stamp itself, so a new backend status can never crash the
-/// screen.
-StampTone statusTone(String status) {
-  return switch (status) {
-    'PENDING' => StampTone.neutral,
-    'AUDITING' => StampTone.accent,
-    'PASSED' => StampTone.success,
-    'FLAGGED' => StampTone.warning,
-    'APPROVED' => StampTone.success,
-    'READY' => StampTone.success,
-    'PUBLISHED' => StampTone.success,
-    'REJECTED' => StampTone.failure,
-    'FAILED' => StampTone.failure,
-    _ => StampTone.neutral,
-  };
-}
-
-/// Whether the record is already approved (or staged past approval) — the
-/// detail screen swaps Approve for Reprocess in that state (05 §2.6).
-bool isApprovedStatus(String status) =>
-    status == 'APPROVED' || status == 'READY';
+import 'image_state_presentation.dart';
 
 /// Bottom draggable metadata sheet: two snaps (~28% / 75%) holding the
 /// postmark metadata card (05 §2.6).
@@ -197,7 +172,10 @@ class _MetadataCard extends StatelessWidget {
                 ),
               ),
               const SizedBox(width: AppSpacing.sm),
-              StampBadge(label: record.status, tone: statusTone(record.status)),
+              StampBadge(
+                label: stateLabel(record.state),
+                tone: stateTone(record.state),
+              ),
             ],
           ),
           const SizedBox(height: AppSpacing.md),
@@ -236,6 +214,26 @@ class _MetadataCard extends StatelessWidget {
                       label: keyword,
                       icon: LucideIcons.hash,
                       tone: StatusTone.neutral,
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
+          ],
+          if (record.flags.isNotEmpty) ...<Widget>[
+            const SizedBox(height: AppSpacing.md),
+            const DashedDivider(),
+            const SizedBox(height: AppSpacing.md),
+            const LabelCaps(text: 'Flags'),
+            const SizedBox(height: AppSpacing.sm),
+            Wrap(
+              spacing: AppSpacing.sm,
+              runSpacing: AppSpacing.sm,
+              children: record.flags
+                  .map(
+                    (String flag) => StatusChip(
+                      label: flagLabel(flag),
+                      icon: flagIcon(flag),
+                      tone: flagChipTone(flag),
                     ),
                   )
                   .toList(growable: false),

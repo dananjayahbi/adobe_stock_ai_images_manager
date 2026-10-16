@@ -191,6 +191,28 @@ class GalleryController extends AsyncNotifier<GalleryPage> {
     }
   }
 
+  /// Patches one row in place after a detail-screen mutation (approve,
+  /// mark used, state change) so the grid reflects the fresh record with
+  /// **zero** extra network traffic — the detail refetch already paid for
+  /// one round trip. Rows outside the current lens are left alone (the
+  /// next refresh re-evaluates membership).
+  void patchRecord(ImageRecord updated) {
+    final GalleryPage? current = state.value;
+    if (current == null) {
+      return;
+    }
+    final int at =
+        current.items.indexWhere((ImageRecord row) => row.id == updated.id);
+    if (at < 0) {
+      return;
+    }
+    final List<ImageRecord> items = List<ImageRecord>.of(current.items);
+    items[at] = updated;
+    state = AsyncData<GalleryPage>(
+      GalleryPage(items: items, total: current.total),
+    );
+  }
+
   /// Deletes the selection (single-record `DELETE`s — web would bulk), then
   /// reloads the window. Per-record failures are collected: the rest of the
   /// selection still gets its chance, the reload always runs, and the first

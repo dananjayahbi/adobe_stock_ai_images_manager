@@ -69,18 +69,19 @@ void main() {
   });
 
   group('records lens encoding (frontend-new fetchRecords parity)', () {
-    test('default lens: web-default stage CSV, group_id none, no sort', () async {
+    test('default lens: default state CSV, group_id none, no sort', () async {
       await api.records('adobe_stock', const GalleryQuery());
       expect(
         _target(adapter.requests.single),
-        '/api/records?limit=60&offset=0&stage=METADATA_READY,PUBLISHED'
+        '/api/records?limit=60&offset=0'
+        '&state=READY_TO_PUBLISH,PUBLISHED,AS_ACCEPTED'
         '&group_id=none&stage_updated=true',
       );
       expect(adapter.requests.single.queryParameters.containsKey('sort'), isFalse);
       // The CSV travels with a literal comma (axios un-escapes %2C).
       expect(
-        adapter.requests.single.queryParameters['stage'],
-        'METADATA_READY,PUBLISHED',
+        adapter.requests.single.queryParameters['state'],
+        'READY_TO_PUBLISH,PUBLISHED,AS_ACCEPTED',
       );
     });
 
@@ -89,7 +90,7 @@ void main() {
         'adobe_stock',
         const GalleryQuery(
           search: 'red fox',
-          stage: 'COLLECTED',
+          state: 'COLLECTED',
           used: 'used',
           groupId: 'g1',
           offset: 120,
@@ -97,7 +98,7 @@ void main() {
       );
       expect(
         _target(adapter.requests.single),
-        '/api/records?limit=60&offset=120&search=red+fox&stage=COLLECTED'
+        '/api/records?limit=60&offset=120&search=red+fox&state=COLLECTED'
         '&used=used&group_id=g1&stage_updated=true',
       );
       expect(
@@ -106,16 +107,17 @@ void main() {
       );
     });
 
-    test('used=unused and Any stage (empty stage omits the param)', () async {
+    test('used=unused and Any state (empty state omits the param)', () async {
       await api.records(
         'adobe_stock',
-        const GalleryQuery(stage: '', used: 'unused', offset: 60),
+        const GalleryQuery(state: '', used: 'unused', offset: 60),
       );
       expect(
         _target(adapter.requests.single),
         '/api/records?limit=60&offset=60&used=unused&group_id=none'
         '&stage_updated=true',
       );
+      expect(adapter.requests.single.queryParameters.containsKey('state'), isFalse);
     });
 
     test('stage_updated=false drops the flag; search stays encoded', () async {
@@ -129,8 +131,8 @@ void main() {
       expect(
         _target(adapter.requests.single),
         '/api/records?limit=60&offset=0'
-        '&search=caf%C3%A9+%26+cr%C3%A8me&stage=METADATA_READY,PUBLISHED'
-        '&group_id=none',
+        '&search=caf%C3%A9+%26+cr%C3%A8me'
+        '&state=READY_TO_PUBLISH,PUBLISHED,AS_ACCEPTED&group_id=none',
       );
       expect(adapter.requests.single.queryParameters.containsKey('sort'), isFalse);
     });
@@ -155,7 +157,8 @@ void main() {
         adapter.requests.map<String>(_target).toList(),
         <String>[
           '/api/platforms/freepik/records?limit=1&offset=0'
-          '&stage=METADATA_READY,PUBLISHED&group_id=none&stage_updated=true',
+          '&state=READY_TO_PUBLISH,PUBLISHED,AS_ACCEPTED'
+          '&group_id=none&stage_updated=true',
           '/api/platforms/freepik/groups',
         ],
       );
@@ -202,6 +205,16 @@ void main() {
       expect(adapter.methods.single, 'PATCH');
       expect(_target(adapter.requests.single), '/api/records/r1/used');
       expect(_body(adapter.bodies.single), <String, Object?>{'is_used': true});
+    });
+
+    test('changeState PATCHes {state} on records/{id}/state', () async {
+      await api.changeState('adobe_stock', 'r1', 'AS_ACCEPTED');
+      expect(adapter.methods.single, 'PATCH');
+      expect(_target(adapter.requests.single), '/api/records/r1/state');
+      expect(
+        _body(adapter.bodies.single),
+        <String, Object?>{'state': 'AS_ACCEPTED'},
+      );
     });
 
     test('reset-stage is a bodyless POST; delete is a DELETE', () async {

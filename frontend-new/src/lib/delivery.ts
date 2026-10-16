@@ -9,6 +9,10 @@
  * column identical to the ZIP entry names. This module is only the client
  * half — fetching the blob and handing it to the browser.
  *
+ * The publishable set itself is now lifecycle-based on the server (state in
+ * READY_TO_PUBLISH / PUBLISHED / AS_ACCEPTED); the client always selects
+ * explicitly, so nothing here gates on a state list.
+ *
  * Errors arrive as FastAPI's `{"detail": "..."}` JSON; both helpers parse that
  * into a readable `Error` so the caller (dialog or page banner) can show the
  * real reason instead of a status code.
@@ -22,10 +26,11 @@ export const MAX_BUNDLE_FILES = 50;
  * Download the Adobe Stock CSV for an explicit selection.
  *
  * `only_ready` is sent as `false` on purpose: the operator picked these exact
- * records, so the export honours the selection as-is (a published asset is not
- * METADATA_READY and would otherwise vanish from its own export). The CSV cap
- * (500 rows, `MAX_DELIVERY_BATCH`) is unreachable from the gallery because
- * `useRecords` loads at most 500 records.
+ * records, so the export honours the selection as-is (an asset whose lifecycle
+ * has moved past READY_TO_PUBLISH — PUBLISHED, AS_ACCEPTED — would otherwise
+ * vanish from its own export). The CSV cap (500 rows, `MAX_DELIVERY_BATCH`)
+ * is unreachable from the gallery because `useRecords` loads at most 500
+ * records.
  */
 export async function downloadSelectionCsv(recordIds: string[]): Promise<void> {
   const response = await postDelivery("/api/assets/csv", recordIds);

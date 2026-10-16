@@ -1,5 +1,5 @@
 # Data directories (created at runtime)
-data/
+/data/
 backend/storage/
 storage/
 

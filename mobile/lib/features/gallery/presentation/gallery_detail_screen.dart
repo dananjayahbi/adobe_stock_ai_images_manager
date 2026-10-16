@@ -14,8 +14,18 @@ import '../domain/gallery_repository.dart';
 import '../domain/image_record.dart';
 import 'authed_image_view.dart';
 import 'gallery_controller.dart';
+import 'image_state_presentation.dart';
 import 'metadata_sheet.dart';
 import 'review_action_bar.dart';
+
+/// States that earn the persistent over-image stamp — everything past the
+/// pipeline's approval gate (queued, shipped or accepted by Adobe).
+const Set<String> _preStampedStates = <String>{
+  'APPROVED',
+  'READY_TO_PUBLISH',
+  'PUBLISHED',
+  'AS_ACCEPTED',
+};
 
 /// Image Detail / Review — the operator's core review loop (05 §2.6).
 ///
@@ -57,7 +67,8 @@ class _DetailBodyState extends ConsumerState<_DetailBody> {
   bool _offline = false;
   bool _zoomed = false;
 
-  /// Transient ~1.2 s "APPROVED" overlay right after a successful approve.
+  /// Transient ~1.2 s state overlay right after a successful approve —
+  /// the approve contract flips the record to READY_TO_PUBLISH.
   bool _stampVisible = false;
   int _stampSeq = 0;
 
@@ -112,7 +123,7 @@ class _DetailBodyState extends ConsumerState<_DetailBody> {
     super.dispose();
   }
 
-  Future<void> _fetch({bool silent = false}) async {
+  Future<ImageRecord?> _fetch({bool silent = false}) async {
     final String id = _currentId;
     if (!silent && mounted) {
       setState(() {
@@ -124,7 +135,7 @@ class _DetailBodyState extends ConsumerState<_DetailBody> {
       final ImageRecord record =
           await ref.read(galleryRepositoryProvider).fetchById(id);
       if (!mounted || id != _currentId) {
-        return;
+        return null;
       }
       setState(() {
         _record = record;
@@ -132,9 +143,10 @@ class _DetailBodyState extends ConsumerState<_DetailBody> {
         _error = null;
         _offline = false;
       });
+      return record;
     } catch (error) {
       if (!mounted || id != _currentId) {
-        return;
+        return null;
       }
       setState(() {
         _loading = false;
@@ -146,6 +158,7 @@ class _DetailBodyState extends ConsumerState<_DetailBody> {
           _record = null; // Deleted elsewhere → dead-end state (05 §2.6).
         }
       });
+      return null;
     }
   }
 
@@ -154,7 +167,18 @@ class _DetailBodyState extends ConsumerState<_DetailBody> {
   }
 
   void _handleRecordChanged() {
-    unawaited(_fetch(silent: true));
+    unawaited(_syncAfterAction());
+  }
+
+  /// One network round trip per action: the silent detail refetch also
+  /// patches its row into the gallery list locally, so the grid never
+  /// refetches on top of it (no invalidate → no double reload).
+  Future<void> _syncAfterAction() async {
+    final ImageRecord? fresh = await _fetch(silent: true);
+    if (fresh == null || !mounted) {
+      return;
+    }
+    ref.read(galleryControllerProvider.notifier).patchRecord(fresh);
   }
 
   void _handleConnectivityChanged(bool online) {
@@ -181,8 +205,9 @@ class _DetailBodyState extends ConsumerState<_DetailBody> {
         setState(() => _stampVisible = false);
       }
     });
-    ref.invalidate(galleryControllerProvider);
-    unawaited(_fetch(silent: true));
+    // Single refetch: the detail GET doubles as the list patch — no whole-
+    // list invalidate, no second network round trip (05 speed budget).
+    unawaited(_syncAfterAction());
   }
 
   void _onZoomChanged(bool zoomed) {
@@ -284,11 +309,20 @@ class _DetailBodyState extends ConsumerState<_DetailBody> {
 
     final ImageRecord? record = _record;
     final bool notFound = _error is NotFoundException;
+    // Persistent over-image stamp for records sitting past approval —
+    // gated off for the record just approved, whose transient overlay
+    // plays first (05 §2.6). The transient is approve's contract result
+    // (APPROVED|REJECTED → READY_TO_PUBLISH); the persistent one wears
+    // the record's own state.
+    final bool transientStamp = _stampVisible;
     final bool stampUp =
-        _stampVisible ||
+        transientStamp ||
         (record != null &&
-            isApprovedStatus(record.status) &&
+            _preStampedStates.contains(record.state) &&
             _justApprovedFor != record.id);
+    final String stampState = transientStamp
+        ? 'READY_TO_PUBLISH'
+        : record?.state ?? 'READY_TO_PUBLISH';
 
     return Scaffold(
       backgroundColor: Colors.black,
@@ -303,9 +337,9 @@ class _DetailBodyState extends ConsumerState<_DetailBody> {
                     key: ValueKey<String>('$_currentId#$_stampSeq'),
                     child: Transform.scale(
                       scale: 2.4,
-                      child: const StampBadge(
-                        label: 'APPROVED',
-                        tone: StampTone.success,
+                      child: StampBadge(
+                        label: stateLabel(stampState),
+                        tone: stateTone(stampState),
                         rotation: -3,
                       ),
                     ),

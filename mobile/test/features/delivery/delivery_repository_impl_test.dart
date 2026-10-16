@@ -214,6 +214,31 @@ void main() {
         throwsA(isA<ServerException>()),
       );
     });
+
+    test('state-bearing rows gate deliverable on the state contract', () async {
+      adapter.jsonByPath['/api/records'] = jsonDecode(
+        '{"items":['
+        '{"id":"a","filename":"a.jpg","stage":"COLLECTED",'
+        '"state":"READY_TO_PUBLISH"},'
+        '{"id":"b","filename":"b.jpg","stage":"METADATA_READY",'
+        '"state":"COLLECTED"},'
+        '{"id":"c","filename":"c.jpg","stage":"METADATA_READY",'
+        '"state":"PUBLISHED"}],'
+        '"total":3}',
+      );
+
+      final List<DeliveryCandidate> rows =
+          await repo.fetchCandidates('adobe_stock');
+
+      expect(rows, hasLength(3));
+      // `state` wins over the stage pair once the backend ships it…
+      expect(rows[0].deliverable, isTrue);
+      expect(rows[1].deliverable, isFalse);
+      expect(rows[2].deliverable, isTrue);
+      // …and the raw stage text still rides along for the Process column.
+      expect(rows[1].stage, 'METADATA_READY');
+      expect(rows[1].state, 'COLLECTED');
+    });
   });
 
   group('csv preview parses captured JSON', () {

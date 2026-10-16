@@ -49,6 +49,13 @@ Highlights:
 - Gallery review loop (grid, filters, swipe detail, approve-first with stamp
   feedback), batch wizard + live progress via `GET /api/batches/{id}/events`,
   delivery CSV/ZIP/force-accept, settings/account/about + offline matrix.
+- **Lifecycle model:** exactly one *state* per image (`COLLECTED →
+  APPROVED/REJECTED → READY_TO_PUBLISH → PUBLISHED → AS_ACCEPTED`, manual
+  only into ready; `PATCH …/state` whitelist; approve is a fast state flip
+  with no LLM) plus multiple *flags* displayed together (`QUARANTINED`,
+  `USED/UNUSED`, `METADATA_READY`, `INCOMPATIBLE`, `REFINED`, `UPSCALED`,
+  `OCR_REJECTED`) across web + mobile; old stage/status values remain
+  internal for the pipeline and legacy filters.
 - **Postmortem:** [missing INTERNET permission in the first release
   APK](POSTMORTEM-RELEASE-INTERNET-PERMISSION.md) — the symptoms, why
   Flutter's template caused it, the fix, and the guardrails added
@@ -59,7 +66,7 @@ Highlights:
 cd mobile
 flutter pub get
 flutter analyze        # clean
-flutter test           # 339 tests
+flutter test           # 366 tests
 flutter build apk --release   # installable release APK → build/app/outputs/flutter-apk/app-release.apk
 flutter build web --release --base-href /flutter/  # served at https://<tunnel>/flutter (see mobile/README.md)
 flutter run -d chrome  # quick look (set the app's profile to your backend URL)

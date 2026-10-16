@@ -20,12 +20,14 @@ class FakeGalleryRepository extends Mock implements GalleryRepository {}
 ImageRecord buildRecord({
   String id = 'r1',
   String status = 'PASSED',
+  String state = 'APPROVED',
   bool? used = false,
 }) {
   return ImageRecord(
     id: id,
     filename: 'wire_loop.jpg',
     status: status,
+    state: state,
     thumbnailPath: null,
     used: used,
     generatedTitle: 'Wire loop sculpting tool',
@@ -96,14 +98,14 @@ void main() {
     expect(find.text('wire_loop.jpg'), findsOneWidget);
     // Metadata sheet shows the generated title once loaded.
     expect(find.text('Wire loop sculpting tool'), findsOneWidget);
-    // Status stamp rendered from the status → tone map.
-    expect(find.text('PASSED'), findsWidgets);
+    // State stamps (chrome + sheet + over-image) render from `state` —
+    // the legacy `PASSED` status rides along untouched underneath.
+    expect(find.text('APPROVED'), findsWidgets);
     verify(() => repo.fetchById('r1')).called(1);
   });
 
-  testWidgets('approve success stamps APPROVED over the image, then clears', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('approve success stamps READY TO PUBLISH over the image, '
+      'then clears', (WidgetTester tester) async {
     final FakeGalleryRepository repo = FakeGalleryRepository();
     when(() => repo.fetchById('r1')).thenAnswer((_) async => buildRecord());
     when(() => repo.approve('r1')).thenAnswer((_) async {});
@@ -115,13 +117,15 @@ void main() {
     await tester.pump(); // Microtasks: haptic → approve → toast + stamp.
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.text('APPROVED'), findsOneWidget);
+    // The approve contract flips APPROVED|REJECTED → READY_TO_PUBLISH, so
+    // the transient stamp carries the resulting *state*.
+    expect(find.text('READY TO PUBLISH'), findsWidgets);
     expect(find.text('Approved · wire_loop.jpg'), findsOneWidget);
     verify(() => repo.approve('r1')).called(1);
 
     // Stamp overlay auto-hides after ~1.2 s…
     await tester.pump(const Duration(milliseconds: 1300));
-    expect(find.text('APPROVED'), findsNothing);
+    expect(find.text('READY TO PUBLISH'), findsNothing);
     // …and the toast's 3 s timer is flushed so no timer dangles.
     await tester.pump(const Duration(seconds: 3));
     expect(find.text('Approved · wire_loop.jpg'), findsNothing);
@@ -142,7 +146,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 400));
 
-    expect(find.text('APPROVED'), findsNothing);
+    expect(find.text('READY TO PUBLISH'), findsNothing);
     expect(find.text(uiMessageFor(failure)), findsOneWidget);
     // The screen pinned itself offline: banner note + disabled actions.
     expect(
@@ -153,5 +157,67 @@ void main() {
 
     await tester.pump(const Duration(seconds: 3)); // Flush toast timer.
     expect(find.text(uiMessageFor(failure)), findsNothing);
+  });
+
+  testWidgets('Approve is absent once the record is queued, published or '
+      'accepted', (WidgetTester tester) async {
+    final FakeGalleryRepository repo = FakeGalleryRepository();
+    when(() => repo.approve('r1')).thenAnswer((_) async {});
+
+    for (final String state in <String>[
+      'READY_TO_PUBLISH',
+      'PUBLISHED',
+      'AS_ACCEPTED',
+    ]) {
+      when(() => repo.fetchById('r1'))
+          .thenAnswer((_) async => buildRecord(state: state));
+      await pumpDetail(tester, repo);
+      await settle(tester);
+
+      expect(find.text('Approve'), findsNothing, reason: state);
+    }
+    verifyNever(() => repo.approve('r1'));
+  });
+
+  testWidgets('menu shows Mark accepted only for PUBLISHED records', (
+    WidgetTester tester,
+  ) async {
+    final FakeGalleryRepository repo = FakeGalleryRepository();
+    when(() => repo.fetchById('r1'))
+        .thenAnswer((_) async => buildRecord(state: 'PUBLISHED'));
+
+    await pumpDetail(tester, repo);
+    await settle(tester);
+
+    await tester.tap(find.byTooltip('More actions'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Download'), findsOneWidget);
+    expect(find.text('Mark accepted'), findsOneWidget);
+    expect(find.text('Undo accepted'), findsNothing);
+    await tester.tapAt(const Offset(400, 150)); // Dismiss the menu.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+  });
+
+  testWidgets('menu shows Undo accepted only for AS_ACCEPTED records', (
+    WidgetTester tester,
+  ) async {
+    final FakeGalleryRepository repo = FakeGalleryRepository();
+    when(() => repo.fetchById('r1'))
+        .thenAnswer((_) async => buildRecord(state: 'AS_ACCEPTED'));
+
+    await pumpDetail(tester, repo);
+    await settle(tester);
+
+    await tester.tap(find.byTooltip('More actions'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('Download'), findsOneWidget);
+    expect(find.text('Undo accepted'), findsOneWidget);
+    expect(find.text('Mark accepted'), findsNothing);
+    await tester.tapAt(const Offset(400, 150)); // Dismiss the menu.
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
   });
 }

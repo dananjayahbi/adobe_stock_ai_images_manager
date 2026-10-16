@@ -25,6 +25,21 @@ from services.upload_table import MAX_FILENAME_LENGTH
 from tests.test_stage_pipeline import pipeline_env  # noqa: F401  (shared fixture)
 
 
+def _state_for_stage(stage: PipelineStage) -> str:
+    """Lifecycle these export tests assume for a fixture record.
+
+    METADATA_READY stands in for "queued by the operator" — the CSV gate now
+    reads lifecycle states, not stages.
+    """
+    from models import ImageLifecycleState
+
+    if stage == PipelineStage.PUBLISHED:
+        return ImageLifecycleState.PUBLISHED.value
+    if stage == PipelineStage.METADATA_READY:
+        return ImageLifecycleState.READY_TO_PUBLISH.value
+    return ImageLifecycleState.COLLECTED.value
+
+
 @pytest.fixture()
 def make_record(db_session_factory):
     """Insert a record directly, since the naming layer only reads fields."""
@@ -45,6 +60,7 @@ def make_record(db_session_factory):
             original_path=f"/tmp/{filename}",
             file_size_bytes=1024,
             stage=stage,
+            state=_state_for_stage(stage),
             generated_title=title,
             download_name=download_name,
             suggested_filename=suggested_filename,

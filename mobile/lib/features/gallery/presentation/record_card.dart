@@ -5,9 +5,9 @@ import '../../../app/theme/tokens.dart';
 import '../../../core/widgets/stamp_badge.dart';
 import '../../../core/widgets/thumbnail.dart';
 import '../domain/image_record.dart';
-import 'metadata_sheet.dart';
+import 'image_state_presentation.dart';
 
-/// One 1:1 gallery tile (05 §2.5): Hero'd thumbnail + status stamp in the
+/// One 1:1 gallery tile (05 §2.5): Hero'd thumbnail + state stamp in the
 /// top-left corner + a single-line filename caption, with the selection
 /// affordances layered on top in selection mode.
 class RecordCard extends StatelessWidget {
@@ -61,8 +61,8 @@ class RecordCard extends StatelessWidget {
                   top: AppSpacing.xs,
                   left: AppSpacing.xs,
                   child: StampBadge(
-                    label: record.status,
-                    tone: statusTone(record.status),
+                    label: stateLabel(record.state),
+                    tone: stateTone(record.state),
                   ),
                 ),
                 if (selectMode)

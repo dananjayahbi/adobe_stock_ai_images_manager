@@ -35,6 +35,7 @@ class DeliveryCandidate {
     required this.id,
     required this.filename,
     required this.stage,
+    this.state = '',
     this.uploadFilename,
     this.title,
     this.isUsed = false,
@@ -47,6 +48,10 @@ class DeliveryCandidate {
 
   /// `PipelineStage` value string, e.g. `METADATA_READY`.
   final String stage;
+
+  /// Image `state` (`READY_TO_PUBLISH | PUBLISHED | AS_ACCEPTED | …`);
+  /// empty on payloads from a backend that has not shipped states yet.
+  final String state;
 
   /// Server-resolved delivery name (`RecordResponse.upload_filename`) — the
   /// string the CSV, download and ZIP entry all agree on.
@@ -61,10 +66,14 @@ class DeliveryCandidate {
           ? uploadFilename!
           : filename;
 
-  /// Uploadable now — `only_ready` on the server is exactly these stages
-  /// (`stage_orchestrator.build_metadata_csv`).
-  bool get deliverable =>
-      stage == 'METADATA_READY' || stage == 'PUBLISHED';
+  /// Uploadable now — the `state` contract gates on queued/published/
+  /// accepted records; until `state` ships, the legacy stage pair
+  /// (`only_ready` on the server) stands in.
+  bool get deliverable => state.isNotEmpty
+      ? state == 'READY_TO_PUBLISH' ||
+          state == 'PUBLISHED' ||
+          state == 'AS_ACCEPTED'
+      : stage == 'METADATA_READY' || stage == 'PUBLISHED';
 
   /// Whether `POST /api/assets/force-accept` can advance this record
   /// (`forced_acceptance.can_force`): gate-failed or earlier stages only —

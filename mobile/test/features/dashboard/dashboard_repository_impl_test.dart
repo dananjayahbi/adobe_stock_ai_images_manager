@@ -131,6 +131,59 @@ void main() {
       expect(metadata.count, 142);
     });
 
+    test('a payload without state_counts stays empty for the legacy '
+        'fallback', () async {
+      final StagesSummary summary =
+          await repo.fetchStagesSummary('adobe_stock');
+
+      expect(summary.stateCounts, isEmpty);
+      expect(
+        summary.stateCount('READY_TO_PUBLISH', fallback: summary.ready),
+        summary.ready,
+      );
+      expect(summary.stateCount('APPROVED'), 0);
+    });
+
+    test('state_counts parses {STATE: n} and answers stateCount', () async {
+      when(() => dio.get<dynamic>('/api/stages/summary')).thenAnswer(
+        (_) async => Response<dynamic>(
+          requestOptions: RequestOptions(path: '/api/stages/summary'),
+          statusCode: 200,
+          data: <String, Object?>{
+            'counts': <Object?>[],
+            'total': 21,
+            'ready': 7, // legacy — ignored while state_counts is present
+            'rejected': 9,
+            'incompatible': 0,
+            'state_counts': <String, Object?>{
+              'COLLECTED': 1,
+              'APPROVED': 2,
+              'REJECTED': 0,
+              'READY_TO_PUBLISH': 3,
+              'PUBLISHED': 4,
+              'AS_ACCEPTED': 5,
+            },
+          },
+        ),
+      );
+
+      final StagesSummary summary =
+          await repo.fetchStagesSummary('adobe_stock');
+
+      expect(summary.stateCounts, <String, int>{
+        'COLLECTED': 1,
+        'APPROVED': 2,
+        'REJECTED': 0,
+        'READY_TO_PUBLISH': 3,
+        'PUBLISHED': 4,
+        'AS_ACCEPTED': 5,
+      });
+      expect(summary.stateCount('READY_TO_PUBLISH', fallback: summary.ready), 3);
+      expect(summary.stateCount('APPROVED'), 2);
+      expect(summary.stateCount('REJECTED', fallback: summary.rejected), 0);
+      expect(summary.stateCount('UNKNOWN_STATE', fallback: summary.ready), 0);
+    });
+
     test('missing total falls back to the sum of counts', () async {
       when(() => dio.get<dynamic>('/api/stages/summary')).thenAnswer(
         (_) async => Response<dynamic>(

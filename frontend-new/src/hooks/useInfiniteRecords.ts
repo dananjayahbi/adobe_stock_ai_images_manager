@@ -22,6 +22,7 @@ export function useInfiniteRecords(options: {
     stageUpdated = false,
     search = "",
     stage = "",
+    state = "",
     used = "all",
     groupId,
   } = options;
@@ -35,6 +36,7 @@ export function useInfiniteRecords(options: {
 
   const searchKey = search.trim();
   const stageKey = stage.trim();
+  const stateKey = state.trim();
   const groupKey = groupId ?? "";
 
   /** Load one page; `offset` 0 replaces, later offsets append. */
@@ -49,6 +51,7 @@ export function useInfiniteRecords(options: {
           offset,
           search: searchKey || undefined,
           stage: stageKey || undefined,
+          state: stateKey || undefined,
           used,
           groupId: groupKey || undefined,
           stageUpdated,
@@ -70,7 +73,7 @@ export function useInfiniteRecords(options: {
         }
       }
     },
-    [pageSize, searchKey, stageKey, used, groupKey, stageUpdated]
+    [pageSize, searchKey, stageKey, stateKey, used, groupKey, stageUpdated]
   );
 
   // A filter change resets to the first page (identity includes the serialised

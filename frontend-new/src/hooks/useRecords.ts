@@ -19,6 +19,7 @@ export function useRecords(options: {
     pollMs = 0,
     search = "",
     stage = "",
+    state = "",
     used = "all",
     groupId,
   } = options;
@@ -31,6 +32,7 @@ export function useRecords(options: {
   // which would retrigger the effect on every render.
   const searchKey = search.trim();
   const stageKey = stage.trim();
+  const stateKey = state.trim();
   const groupKey = groupId ?? "";
 
   const load = useCallback(async () => {
@@ -41,6 +43,7 @@ export function useRecords(options: {
         limit,
         search: searchKey || undefined,
         stage: stageKey || undefined,
+        state: stateKey || undefined,
         used,
         groupId: groupKey || undefined,
         stageUpdated,
@@ -56,7 +59,7 @@ export function useRecords(options: {
     } finally {
       if (id === requestId.current) setLoading(false);
     }
-  }, [limit, searchKey, stageKey, used, groupKey, stageUpdated]);
+  }, [limit, searchKey, stageKey, stateKey, used, groupKey, stageUpdated]);
 
   useEffect(() => {
     void load();

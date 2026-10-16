@@ -15,7 +15,14 @@ from sqlalchemy.orm import Session
 
 from config import settings
 from database import get_db
-from models import ImageRecord, ImageStatus, PipelineStage, generate_uuid, utcnow
+from models import (
+    ImageLifecycleState,
+    ImageRecord,
+    ImageStatus,
+    PipelineStage,
+    generate_uuid,
+    utcnow,
+)
 from schemas import UploadResponse
 from services.image_normalizer import convert_png_to_jpeg, needs_conversion
 from services.storage import generate_thumbnail, save_uploaded_file
@@ -120,6 +127,8 @@ async def upload_images(
                 status=ImageStatus.PENDING,
                 # New uploads enter the stage workspace at Stage 1 (Collector).
                 stage=PipelineStage.COLLECTED,
+                # ...and the lifecycle at "not processed yet".
+                state=ImageLifecycleState.COLLECTED,
                 working_path=working_path,
                 stage_updated_at=utcnow(),
                 stage_details=stage_detail,

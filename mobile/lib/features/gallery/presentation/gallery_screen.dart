@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../app/lifecycle_observer.dart';
+import '../../../app/theme/tokens.dart';
 import '../../../core/utils/app_exception.dart';
 import '../../../core/widgets/connection_profile_banner.dart';
 import '../../../core/widgets/error_view.dart';
@@ -125,14 +126,18 @@ class _GalleryScreenState extends ConsumerState<GalleryScreen> {
         body: Column(
           children: <Widget>[
             const ConnectionProfileBanner(),
-            if (_showFilters)
+            const SizedBox(height: AppSpacing.md),
+            if (_showFilters) ...<Widget>[
               GalleryFilterBar(query: query, onChanged: _apply),
+              const SizedBox(height: AppSpacing.sm),
+            ],
             GroupStrip(
               groups: groups ?? const <GalleryGroup>[],
               query: query,
               onSelect: (String id) => _apply(query.copyWith(groupId: id)),
               onClear: () => _apply(query.copyWith(clearGroup: true)),
             ),
+            const SizedBox(height: AppSpacing.sm),
             Expanded(child: _content(pageAsync, query, groups)),
           ],
         ),

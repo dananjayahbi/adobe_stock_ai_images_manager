@@ -17,15 +17,16 @@ import '../../../core/widgets/toast_exception.dart';
 import '../../platforms/presentation/platforms_controller.dart';
 import '../domain/gallery_repository.dart';
 import '../domain/image_record.dart';
-import 'metadata_sheet.dart';
 
 /// Pinned review bar: **Approve first**, overflow for the rest (05 §2.6).
 ///
-/// * Approve is disabled + dimmed while [offline]; when the record is
-///   already approved the button becomes **Reprocess** (reset-stage).
+/// * Approve renders only for APPROVED/REJECTED records (the states the
+///   `approve` endpoint flips → READY_TO_PUBLISH) and is disabled + dimmed
+///   while [offline]; every other state simply has no Approve button.
 /// * Overflow (≥44 dp, semantics "More actions"): Download · Mark
-///   used/unused · Reset stage · Delete — the last two behind confirm
-///   dialogs, Delete rust-toned destructive.
+///   used/unused · Mark accepted (PUBLISHED) / Undo accepted
+///   (AS_ACCEPTED) · Reset stage · Delete — confirm dialogs behind the
+///   destructive two, Delete rust-toned.
 /// * Every network failure reports through [onConnectivityChanged] (`false`
 ///   on [NetworkException]) so the screen can pin the offline note and
 ///   disable everything, per 05's "cached metadata stays viewable".
@@ -40,16 +41,17 @@ class ReviewActionBar extends ConsumerStatefulWidget {
     required this.onConnectivityChanged,
   });
 
-  /// Record backing the buttons (status drives Approve ↔ Reprocess).
+  /// Record backing the buttons (state drives Approve visibility).
   final ImageRecord record;
 
   /// True while the screen knows the network is down — all actions disabled.
   final bool offline;
 
-  /// Approve/Reprocess succeeded — screen shows the stamp + invalidates.
+  /// Approve succeeded — screen shows the state stamp + patches the list.
   final VoidCallback onApproved;
 
-  /// Mark-used / Reset succeeded — screen refetches the record.
+  /// Mark-used / Reset / state change succeeded — screen refetches the
+  /// record.
   final VoidCallback onRecordChanged;
 
   /// Delete succeeded — screen navigates back to the grid.
@@ -63,12 +65,10 @@ class ReviewActionBar extends ConsumerStatefulWidget {
   ConsumerState<ReviewActionBar> createState() => _ReviewActionBarState();
 }
 
-enum _MenuAction { download, markUsed, reset, delete }
+enum _MenuAction { download, markUsed, markAccepted, undoAccepted, reset, delete }
 
 class _ReviewActionBarState extends ConsumerState<ReviewActionBar> {
   bool _busy = false;
-
-  bool get _isReprocess => isApprovedStatus(widget.record.status);
 
   String get _filename => widget.record.filename;
 
@@ -108,20 +108,12 @@ class _ReviewActionBarState extends ConsumerState<ReviewActionBar> {
       return;
     }
     setState(() => _busy = true);
-    final GalleryRepository repo = ref.read(galleryRepositoryProvider);
-    if (_isReprocess) {
-      await _run(
-        'Stage reset · $_filename',
-        () => repo.resetStage(widget.record.id),
-        onSuccess: widget.onRecordChanged,
-      );
-    } else {
-      await _run(
-        'Approved · $_filename',
-        () => repo.approve(widget.record.id),
-        onSuccess: widget.onApproved,
-      );
-    }
+    // Fast state flip (no LLM): APPROVED|REJECTED → READY_TO_PUBLISH.
+    await _run(
+      'Approved · $_filename',
+      () => ref.read(galleryRepositoryProvider).approve(widget.record.id),
+      onSuccess: widget.onApproved,
+    );
     if (mounted) {
       setState(() => _busy = false);
     }
@@ -135,6 +127,7 @@ class _ReviewActionBarState extends ConsumerState<ReviewActionBar> {
       button.localToGlobal(Offset.zero) & button.size,
       Offset.zero & overlay.size,
     );
+    final ImageRecord record = widget.record;
     final _MenuAction? action = await showMenu<_MenuAction>(
       context: context,
       position: position,
@@ -146,12 +139,27 @@ class _ReviewActionBarState extends ConsumerState<ReviewActionBar> {
         PopupMenuItem<_MenuAction>(
           value: _MenuAction.markUsed,
           child: _MenuItem(
-            icon: widget.record.used == true
+            icon: record.used == true
                 ? LucideIcons.circleX
                 : LucideIcons.circleCheck,
-            label: widget.record.used == true ? 'Mark unused' : 'Mark used',
+            label: record.used == true ? 'Mark unused' : 'Mark used',
           ),
         ),
+        // Adobe-acceptance moves ride the published ⇄ accepted pair —
+        // each direction only makes sense from the other side of it.
+        if (record.state == 'PUBLISHED')
+          const PopupMenuItem<_MenuAction>(
+            value: _MenuAction.markAccepted,
+            child: _MenuItem(
+              icon: LucideIcons.badgeCheck,
+              label: 'Mark accepted',
+            ),
+          ),
+        if (record.state == 'AS_ACCEPTED')
+          const PopupMenuItem<_MenuAction>(
+            value: _MenuAction.undoAccepted,
+            child: _MenuItem(icon: LucideIcons.undo2, label: 'Undo accepted'),
+          ),
         PopupMenuItem<_MenuAction>(
           value: _MenuAction.reset,
           child: _MenuItem(icon: LucideIcons.rotateCcw, label: 'Reset stage'),
@@ -174,6 +182,10 @@ class _ReviewActionBarState extends ConsumerState<ReviewActionBar> {
         await _download();
       case _MenuAction.markUsed:
         await _markUsed();
+      case _MenuAction.markAccepted:
+        await _changeState('AS_ACCEPTED', 'Marked accepted');
+      case _MenuAction.undoAccepted:
+        await _changeState('PUBLISHED', 'Back to published');
       case _MenuAction.reset:
         await _reset();
       case _MenuAction.delete:
@@ -224,6 +236,18 @@ class _ReviewActionBarState extends ConsumerState<ReviewActionBar> {
       () => ref
           .read(galleryRepositoryProvider)
           .markUsed(widget.record.id, used: target),
+      onSuccess: widget.onRecordChanged,
+    );
+  }
+
+  /// `PATCH records/{id}/state` — the published ⇄ accepted pair (each
+  /// direction gated by the menu build on the current state).
+  Future<void> _changeState(String state, String successWord) async {
+    await _run(
+      '$successWord · $_filename',
+      () => ref
+          .read(galleryRepositoryProvider)
+          .changeState(widget.record.id, state),
       onSuccess: widget.onRecordChanged,
     );
   }
@@ -350,8 +374,13 @@ class _ReviewActionBarState extends ConsumerState<ReviewActionBar> {
   }
 
   Widget _approveButton(bool disabled) {
+    // Only the APPROVED|REJECTED states may flip to READY_TO_PUBLISH —
+    // queued/published/accepted/collected records simply have no Approve.
+    if (!widget.record.isApprovable) {
+      return const SizedBox.shrink();
+    }
     final Widget button = PrimaryButton(
-      label: _isReprocess ? 'Reprocess' : 'Approve',
+      label: 'Approve',
       expanded: true,
       loading: _busy,
       // Disabled state dims instead of PrimaryButton's spinner-on-null.

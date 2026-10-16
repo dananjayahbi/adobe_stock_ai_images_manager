@@ -33,7 +33,15 @@ from sqlalchemy.orm import Session
 
 from config import settings
 from database import SessionLocal, get_db
-from models import Batch, ImageRecord, ImageStatus, PipelineStage, generate_uuid, utcnow
+from models import (
+    Batch,
+    ImageLifecycleState,
+    ImageRecord,
+    ImageStatus,
+    PipelineStage,
+    generate_uuid,
+    utcnow,
+)
 from schemas import RecordResponse
 from services import pipeline_defs, pipeline_runner
 from services.image_normalizer import convert_png_to_jpeg, needs_conversion
@@ -533,6 +541,7 @@ async def upload_to_batch(
                 thumbnail_path=thumb_path or None,
                 status=ImageStatus.PENDING,
                 stage=PipelineStage.COLLECTED,
+                state=ImageLifecycleState.COLLECTED,
                 batch_id=batch_id,
                 working_path=working_path,
                 # Deliberately NULL until a pipeline step touches the record:

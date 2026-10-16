@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { EB_Garamond, Playfair_Display, Pinyon_Script, Special_Elite } from "next/font/google";
 import "./globals.css";
 
@@ -31,6 +31,12 @@ export const metadata: Metadata = {
     "Local studio for preparing and delivering AI-generated images to stock marketplaces.",
 };
 
+export const viewport: Viewport = {
+  // Let the page draw under notches/home indicators; the sticky header pads
+  // itself clear of the top inset via `.safe-top` (globals.css).
+  viewportFit: "cover",
+};
+
 export default function RootLayout({
   children,
 }: {
@@ -43,7 +49,10 @@ export default function RootLayout({
       >
         <AuthProvider>
           <Header />
-          <main className="w-full px-4 py-8 sm:px-6 lg:px-8 xl:px-10">
+          {/* pt-5 on <sm: under the two-band header, title + controls +
+              folders must not stack ~100px deep. The notch inset lives on
+              the sticky header (.safe-top), so it is not re-added here. */}
+          <main className="w-full px-4 pb-8 pt-5 sm:px-6 sm:pt-8 lg:px-8 xl:px-10">
             {children}
           </main>
           <footer className="w-full px-4 pb-10 pt-4 sm:px-6 lg:px-8 xl:px-10">

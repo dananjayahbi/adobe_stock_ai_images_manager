@@ -10,22 +10,17 @@ import '../../../core/widgets/status_chip.dart';
 import '../domain/gallery_group.dart';
 import '../domain/gallery_query.dart';
 
-/// Stage chips — labels and values mirrored byte-for-byte from
-/// `frontend-new/src/components/gallery/FilterBar.tsx`.
-const List<({String value, String label})> kGalleryStages =
+/// State chips — labels mirror `stateLabel`'s copy; values are single
+/// states (comma-friendly like the old stage CSV, so pairs still work).
+const List<({String value, String label})> kGalleryStates =
     <({String value, String label})>[
-  (value: '', label: 'Any stage'),
-  (value: 'METADATA_READY,PUBLISHED', label: 'Ready to publish'),
+  (value: '', label: 'Any state'),
   (value: 'COLLECTED', label: 'Collected'),
-  (value: 'OCR_CLEAR', label: 'OCR clear'),
-  (value: 'OCR_REJECTED', label: 'OCR rejected'),
-  (value: 'UPSCALED', label: 'Upscaled'),
-  (value: 'REFINED', label: 'Refined'),
-  (value: 'COMPATIBLE', label: 'Compatible'),
-  (value: 'INCOMPATIBLE', label: 'Incompatible'),
-  (value: 'METADATA_READY', label: 'Metadata ready'),
+  (value: 'APPROVED', label: 'Approved'),
+  (value: 'REJECTED', label: 'Rejected'),
+  (value: 'READY_TO_PUBLISH', label: 'Ready to publish'),
   (value: 'PUBLISHED', label: 'Published'),
-  (value: 'QUARANTINED', label: 'Quarantined'),
+  (value: 'AS_ACCEPTED', label: 'AS Accepted'),
 ];
 
 /// Usage chips — same web source (`all|unused|used`).
@@ -36,7 +31,7 @@ const List<({String value, String label})> kGalleryUsage =
   (value: 'used', label: 'Used'),
 ];
 
-/// Search + stage + usage lenses (05 §2.5): one horizontal chip strip over
+/// Search + state + usage lenses (05 §2.5): one horizontal chip strip over
 /// a debounced (300 ms) search field. Every change emits a fresh
 /// [GalleryQuery] through [onChanged]; chips are icon-paired so state never
 /// rides on color alone (04 §4 rule 1).
@@ -90,7 +85,12 @@ class _GalleryFilterBarState extends State<GalleryFilterBar> {
     final GalleryQuery query = widget.query;
 
     return Padding(
-      padding: const EdgeInsets.only(left: AppSpacing.lg),
+      // Symmetric at rest: the same inset opens and closes the strip, and
+      // the row breathes vertically like the sibling tabs' top spacing.
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.sm,
+      ),
       child: Row(
         children: <Widget>[
           SizedBox(
@@ -112,22 +112,21 @@ class _GalleryFilterBarState extends State<GalleryFilterBar> {
               height: 48,
               child: ListView(
                 scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.only(right: AppSpacing.lg),
                 children: <Widget>[
-                  for (final ({String value, String label}) stage
-                      in kGalleryStages)
+                  for (final ({String value, String label}) state
+                      in kGalleryStates)
                     Padding(
                       padding: const EdgeInsets.only(right: AppSpacing.xs),
                       child: StatusChip(
-                        label: stage.label,
-                        icon: query.stage == stage.value
+                        label: state.label,
+                        icon: query.state == state.value
                             ? LucideIcons.check
                             : LucideIcons.funnel,
-                        tone: query.stage == stage.value
+                        tone: query.state == state.value
                             ? StatusTone.accent
                             : StatusTone.neutral,
                         onTap: () => widget.onChanged(
-                          query.copyWith(stage: stage.value),
+                          query.copyWith(state: state.value),
                         ),
                       ),
                     ),

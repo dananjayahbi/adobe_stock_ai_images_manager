@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from models import ImageRecord, ImageStatus
+from models import ImageLifecycleState, ImageRecord, ImageStatus
 
 
 def _seed_record(db_session_factory, tmp_path, **overrides):
@@ -21,6 +21,9 @@ def _seed_record(db_session_factory, tmp_path, **overrides):
         original_path=str(original),
         thumbnail_path=None,
         status=ImageStatus.READY,
+        # The seeded record models an upload-ready asset, so it must be
+        # queued for publish — that is now what the download gate reads.
+        state=ImageLifecycleState.READY_TO_PUBLISH,
         file_size_bytes=original.stat().st_size,
         generated_title="Sunset Over Calm Ocean",
         generated_description="A calm ocean at sunset.",
@@ -170,13 +173,19 @@ def test_download_ready_record(client, db_session_factory, tmp_path):
 
 def test_download_rejects_non_ready_record(client, db_session_factory, tmp_path):
     record_id = _seed_record(
-        db_session_factory, tmp_path, status=ImageStatus.PASSED
+        db_session_factory,
+        tmp_path,
+        status=ImageStatus.PASSED,
+        state=ImageLifecycleState.COLLECTED,
     )
 
     response = client.get(f"/api/records/{record_id}/download")
 
     assert response.status_code == 409
-    assert "READY" in response.json()["detail"]
+    detail = response.json()["detail"]
+    # The gate reads lifecycle states now, and says which ones open it.
+    assert "COLLECTED" in detail
+    assert "READY_TO_PUBLISH" in detail
 
 
 def test_download_missing_staged_file(client, db_session_factory, tmp_path):

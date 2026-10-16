@@ -53,9 +53,9 @@ function GalleryView() {
   const [draft, setDraft] = useState("");
   const [filters, setFilters] = useState<GalleryFilters>({
     // Default lens: only what can be published (or already was). The whole
-    // pipeline's worth of images stays reachable via the stage filter — the
+    // pipeline's worth of images stays reachable via the state filter — the
     // gallery opens on the operator's next action, not on history.
-    stage: "METADATA_READY,PUBLISHED",
+    state: "READY_TO_PUBLISH,PUBLISHED,AS_ACCEPTED",
     used: "all",
   });
   const [groups, setGroups] = useState<GalleryGroup[]>([]);
@@ -116,7 +116,7 @@ function GalleryView() {
     pageSize: 120,
     search,
     stageUpdated: true,
-    stage: filters.stage,
+    state: filters.state,
     used: filters.used,
     groupId: groupId ?? "none",
   });
@@ -263,6 +263,13 @@ function GalleryView() {
     clearSelection();
   }, [reload, loadGroups, clearSelection]);
 
+  // Lightest refresh for a viewer-side state change: re-run the records
+  // query (the same pattern mark-used uses) so the open record picks up its
+  // new state/flags — selection and the folder list stay untouched.
+  const refreshAfterRecordAction = useCallback(() => {
+    void reload();
+  }, [reload]);
+
   // Drag a selected tile onto a folder card to move it (and the rest of the
   // selection) in. An unselected tile — reachable when a filter hid the rest
   // of the selection — drags itself.
@@ -318,10 +325,11 @@ function GalleryView() {
 
   return (
     <div className="space-y-6">
-      {/* Header: back/title/breadcrumb + search + filters */}
-      <div className="flex flex-wrap items-end justify-between gap-4">
+      {/* Header: back/title/breadcrumb + search + filters. gap-6 so the wrapped
+          controls row keeps the same 24px step as the space-y-6 sections. */}
+      <div className="flex flex-wrap items-end justify-between gap-6">
         <div>
-          <p className="label-caps">The collection</p>
+          <p className="label-caps mb-3">The collection</p>
           {inFolder && (
             <Button
               variant="secondary"
@@ -605,6 +613,7 @@ function GalleryView() {
         record={active}
         onClose={() => setActiveIndex(null)}
         onNavigate={navigate}
+        onRecordChanged={refreshAfterRecordAction}
       />
     </div>
   );

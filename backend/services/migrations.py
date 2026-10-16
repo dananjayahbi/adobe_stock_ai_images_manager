@@ -45,6 +45,10 @@ ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     ("image_records", "batch_id", "VARCHAR(36)"),
     # Gallery folder membership. NULL = ungrouped (top level of the gallery).
     ("image_records", "group_id", "VARCHAR(36)"),
+    # Lifecycle state (publish/download flow). Defaults to COLLECTED so
+    # pre-existing rows enter at "not processed yet"; the backfill below
+    # re-derives the meaning the old status/stage pair already carried.
+    ("image_records", "state", "VARCHAR(20) NOT NULL DEFAULT 'COLLECTED'"),
     # Prompt Library folders. NULL = ungrouped; the name IS the folder, so a
     # batch can be isolated the moment its prompts are assigned.
     ("prompts", "group_name", "VARCHAR(120)"),
@@ -55,6 +59,43 @@ ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
 BACKFILL_STATEMENTS: list[str] = [
     "UPDATE image_records SET stage = 'PUBLISHED' WHERE status = 'READY'",
     "UPDATE image_records SET stage = 'INCOMPATIBLE' WHERE status = 'FLAGGED'",
+]
+
+# Precedence-ordered mapping from the old two-column model onto `state`,
+# run on EVERY startup as an idempotent repair (the live database may have
+# gained the column on a run that predated this block, so a
+# freshly-added-column gate would skip it forever).
+# Every statement is guarded so a rerun can never overwrite a decision:
+# derivation rules only touch rows still in `state = 'COLLECTED'` (the
+# column default — manual states are never COLLECTED), and the trailing
+# used-push rule only ever moves `is_used` rows into PUBLISHED while
+# leaving AS_ACCEPTED alone. AS_ACCEPTED starts empty — it is only ever
+# set manually.
+STATE_BACKFILL_STATEMENTS: list[str] = [
+    (
+        "UPDATE image_records SET state = 'PUBLISHED' "
+        "WHERE stage = 'PUBLISHED' AND state = 'COLLECTED'"
+    ),
+    (
+        "UPDATE image_records SET state = 'READY_TO_PUBLISH' "
+        "WHERE status = 'READY' AND state = 'COLLECTED'"
+    ),
+    (
+        "UPDATE image_records SET state = 'REJECTED' "
+        "WHERE (status = 'FLAGGED' OR stage IN "
+        "('OCR_REJECTED', 'INCOMPATIBLE', 'QUARANTINED')) "
+        "AND state = 'COLLECTED'"
+    ),
+    (
+        "UPDATE image_records SET state = 'APPROVED' "
+        "WHERE stage = 'METADATA_READY' AND state = 'COLLECTED'"
+    ),
+    # Rule 04: Used images live only in PUBLISHED / AS_ACCEPTED — re-asserted
+    # every start so legacy `is_used` rows (and any drift) get pushed.
+    (
+        "UPDATE image_records SET state = 'PUBLISHED' "
+        "WHERE is_used = 1 AND state NOT IN ('PUBLISHED', 'AS_ACCEPTED')"
+    ),
 ]
 
 
@@ -82,7 +123,9 @@ def run_additive_migrations(engine: Engine) -> list[str]:
 
     When the ``stage`` column is created for the first time, pre-existing rows
     are backfilled so records that were already READY/FLAGGED keep their
-    meaning instead of appearing as fresh Stage 1 entries.
+    meaning instead of appearing as fresh Stage 1 entries. The ``state``
+    mapping runs every startup as a guarded, idempotent repair (see
+    ``STATE_BACKFILL_STATEMENTS``).
     """
     applied: list[str] = []
 
@@ -111,5 +154,31 @@ def run_additive_migrations(engine: Engine) -> list[str]:
                 logger.info("Backfilled stages with: %s", statement)
             except Exception:  # pragma: no cover - defensive
                 logger.exception("Failed to run backfill: %s", statement)
+
+    # Same freshly-added-column idiom for `state` would be a trap in
+    # practice: the live database's column may have been created by a run
+    # that predated this block, and a fresh-gate then skips it forever.
+    # The statements themselves are fully guarded (COLLECTED-only + the
+    # narrow used-push), so they run every startup as a safe, self-healing
+    # repair. Must run *after* the stage backfill above (reads `stage`).
+    for statement in STATE_BACKFILL_STATEMENTS:
+        try:
+            with engine.begin() as connection:
+                connection.execute(text(statement))
+            logger.info("Backfilled states with: %s", statement)
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("Failed to run backfill: %s", statement)
+    # `ALTER TABLE ADD COLUMN` cannot create the model's index, so a
+    # migrated database gets it here (idempotent).
+    try:
+        with engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE INDEX IF NOT EXISTS ix_image_records_state "
+                    "ON image_records (state)"
+                )
+            )
+    except Exception:  # pragma: no cover - defensive
+        logger.exception("Failed to create index ix_image_records_state")
 
     return applied

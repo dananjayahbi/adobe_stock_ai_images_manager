@@ -9,7 +9,7 @@ full implementation plan lives in [`../mobile-plan/`](../mobile-plan/README.md).
 ```powershell
 flutter pub get
 flutter analyze          # zero issues expected
-flutter test             # 339 tests — the integration gate
+flutter test             # 366 tests — the integration gate
 flutter build apk --release   # → build/app/outputs/flutter-apk/app-release.apk (55 MB)
                               #   (build/app/outputs/apk/release/app-release.apk is the
                               #    Gradle twin — byte-identical; use flutter-apk/)
@@ -98,6 +98,26 @@ tunnel `/health` through the app's real `HttpOverrides` path. Each row is
 green/red with the **full, selectable, untruncated** error text — the
 first red row is where the phone stops; screenshot it when reporting a
 connection problem.
+
+## Gallery lifecycle: one state, many flags
+
+Exactly one **state** per image — `COLLECTED` (non-processed) → `APPROVED`
+(pipeline passed) / `REJECTED` (failed) → `READY_TO_PUBLISH` (manual queue
+only) → `PUBLISHED` → `AS_ACCEPTED` — plus any number of **flags** rendered
+together: `QUARANTINED`, `USED`/`UNUSED` (always exactly one of the two),
+`METADATA_READY`, `INCOMPATIBLE`, `REFINED`, `UPSCALED`, `OCR_REJECTED`.
+
+- `PATCH /api/records/{id}/state` performs the whitelisted manual moves;
+  `POST …/approve` is the fast `APPROVED|REJECTED → READY_TO_PUBLISH` flip
+  (no LLM/metadata regeneration — the old approve could block >10 s).
+- Marking `USED` pushes the image to `PUBLISHED` (`AS_ACCEPTED` sticks) —
+  used images only ever live in those two states.
+- The pipeline `stage` column stays as an internal cursor for the Process
+  screens; gallery, detail, filters and dashboard speak `state` + `flags`
+  (`state=` query filter, `state_counts` on the summary endpoint).
+- The startup migration (`services/migrations.py`) runs the legacy→state
+  repair every boot as guarded idempotent statements — it can never
+  overwrite a manual state, and it self-heals any drift.
 
 ## Launcher icon & favicon
 

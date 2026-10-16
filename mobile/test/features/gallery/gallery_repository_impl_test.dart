@@ -76,6 +76,10 @@ void main() {
       expect(first.filename, 'Wire_loop_trimming_tool_2K_20261013092634.jpg');
       expect(first.status, 'PASSED');
       expect(first.stage, 'METADATA_READY');
+      // Legacy payload (no `state`) → best-effort METADATA_READY mapping.
+      expect(first.state, 'APPROVED');
+      expect(first.flags, isEmpty);
+      expect(first.isApprovable, isTrue);
       expect(first.used, isTrue);
       expect(first.thumbnailPath, contains('thumb_bff31c32'));
       expect(first.originalPath, endsWith('.jpg'));
@@ -145,6 +149,81 @@ void main() {
         _repo(adapter).fetchPage(const GalleryQuery()),
         throwsA(isA<ServerException>()),
       );
+    });
+
+    test('legacy rows map status/stage to a state when state is missing',
+        () async {
+      Future<String> stateOf(String row) async {
+        final _RawAdapter adapter = _RawAdapter('{"items":[$row]}');
+        final GalleryPage page =
+            await _repo(adapter).fetchPage(const GalleryQuery());
+        return page.items.single.state;
+      }
+
+      expect(
+        await stateOf('{"id":"a","filename":"a.jpg","stage":"PUBLISHED"}'),
+        'PUBLISHED',
+      );
+      expect(
+        await stateOf('{"id":"b","filename":"b.jpg","status":"READY"}'),
+        'READY_TO_PUBLISH',
+      );
+      expect(
+        await stateOf('{"id":"c","filename":"c.jpg","status":"FLAGGED"}'),
+        'REJECTED',
+      );
+      expect(
+        await stateOf(
+          '{"id":"d","filename":"d.jpg","stage":"OCR_REJECTED"}',
+        ),
+        'REJECTED',
+      );
+      expect(
+        await stateOf('{"id":"e","filename":"e.jpg","stage":"METADATA_READY"}'),
+        'APPROVED',
+      );
+      expect(
+        await stateOf('{"id":"f","filename":"f.jpg","status":"PASSED"}'),
+        'APPROVED',
+      );
+      expect(
+        await stateOf('{"id":"g","filename":"g.jpg"}'),
+        'COLLECTED',
+      );
+    });
+
+    test('state and flags parse; flags reorder to the contract order', () async {
+      final _RawAdapter adapter = _RawAdapter(
+        '{"items":[{"id":"r1","filename":"r.jpg","status":"PENDING",'
+        '"state":"READY_TO_PUBLISH",'
+        '"flags":["UPSCALED","UNUSED","REFINED"],'
+        '"is_used":true}]}',
+      );
+      final GalleryPage page =
+          await _repo(adapter).fetchPage(const GalleryQuery());
+      final ImageRecord record = page.items.single;
+
+      expect(record.state, 'READY_TO_PUBLISH');
+      expect(record.isReadyToPublish, isTrue);
+      expect(record.isApprovable, isFalse);
+      expect(record.flags, <String>['UNUSED', 'REFINED', 'UPSCALED']);
+      // Flags beat the legacy is_used field (UNUSED wins over true).
+      expect(record.used, isFalse);
+    });
+
+    test('USED flag wins over is_used; unknown state passes through', () async {
+      final _RawAdapter adapter = _RawAdapter(
+        '{"items":[{"id":"r2","filename":"r.jpg","state":"FUTURE_STATE",'
+        '"flags":["USED"],"is_used":false}]}',
+      );
+      final ImageRecord record =
+          (await _repo(adapter).fetchPage(const GalleryQuery()))
+              .items
+              .single;
+
+      expect(record.state, 'FUTURE_STATE');
+      expect(record.used, isTrue);
+      expect(record.isApprovable, isFalse);
     });
   });
 
@@ -218,6 +297,12 @@ void main() {
       final _RawAdapter adapter = _RawAdapter('{"ok":true}');
       await _repo(adapter).resetStage('r1');
       expect(adapter.requests.single.path, '/api/records/r1/reset-stage');
+    });
+
+    test('changeState PATCHes records/{id}/state', () async {
+      final _RawAdapter adapter = _RawAdapter('{"ok":true}');
+      await _repo(adapter).changeState('r1', 'AS_ACCEPTED');
+      expect(adapter.requests.single.path, '/api/records/r1/state');
     });
   });
 }

@@ -1,6 +1,6 @@
 /** Typed API client for image records (home + gallery). */
 import { api } from "./client";
-import type { ImageRecord } from "./types";
+import type { ImageLifecycleState, ImageRecord } from "./types";
 
 export interface RecordPage {
   items: ImageRecord[];
@@ -13,6 +13,8 @@ export interface RecordPage {
 export interface RecordFilters {
   search?: string;
   stage?: string;
+  /** Comma-separated lifecycle states (backend `state=A,B`, like `stage=`). */
+  state?: string;
   used?: "all" | "used" | "unused";
   /** A group id, or "none" for ungrouped images. */
   groupId?: string;
@@ -35,6 +37,7 @@ export async function fetchRecords(options: {
       offset: options.offset ?? 0,
       ...(options.search ? { search: options.search } : {}),
       ...(options.stage ? { stage: options.stage } : {}),
+      ...(options.state ? { state: options.state } : {}),
       ...(options.used && options.used !== "all" ? { used: options.used } : {}),
       ...(options.groupId ? { group_id: options.groupId } : {}),
       ...(options.stageUpdated ? { stage_updated: "true" } : {}),
@@ -65,5 +68,29 @@ export async function setRecordsUsed(
     record_ids: recordIds,
     is_used: isUsed,
   });
+  return data;
+}
+
+/**
+ * Move one record through the lifecycle (`PATCH /api/records/{id}/state`).
+ *
+ * Returns the full updated record on 200; the backend answers 400 with a
+ * `detail` string for a disallowed transition (the client normalises that
+ * into an `Error`), which the caller surfaces inline.
+ */
+export async function changeRecordState(
+  id: string,
+  state: ImageLifecycleState
+): Promise<ImageRecord> {
+  const { data } = await api.patch(`/api/records/${id}/state`, { state });
+  return data;
+}
+
+/**
+ * Fast approve (`POST /api/records/{id}/approve`) — flips APPROVED|REJECTED
+ * to READY_TO_PUBLISH without running any LLM step.
+ */
+export async function approveRecord(id: string): Promise<ImageRecord> {
+  const { data } = await api.post(`/api/records/${id}/approve`);
   return data;
 }

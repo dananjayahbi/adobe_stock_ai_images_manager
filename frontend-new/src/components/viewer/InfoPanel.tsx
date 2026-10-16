@@ -1,7 +1,20 @@
 "use client";
 
+import { useCallback, useEffect, useState } from "react";
 import Badge from "@/components/ui/Badge";
+import Button from "@/components/ui/Button";
 import JsonValue, { isEmptyValue } from "@/components/viewer/JsonValue";
+import { approveRecord, changeRecordState } from "@/lib/records";
+import {
+  APPROVABLE_STATES,
+  flagsFromLegacy,
+  flagLabel,
+  flagTone,
+  orderFlags,
+  stateFromLegacy,
+  stateLabel,
+  stateTone,
+} from "@/lib/states";
 import type { ImageRecord, ImageStatus } from "@/lib/types";
 
 /**
@@ -106,6 +119,24 @@ function Row({ label, value, title, mono, wrap }: RowProps) {
   );
 }
 
+/** Label + badge(s) row — facts that render as stamps, not plain text. */
+function BadgeRow({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex items-baseline justify-between gap-3 py-0.5">
+      <span className="label-caps shrink-0">{label}</span>
+      <span className="flex min-w-0 flex-wrap items-center justify-end gap-1">
+        {children}
+      </span>
+    </div>
+  );
+}
+
 /** Wraps a list of keywords/flags as small chips. */
 function Chips({ items, tone = "" }: { items: string[]; tone?: string }) {
   return (
@@ -142,9 +173,48 @@ interface InfoPanelProps {
   record: ImageRecord;
   /** Closes the panel — wired to the ✕ in the sticky header. */
   onClose: () => void;
+  /** Fired after a successful state change so the page can refresh the record. */
+  onRecordChanged?: () => void;
 }
 
-export default function InfoPanel({ record, onClose }: InfoPanelProps) {
+export default function InfoPanel({ record, onClose, onRecordChanged }: InfoPanelProps) {
+  const state = stateFromLegacy(record);
+  const flags = orderFlags(flagsFromLegacy(record));
+
+  // Lifecycle actions — each gated strictly on the current state; a state
+  // where none applies renders no Actions section at all.
+  const canApprove = APPROVABLE_STATES.includes(state);
+  const canMarkAccepted = state === "PUBLISHED";
+  const canUndoAccepted = state === "AS_ACCEPTED";
+  const showActions = canApprove || canMarkAccepted || canUndoAccepted;
+
+  const [actionPending, setActionPending] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  // Navigating to another record must not inherit the previous one's
+  // pending/error (same id after a reload — state is already clean then).
+  useEffect(() => {
+    setActionError(null);
+    setActionPending(false);
+  }, [record.id]);
+
+  /** One lifecycle call: pending while in flight, backend `detail` inline on failure. */
+  const runStateAction = useCallback(
+    async (action: () => Promise<unknown>) => {
+      setActionPending(true);
+      setActionError(null);
+      try {
+        await action();
+        onRecordChanged?.();
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setActionPending(false);
+      }
+    },
+    [onRecordChanged]
+  );
+
   const hasMetadata =
     Boolean(record.generated_title) ||
     Boolean(record.generated_description) ||
@@ -186,6 +256,56 @@ export default function InfoPanel({ record, onClose }: InfoPanelProps) {
       </div>
 
       <div className="flex-1 divide-y divide-dashed divide-parchment-400/60">
+        {showActions && (
+          <Section title="Actions">
+            <div className="flex flex-wrap gap-2">
+              {canApprove && (
+                <Button
+                  size="sm"
+                  loading={actionPending}
+                  disabled={actionPending}
+                  onClick={() => void runStateAction(() => approveRecord(record.id))}
+                >
+                  Approve
+                </Button>
+              )}
+              {canMarkAccepted && (
+                <Button
+                  size="sm"
+                  loading={actionPending}
+                  disabled={actionPending}
+                  onClick={() =>
+                    void runStateAction(() => changeRecordState(record.id, "AS_ACCEPTED"))
+                  }
+                >
+                  Mark AS accepted
+                </Button>
+              )}
+              {canUndoAccepted && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  loading={actionPending}
+                  disabled={actionPending}
+                  onClick={() =>
+                    void runStateAction(() => changeRecordState(record.id, "PUBLISHED"))
+                  }
+                >
+                  Undo accepted
+                </Button>
+              )}
+            </div>
+            {actionError && (
+              <p
+                className="mt-2 rounded-sm border border-oxblood-500/40 bg-oxblood-400/10 px-2.5 py-1.5 text-[11px] text-oxblood-400"
+                role="alert"
+              >
+                {actionError}
+              </p>
+            )}
+          </Section>
+        )}
+
         {hasMetadata && (
           <Section title="Metadata">
             <Row label="Title" value={record.generated_title} wrap />
@@ -216,14 +336,28 @@ export default function InfoPanel({ record, onClose }: InfoPanelProps) {
         )}
 
         <Section title="Status & pipeline">
-          <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
-            {record.status && (
+          {record.status && (
+            <div className="mb-1.5 flex flex-wrap items-center gap-1.5">
               <Badge tone={STATUS_TONES[record.status] ?? "neutral"}>
                 {record.status}
               </Badge>
-            )}
-            <Badge tone="info">{stageLabel(record.stage)}</Badge>
-          </div>
+            </div>
+          )}
+          <BadgeRow label="State">
+            <Badge tone={stateTone(state)}>{stateLabel(state)}</Badge>
+          </BadgeRow>
+          {/* One chip per flag, contract display order — USED/UNUSED is always
+              present, so this row never renders empty. */}
+          <BadgeRow label="Flags">
+            {flags.map((flag) => (
+              <Badge key={flag} tone={flagTone(flag)}>
+                {flagLabel(flag)}
+              </Badge>
+            ))}
+          </BadgeRow>
+          {/* Stage stays as pipeline telemetry, demoted to mono/secondary now
+              that the lifecycle state above is the headline fact. */}
+          <Row label="Stage" value={stageLabel(record.stage)} mono />
           <Row
             label="Queued stage"
             value={record.queued_stage ? stageLabel(record.queued_stage) : null}

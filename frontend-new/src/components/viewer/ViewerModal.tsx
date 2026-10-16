@@ -6,12 +6,15 @@ import { API_BASE_URL, thumbnailUrl } from "@/lib/client";
 import { useViewerTransform } from "@/hooks/useViewerTransform";
 import Badge from "@/components/ui/Badge";
 import InfoPanel from "@/components/viewer/InfoPanel";
+import { stateLabel, stateTone } from "@/lib/states";
 import type { ImageRecord } from "@/lib/types";
 
 interface ViewerModalProps {
   record: ImageRecord | null;
   onClose: () => void;
   onNavigate: (direction: -1 | 1) => void;
+  /** Fired after a state change inside the info panel so the page can refresh. */
+  onRecordChanged?: () => void;
 }
 
 /**
@@ -24,7 +27,12 @@ interface ViewerModalProps {
  * Rendered separately from `Modal` because it takes the *entire* viewport
  * with no card chrome — a viewer is a different species from a dialog.
  */
-export default function ViewerModal({ record, onClose, onNavigate }: ViewerModalProps) {
+export default function ViewerModal({
+  record,
+  onClose,
+  onNavigate,
+  onRecordChanged,
+}: ViewerModalProps) {
   const [mounted, setMounted] = useState(false);
   // `showInfo` now drives the right-hand info panel (open by default — the
   // point of the panel is that the data is *there* without hunting for it).
@@ -101,7 +109,7 @@ export default function ViewerModal({ record, onClose, onNavigate }: ViewerModal
             {caption}
           </p>
           <p className="font-stamp text-[10px] uppercase tracking-[0.14em] text-ink-400">
-            {record.stage.replace(/_/g, " ")}
+            {record.state ? stateLabel(record.state) : record.stage.replace(/_/g, " ")}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -205,10 +213,14 @@ export default function ViewerModal({ record, onClose, onNavigate }: ViewerModal
             }}
           />
 
-          {/* Live HUD: minimal facts in place (stage/MP/score/zoom) — kept
+          {/* Live HUD: minimal facts in place (state/MP/score/zoom) — kept
               independent of the info panel, which shows the full record. */}
           <div className="absolute bottom-4 left-4 flex flex-wrap gap-2">
-            <Badge tone="info">{record.stage.replace(/_/g, " ")}</Badge>
+            {record.state ? (
+              <Badge tone={stateTone(record.state)}>{stateLabel(record.state)}</Badge>
+            ) : (
+              <Badge tone="info">{record.stage.replace(/_/g, " ")}</Badge>
+            )}
             {record.megapixels != null && <Badge>{record.megapixels.toFixed(1)} MP</Badge>}
             {record.acceptance_score != null && (
               <Badge tone={record.acceptance_score >= 0.8 ? "success" : "warn"}>
@@ -246,7 +258,11 @@ export default function ViewerModal({ record, onClose, onNavigate }: ViewerModal
             aria-label="Image details"
             className="w-96 shrink-0 overflow-y-auto border-l border-parchment-500/30 bg-ink-900/95"
           >
-            <InfoPanel record={record} onClose={() => setShowInfo(false)} />
+            <InfoPanel
+              record={record}
+              onClose={() => setShowInfo(false)}
+              onRecordChanged={onRecordChanged}
+            />
           </aside>
         )}
       </div>

@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from models import ImageStatus, PipelineStage, PromptStatus
+from models import ImageLifecycleState, ImageStatus, PipelineStage, PromptStatus
 
 
 class RecordResponse(BaseModel):
@@ -17,6 +17,13 @@ class RecordResponse(BaseModel):
     original_path: str
     thumbnail_path: Optional[str] = None
     status: ImageStatus
+    #: Lifecycle state: the single coordinate the publish/download/export flow
+    #: reads (see ``models.ImageLifecycleState``). ``status``/``stage`` stay
+    #: alongside it because the pipeline screens still show them.
+    state: ImageLifecycleState
+    #: Derived badges (QUARANTINED, USED/UNUSED, ...), computed at
+    #: serialization by ``services.image_lifecycle.compute_flags`` — never stored.
+    flags: list[str]
     width: Optional[int] = None
     height: Optional[int] = None
     megapixels: Optional[float] = None
@@ -84,11 +91,25 @@ class ApproveRequest(BaseModel):
 
 
 class ApproveResponse(BaseModel):
-    """Response returned after a successful approval action."""
+    """Response returned after a successful (fast) approval action.
+
+    The endpoint is a state flip into ``READY_TO_PUBLISH``: no metadata is
+    generated, so ``title``/``keywords_count`` echo what already exists.
+    """
     record_id: str
     status: ImageStatus
+    state: ImageLifecycleState
     title: Optional[str] = None
     keywords_count: int = 0
+
+
+class StateChangeRequest(BaseModel):
+    """Request body for PATCH /api/records/{id}/state.
+
+    Kept a plain string so the router can answer an unknown value with a 400
+    that lists every accepted state, rather than a framework-shaped 422.
+    """
+    state: str
 
 
 class UsedRequest(BaseModel):
@@ -449,6 +470,9 @@ class StageSummaryResponse(BaseModel):
     rejected: int
     incompatible: int
     average_score: Optional[float] = None
+    #: One key per lifecycle state (zero-filled), counted from the ``state``
+    #: column — the publish-queue view's counterpart to the per-stage ``counts``.
+    state_counts: dict[str, int] = {}
 
 
 class MetadataUpdateRequest(BaseModel):

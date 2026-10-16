@@ -51,6 +51,16 @@ body {
     @apply inline-flex items-center justify-center rounded-full border-2 border-dashed border-oxblood-400/70 px-3 py-1 font-stamp text-[10px] uppercase tracking-[0.2em] text-oxblood-400;
     transform: rotate(-4deg);
   }
+
+  /**
+   * Safe-area top for the sticky header (viewport-fit=cover in layout.tsx):
+   * the notch/status-bar inset is owned here exactly once — main's reduced
+   * pt-* deliberately does not re-claim it. env() is 0 off-device, so
+   * desktop spacing is unchanged.
+   */
+  .safe-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
 }
 
 /* Slim, warm scrollbars to match the paper. */

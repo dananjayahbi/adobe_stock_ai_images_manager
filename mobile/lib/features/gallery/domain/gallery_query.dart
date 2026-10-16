@@ -1,12 +1,13 @@
 /// Immutable gallery filter + pagination lens (05 §2.5 FilterBar).
 ///
-/// Defaults mirror `frontend-new`'s gallery page exactly (verified against
-/// `backend/routers/records.py`):
+/// Defaults mirror the web gallery's spirit against the `state` contract
+/// (verified against `backend/routers/records.py`):
 ///
-/// * `stage` — backend accepts a **comma-separated CSV** of `PipelineStage`
-///   values (`stage.split(",")`, uppercased + enum-validated). The web
-///   default lens is `'METADATA_READY,PUBLISHED'` ("Ready to publish"), so
-///   that is our default. `''` omits the param (= Any stage, web parity).
+/// * `state` — backend accepts a **comma-separated CSV** of image states
+///   (`state.split(",")`, same shape as the old `stage=` filter). The
+///   default lens is `'READY_TO_PUBLISH,PUBLISHED,AS_ACCEPTED'` (queued,
+///   published and Adobe-accepted records); `''` omits the param
+///   (= Any state).
 /// * `used` — `all|used|unused`; the web client omits the param when
 ///   `'all'` (backend default), so we do too.
 /// * `groupId` — the web gallery **always** sends `group_id`, defaulting to
@@ -20,7 +21,7 @@
 class GalleryQuery {
   const GalleryQuery({
     this.search,
-    this.stage = 'METADATA_READY,PUBLISHED',
+    this.state = 'READY_TO_PUBLISH,PUBLISHED,AS_ACCEPTED',
     this.used = 'all',
     this.groupId,
     this.offset = 0,
@@ -28,11 +29,11 @@ class GalleryQuery {
     this.stageUpdated = true,
   });
 
-  /// Default lens: the web gallery's "Ready to publish" pair.
-  static const String defaultStage = 'METADATA_READY,PUBLISHED';
+  /// Default lens: queued, published and Adobe-accepted records.
+  static const String defaultState = 'READY_TO_PUBLISH,PUBLISHED,AS_ACCEPTED';
 
   final String? search;
-  final String stage;
+  final String state;
   final String used;
   final String? groupId;
   final int offset;
@@ -43,13 +44,13 @@ class GalleryQuery {
   /// "Nothing matches this lens" split in 05 §2.5).
   bool get isDefaultLens =>
       (search == null || search!.isEmpty) &&
-      stage == defaultStage &&
+      state == defaultState &&
       used == 'all' &&
       groupId == null;
 
   GalleryQuery copyWith({
     String? search,
-    String? stage,
+    String? state,
     String? used,
     String? groupId,
     int? offset,
@@ -59,7 +60,7 @@ class GalleryQuery {
   }) {
     return GalleryQuery(
       search: search ?? this.search,
-      stage: stage ?? this.stage,
+      state: state ?? this.state,
       used: used ?? this.used,
       groupId: clearGroup ? null : (groupId ?? this.groupId),
       offset: offset ?? this.offset,
@@ -68,7 +69,7 @@ class GalleryQuery {
     );
   }
 
-  /// Wire params in `frontend-new` order: limit, offset, search, stage,
+  /// Wire params in `frontend-new` order: limit, offset, search, state,
   /// used, group_id, stage_updated — omitting empty/default values exactly
   /// like `lib/records.ts#fetchRecords`. No `sort` param exists (gap 12).
   Map<String, String> toQuery() {
@@ -77,7 +78,7 @@ class GalleryQuery {
       'offset': '$offset',
       if (search != null && search!.trim().isNotEmpty)
         'search': search!.trim(),
-      if (stage.isNotEmpty) 'stage': stage,
+      if (state.isNotEmpty) 'state': state,
       if (used != 'all') 'used': used,
       'group_id': groupId == null || groupId!.isEmpty ? 'none' : groupId!,
       if (stageUpdated) 'stage_updated': 'true',
@@ -88,7 +89,7 @@ class GalleryQuery {
   bool operator ==(Object other) =>
       other is GalleryQuery &&
       other.search == search &&
-      other.stage == stage &&
+      other.state == state &&
       other.used == used &&
       other.groupId == groupId &&
       other.offset == offset &&
@@ -98,7 +99,7 @@ class GalleryQuery {
   @override
   int get hashCode => Object.hash(
         search,
-        stage,
+        state,
         used,
         groupId,
         offset,

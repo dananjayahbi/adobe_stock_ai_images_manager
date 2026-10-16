@@ -21,6 +21,27 @@ class ImageStatus(str, enum.Enum):
     READY = "READY"
 
 
+class ImageLifecycleState(str, enum.Enum):
+    """One-per-image lifecycle coordinate for the publish/download flow.
+
+    Orthogonal to ``ImageStatus`` (the old QC verdict) and ``PipelineStage``
+    (workflow position), which both remain for the pipeline screens:
+
+    1. COLLECTED       - not processed yet (including mid-pipeline records)
+    2. APPROVED        - the pipeline passed; not queued for upload yet
+    3. REJECTED        - the pipeline failed (OCR/compatibility/quarantine)
+    4. READY_TO_PUBLISH- manually queued for the Adobe upload (manual only)
+    5. PUBLISHED       - uploaded to Adobe
+    6. AS_ACCEPTED     - accepted by Adobe (sticky over PUBLISHED)
+    """
+    COLLECTED = "COLLECTED"
+    APPROVED = "APPROVED"
+    REJECTED = "REJECTED"
+    READY_TO_PUBLISH = "READY_TO_PUBLISH"
+    PUBLISHED = "PUBLISHED"
+    AS_ACCEPTED = "AS_ACCEPTED"
+
+
 class PipelineStage(str, enum.Enum):
     """Workflow position of a record across the seven production stages.
 
@@ -234,6 +255,7 @@ class ImageRecord(Base):
     __tablename__ = "image_records"
     __table_args__ = (
         Index("ix_image_records_status", "status"),
+        Index("ix_image_records_state", "state"),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=generate_uuid)
@@ -242,6 +264,18 @@ class ImageRecord(Base):
     thumbnail_path: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     status: Mapped[ImageStatus] = mapped_column(
         Enum(ImageStatus), default=ImageStatus.PENDING, nullable=False
+    )
+
+    # ------------------------------------------------------------------ #
+    # Lifecycle state (single coordinate for publish/download flow)
+    # ------------------------------------------------------------------ #
+    #: Derived flags (QUARANTINED, USED/UNUSED, ...) are *never* stored —
+    #: they are recomputed from the other columns at serialization time by
+    #: ``services.image_lifecycle.compute_flags``.
+    state: Mapped[ImageLifecycleState] = mapped_column(
+        Enum(ImageLifecycleState),
+        default=ImageLifecycleState.COLLECTED,
+        nullable=False,
     )
 
     # ------------------------------------------------------------------ #
@@ -331,6 +365,19 @@ class ImageRecord(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, onupdate=utcnow, nullable=False
     )
+
+    @property
+    def flags(self) -> list[str]:
+        """Derived lifecycle flags, in display order.
+
+        A pure function of the stored columns, so it is computed here (at
+        serialization) rather than kept in sync in storage. The import is
+        deferred for the same reason as ``upload_filename``: ``services``
+        imports this module.
+        """
+        from services.image_lifecycle import compute_flags
+
+        return compute_flags(self)
 
     @property
     def upload_filename(self) -> str:
