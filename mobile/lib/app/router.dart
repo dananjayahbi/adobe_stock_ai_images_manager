@@ -13,6 +13,7 @@ import '../features/platforms/presentation/platform_hub_screen.dart';
 import '../features/process/presentation/batch_detail_screen.dart';
 import '../features/process/presentation/new_batch_screen.dart';
 import '../features/process/presentation/process_screen.dart';
+import '../features/queue/presentation/queue_screen.dart';
 import '../features/settings/presentation/about_screen.dart';
 import '../features/settings/presentation/account_screen.dart';
 import '../features/settings/presentation/connection_editor_screen.dart';
@@ -27,11 +28,15 @@ import 'splash_screen.dart';
 ///
 /// `/splash`, `/login`, `/hub`, `/coming-soon/:platformId`, the M5 `/more/*`
 /// sub-screens (connections, editor, account, about), the full-screen
-/// `/error` and the detail/modal views `/gallery/:recordId`, `/process/new`,
-/// `/process/:batchId` all live **outside** the [StatefulShellRoute] (no tab
-/// bar — 05 §1.2/§2.9/§2.11); the five tabs `/home`, `/gallery`, `/process`,
-/// `/delivery`, `/more` sit in indexed-stack branches with their own
-/// navigators (back stays in tab). `/process/new` is declared before
+/// `/error` and the root process routes `/process` (batch list — kept for
+/// "Back to batches"), `/process/new`, `/process/:batchId` live **outside**
+/// the [StatefulShellRoute] (no tab bar — 05 §1.2/§2.9/§2.11); the five
+/// tabs `/home`, `/gallery`, `/queue`, `/delivery`, `/more` sit in
+/// indexed-stack branches with their own navigators (back stays in tab).
+/// `/gallery/:recordId` rides **inside** the gallery branch (R4): tabs stay
+/// visible while inspecting, Android back pops detail → grid within the
+/// branch, and jumping to another tab and returning restores the open
+/// detail page + list scroll. `/process/new` is declared before
 /// `/process/:batchId` so the literal `new` never becomes a batch id, and
 /// `/more/connections` before `/more/connections/:profileId` likewise. The
 /// `/more` tab is the M5 [SettingsScreen]; `/error` carries
@@ -100,10 +105,8 @@ GoRouter createRouter({
         builder: (context, state) => const AboutScreen(),
       ),
       GoRoute(
-        path: '/gallery/:recordId',
-        builder: (context, state) => GalleryDetailScreen(
-          recordId: state.pathParameters['recordId'] ?? '',
-        ),
+        path: '/process',
+        builder: (context, state) => const ProcessScreen(),
       ),
       GoRoute(
         path: '/process/new',
@@ -131,14 +134,27 @@ GoRouter createRouter({
               GoRoute(
                 path: '/gallery',
                 builder: (context, state) => const GalleryScreen(),
+                // R4: the detail page lives IN the gallery branch — tabs
+                // stay visible, back pops detail → grid within the branch,
+                // and tab-hopping restores the open record + scroll.
+                routes: <RouteBase>[
+                  GoRoute(
+                    path: ':recordId',
+                    builder: (context, state) => GalleryDetailScreen(
+                      recordId: state.pathParameters['recordId'] ?? '',
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
           StatefulShellBranch(
             routes: <RouteBase>[
+              // R4: the Queue tab replaces Process in the shell (batches
+              // stay reachable at /process*, outside the shell).
               GoRoute(
-                path: '/process',
-                builder: (context, state) => const ProcessScreen(),
+                path: '/queue',
+                builder: (context, state) => const QueueScreen(),
               ),
             ],
           ),
@@ -178,8 +194,9 @@ GoRouter createRouter({
 ///   unauthenticated-at-`/hub` and the `/splash` bail-out).
 const Set<String> _shellRoots = <String>{
   '/home',
-  '/gallery',
-  '/process',
+  '/gallery', // prefix match also covers /gallery/:recordId (in-branch)
+  '/queue',
+  '/process', // root batch routes: /process, /process/new, /process/:batchId
   '/delivery',
   '/more',
 };

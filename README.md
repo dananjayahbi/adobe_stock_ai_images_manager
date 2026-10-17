@@ -34,7 +34,19 @@ gated green; full journey E2E'd headless against the real backend).**
 Highlights:
 
 - Vintage dark theme matching the web brand; 5-tab shell (Home · Gallery ·
-  Process · Delivery · More) + Platform Hub for all six platforms.
+  Queue · Delivery · More) + Platform Hub for all six platforms.
+- **Readiness queue** (Queue tab, replacing Process in the nav): approving
+  an image enqueues it, a slim bar above the tab bar shows waiting/running
+  state with Start/Pause (pause finishes the current promote run, then
+  holds; an empty running queue keeps waiting and auto-picks new images).
+  Detail pages got Approve+Reject (APPROVED), a Change-state picker for
+  everything else, a small top-left state stamp, focal-point pinch zoom
+  with double-tap fit↔zoom toggle above the drawer, and dense keyword
+  chips; gallery detail lives inside the Gallery branch, so tab-hopping
+  returns you exactly where you left off. Gallery default view is
+  **Any state** again (the state-lens default had collapsed it to 1 tile)
+  and detail images replay the stored session cookie (401 on cold start
+  was the "loading failed" cause).
 - Cookie auth against `/api/auth/*`, per-profile session isolation,
   **tunnel-first** connection profiles (seeded: `https://studio.hotelgo.lk`;
   the legacy localhost seed is purged once on upgrade, LAN/emulator profiles
@@ -66,7 +78,7 @@ Highlights:
 cd mobile
 flutter pub get
 flutter analyze        # clean
-flutter test           # 366 tests
+flutter test           # 394 tests
 flutter build apk --release   # installable release APK → build/app/outputs/flutter-apk/app-release.apk
 flutter build web --release --base-href /flutter/  # served at https://<tunnel>/flutter (see mobile/README.md)
 flutter run -d chrome  # quick look (set the app's profile to your backend URL)

@@ -33,6 +33,8 @@ import 'package:ai_stock_studio/features/process/domain/process_repository.dart'
 import 'package:ai_stock_studio/features/process/presentation/batch_detail_screen.dart';
 import 'package:ai_stock_studio/features/process/presentation/new_batch_screen.dart';
 import 'package:ai_stock_studio/features/process/presentation/process_screen.dart';
+import 'package:ai_stock_studio/features/queue/presentation/queue_indicator_bar.dart';
+import 'package:ai_stock_studio/features/queue/presentation/queue_screen.dart';
 import 'package:ai_stock_studio/features/settings/data/health_api.dart';
 import 'package:ai_stock_studio/features/settings/data/profile_store.dart';
 import 'package:ai_stock_studio/features/settings/domain/settings_repository.dart';
@@ -359,8 +361,8 @@ void main() {
     expect(find.text('wire_loop.jpg'), findsOneWidget);
   });
 
-  testWidgets('authenticated at /gallery/:recordId opens detail outside the '
-      'shell (tabs hidden)', (WidgetTester tester) async {
+  testWidgets('authenticated at /gallery/:recordId opens detail inside the '
+      'gallery branch (tabs stay visible — R4)', (WidgetTester tester) async {
     await pumpRouter(
       tester,
       initial: AuthStatus.authenticated,
@@ -373,12 +375,82 @@ void main() {
     await tester.pump();
 
     expect(find.byType(GalleryDetailScreen), findsOneWidget);
+    // R4: the detail page rides the gallery branch — the tab bar (and the
+    // queue indicator above it) stay visible while inspecting.
+    expect(find.byType(ShellBottomNav), findsOneWidget);
+    expect(find.byType(QueueIndicatorBar), findsOneWidget);
+    // The grid stays on the branch stack below (its element is not built
+    // while the opaque detail covers it — popping restores it, asserted by
+    // the back-nav test above).
     expect(find.byType(GalleryScreen), findsNothing);
-    expect(find.byType(ShellBottomNav), findsNothing);
   });
 
-  testWidgets('authenticated at /process swaps the tab placeholder for the '
-      'process screen (M4)', (WidgetTester tester) async {
+  testWidgets('back from /gallery/:recordId pops to /gallery inside the '
+      'branch (Android back)', (WidgetTester tester) async {
+    await pumpRouter(
+      tester,
+      initial: AuthStatus.authenticated,
+      location: '/gallery/r1',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(GalleryDetailScreen), findsOneWidget);
+    expect(router.canPop(), isTrue); // Navigator.canPop semantics via router.
+
+    router.pop();
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(GalleryDetailScreen), findsNothing);
+    expect(find.byType(GalleryScreen), findsOneWidget);
+    expect(find.byType(ShellBottomNav), findsOneWidget); // still in the tab
+    expect(router.canPop(), isFalse); // branch back at its root
+  });
+
+  testWidgets('tab-hopping to Queue and back restores the open detail page '
+      '(R4)', (WidgetTester tester) async {
+    await pumpRouter(
+      tester,
+      initial: AuthStatus.authenticated,
+      location: '/gallery/r1',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    await tester.tap(find.text('QUEUE'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.byType(QueueScreen), findsOneWidget);
+    expect(find.byType(GalleryDetailScreen), findsNothing);
+
+    await tester.tap(find.text('GALLERY'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // Where I left off: still on the record, not the grid root.
+    expect(find.byType(GalleryDetailScreen), findsOneWidget);
+    expect(find.byType(ShellBottomNav), findsOneWidget);
+  });
+
+  testWidgets('authenticated at /queue swaps the tab placeholder for the '
+      'queue screen (R4)', (WidgetTester tester) async {
+    await pumpRouter(
+      tester,
+      initial: AuthStatus.authenticated,
+      location: '/queue',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byType(QueueScreen), findsOneWidget);
+    expect(find.byType(TabPlaceholder), findsNothing); // placeholder retired
+    expect(find.byType(ShellBottomNav), findsOneWidget); // tab bar present
+    expect(find.text('Nothing queued'), findsOneWidget); // empty state
+  });
+
+  testWidgets('authenticated at /process opens the batch list outside the '
+      'shell (removed from the tabs — R4)', (WidgetTester tester) async {
     await pumpRouter(
       tester,
       initial: AuthStatus.authenticated,
@@ -389,7 +461,9 @@ void main() {
 
     expect(find.byType(ProcessScreen), findsOneWidget);
     expect(find.byType(TabPlaceholder), findsNothing); // placeholder retired
-    expect(find.byType(ShellBottomNav), findsOneWidget); // tab bar present
+    // Root-level /process keeps "Back to batches" working, but the QUEUE
+    // tab replaced PROCESS in the shell (tabs hidden here).
+    expect(find.byType(ShellBottomNav), findsNothing);
     expect(find.text('No batches yet'), findsOneWidget); // fake empty state
   });
 

@@ -27,6 +27,7 @@ class MetadataSheet extends StatelessWidget {
     super.key,
     required this.record,
     required this.loading,
+    this.controller,
     this.error,
     this.onRetry,
     this.footer,
@@ -37,6 +38,10 @@ class MetadataSheet extends StatelessWidget {
 
   /// True while the initial fetchById runs (skeleton rows).
   final bool loading;
+
+  /// Sheet position controller owned by the detail screen — lets it inset
+  /// the media viewport by the sheet's live extent (R5 drawer clearance).
+  final DraggableScrollableController? controller;
 
   /// Failed fetchById; rendered as an inline ErrorView inside the sheet.
   final Object? error;
@@ -50,6 +55,7 @@ class MetadataSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return DraggableScrollableSheet(
+      controller: controller,
       initialChildSize: 0.28,
       minChildSize: 0.28,
       maxChildSize: 0.75,
@@ -204,16 +210,20 @@ class _MetadataCard extends StatelessWidget {
             const DashedDivider(),
             const SizedBox(height: AppSpacing.md),
             const LabelCaps(text: 'Keywords'),
-            const SizedBox(height: AppSpacing.sm),
+            const SizedBox(height: AppSpacing.xs),
+            // Single compact Wrap — every keyword, no truncation (R6).
+            // Tight xs spacing + the dense chip variant keeps a long list
+            // to a few rows instead of one chip per line.
             Wrap(
-              spacing: AppSpacing.sm,
-              runSpacing: AppSpacing.sm,
+              spacing: AppSpacing.xs,
+              runSpacing: AppSpacing.xs,
               children: record.generatedKeywords!
                   .map(
                     (String keyword) => StatusChip(
                       label: keyword,
                       icon: LucideIcons.hash,
                       tone: StatusTone.neutral,
+                      dense: true,
                     ),
                   )
                   .toList(growable: false),

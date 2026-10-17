@@ -15,13 +15,17 @@ import '../../settings/data/profile_store.dart';
 import '../../platforms/presentation/platforms_controller.dart';
 import '../domain/image_record.dart';
 import 'image_state_presentation.dart';
+import 'zoom_math.dart';
 
 /// Immersive full-resolution image page for the detail pager (05 §2.6).
 ///
 /// * Full res via `GET /api/records/{id}/file` with the session cookie —
 ///   never [Image.network] (no cookie → 401).
-/// * Pinch zoom 1.0–4.0 ([InteractiveViewer]); double-tap toggles 1.0 ↔ 2.0
-///   and flips the chrome overlay; a single tap only flips the chrome.
+/// * Pinch zoom 1.0–4.0 ([InteractiveViewer], `alignment: Alignment.center`
+///   anchors the pinch under the fingers); double-tap toggles FIT ↔ 2.0×
+///   about the tap point via [zoomAboutFocalPoint] (never the old
+///   origin-anchored matrix) and flips the chrome overlay; a single tap
+///   only flips the chrome.
 /// * Zoom crossings bubble through [onZoomChanged] so the pager can switch
 ///   to [NeverScrollableScrollPhysics] and the swipe never fights the
 ///   pinch (documented simplification over gesture-arena arbitration).
@@ -50,6 +54,12 @@ class _AuthedImageViewState extends ConsumerState<AuthedImageView>
   bool _zoomed = false;
   bool _chromeVisible = true;
   int _attempt = 0;
+
+  /// Viewport size captured by [LayoutBuilder]; drives the focal-point math.
+  Size _viewport = Size.zero;
+
+  /// Position of the most recent double-tap down (the zoom focal point).
+  Offset _doubleTapFocal = Offset.zero;
 
   @override
   void initState() {
@@ -80,15 +90,20 @@ class _AuthedImageViewState extends ConsumerState<AuthedImageView>
   }
 
   void _onZoomStatus(AnimationStatus status) {
-    if (status == AnimationStatus.completed ||
-        status == AnimationStatus.dismissed) {
-      _pendingZoom = null;
-      _reportZoom();
+    // Only `completed` settles a zoom tween. `forward(from: 0)` on a
+    // controller left `completed` by the previous toggle first emits a
+    // TRANSIENT `dismissed` at value 0 — acting on it would drop
+    // `_pendingZoom` before any frame applied it, so the second
+    // double-tap's zoom-out silently never ran (R5 regression).
+    if (status != AnimationStatus.completed) {
+      return;
     }
+    _pendingZoom = null;
+    _reportZoom();
   }
 
   void _reportZoom() {
-    final bool nowZoomed = _transform.value.getMaxScaleOnAxis() > 1.01;
+    final bool nowZoomed = isZoomed(_transform.value);
     if (nowZoomed == _zoomed) {
       return;
     }
@@ -100,11 +115,21 @@ class _AuthedImageViewState extends ConsumerState<AuthedImageView>
     setState(() => _chromeVisible = !_chromeVisible);
   }
 
+  /// FIT ↔ 2.0× toggle (R5): zoom-in anchors about the tap point through
+  /// [zoomAboutFocalPoint] (never origin-anchored); zoom-out returns to
+  /// plain identity (FIT). Chrome flips only on this deliberate gesture —
+  /// pinch never hides it invisibly.
   void _handleDoubleTap() {
-    final double scale = _transform.value.getMaxScaleOnAxis();
-    final Matrix4 target = scale > 1.01
-        ? Matrix4.identity()
-        : Matrix4.identity()..scaleByDouble(2.0, 2.0, 2.0, 1.0);
+    if (_viewport == Size.zero) {
+      return;
+    }
+    final Matrix4 target = isZoomed(_transform.value)
+        ? doubleTapZoomOut()
+        : doubleTapZoomIn(
+            focalPoint: _doubleTapFocal,
+            viewport: _viewport,
+            previousMatrix: _transform.value,
+          );
     _pendingZoom = Matrix4Tween(begin: _transform.value, end: target);
     _zoomAnim.forward(from: 0);
     setState(() => _chromeVisible = !_chromeVisible);
@@ -138,44 +163,52 @@ class _AuthedImageViewState extends ConsumerState<AuthedImageView>
     return Stack(
       fit: StackFit.expand,
       children: <Widget>[
-        GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: _toggleChrome,
-          onDoubleTap: _handleDoubleTap,
-          child: InteractiveViewer(
-            transformationController: _transform,
-            minScale: 1.0,
-            maxScale: 4.0,
-            alignment: Alignment.center,
-            onInteractionStart: (_) {},
-            onInteractionUpdate: (_) => _reportZoom(),
-            onInteractionEnd: (_) => _reportZoom(),
-            child: Semantics(
-              // The full-size image is the screen's content: label it with
-              // the record's title for screen readers (04 §4).
-              image: true,
-              label: widget.record.filename,
-              child: CachedNetworkImage(
-                key: ValueKey<String>('${widget.record.id}#$_attempt'),
-                imageUrl: _fileUrl,
-                httpHeaders: cookie == null
-                    ? null
-                    : <String, String>{'Cookie': cookie},
-                fit: BoxFit.contain,
-                memCacheWidth: 1280,
-                placeholder: (BuildContext context, String url) =>
-                    _thumbnailPlaceholder(),
-                errorWidget: (BuildContext context, String url, Object error) =>
-                    Center(
-                  child: ErrorView(
-                    message: 'Couldn\u2019t load the full-size image.',
-                    onRetry: () =>
-                        setState(() => _attempt += 1), // Re-keys ImageProvider.
+        LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints constraints) {
+            _viewport = Size(constraints.maxWidth, constraints.maxHeight);
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: _toggleChrome,
+              onDoubleTapDown: (TapDownDetails details) =>
+                  _doubleTapFocal = details.localPosition,
+              onDoubleTap: _handleDoubleTap,
+              child: InteractiveViewer(
+                transformationController: _transform,
+                minScale: 1.0,
+                maxScale: 4.0,
+                alignment: Alignment.center,
+                onInteractionStart: (_) {},
+                onInteractionUpdate: (_) => _reportZoom(),
+                onInteractionEnd: (_) => _reportZoom(),
+                child: Semantics(
+                  // The full-size image is the screen's content: label it with
+                  // the record's title for screen readers (04 §4).
+                  image: true,
+                  label: widget.record.filename,
+                  child: CachedNetworkImage(
+                    key: ValueKey<String>('${widget.record.id}#$_attempt'),
+                    imageUrl: _fileUrl,
+                    httpHeaders: cookie == null
+                        ? null
+                        : <String, String>{'Cookie': cookie},
+                    fit: BoxFit.contain,
+                    memCacheWidth: 1280,
+                    placeholder: (BuildContext context, String url) =>
+                        _thumbnailPlaceholder(),
+                    errorWidget:
+                        (BuildContext context, String url, Object error) =>
+                            Center(
+                      child: ErrorView(
+                        message: 'Couldn\u2019t load the full-size image.',
+                        onRetry: () =>
+                            setState(() => _attempt += 1), // Re-keys ImageProvider.
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
-          ),
+            );
+          },
         ),
         Positioned(
           top: 0,

@@ -5,7 +5,12 @@ import 'package:flutter/services.dart';
 import 'package:go_router/go_router.dart';
 import 'package:lucide_flutter/lucide_flutter.dart';
 
+import '../features/queue/presentation/queue_indicator_bar.dart';
 import 'theme/tokens.dart';
+
+/// Branch index of the Queue tab (R3/R4) — the indicator's tap-through
+/// jumps here through the [StatefulNavigationShell].
+const int kQueueBranchIndex = 2;
 
 /// Builds the app-wide scaffold owning the five branch navigators of the
 /// [StatefulShellRoute] (05 §1.1). Wired by `router.dart`.
@@ -19,7 +24,8 @@ Widget buildShell(
 
 /// Shell body: the active branch navigator over a leather bottom nav with
 /// the signature double-hairline top, brass sliding indicator and haptic
-/// tab-change tick (04 §1.4, §8.4).
+/// tab-change tick (04 §1.4, §8.4). The readiness-queue indicator (R3)
+/// sits in the same bottom slot, directly above the tab bar.
 class AppShell extends StatelessWidget {
   const AppShell({super.key, required this.shell});
 
@@ -38,15 +44,29 @@ class AppShell extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       body: shell,
-      bottomNavigationBar: ShellBottomNav(
-        selectedIndex: shell.currentIndex,
-        onSelected: _onSelected,
+      // Both bars live in the bottomNavigationBar slot: the branch content
+      // (gallery list, open detail, its sheet footer) is laid out ABOVE
+      // them, so neither the indicator nor the tab bar can be covered —
+      // and the indicator can never cover the nav either (R3/R4).
+      bottomNavigationBar: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: <Widget>[
+          QueueIndicatorBar(
+            onOpenQueue: () => shell.goBranch(kQueueBranchIndex),
+          ),
+          ShellBottomNav(
+            selectedIndex: shell.currentIndex,
+            onSelected: _onSelected,
+          ),
+        ],
       ),
     );
   }
 }
 
 /// The five fixed tabs of the studio (05 §1.1) — `type: fixed`, no shifting.
+/// The Process tab became the **Queue** tab (R4): batches remain reachable
+/// through `/process/new` and `/process/:batchId`.
 class ShellBottomNav extends StatelessWidget {
   const ShellBottomNav({
     super.key,
@@ -64,7 +84,7 @@ class ShellBottomNav extends StatelessWidget {
       <({IconData icon, String label})>[
     (icon: LucideIcons.house, label: 'HOME'),
     (icon: LucideIcons.layoutGrid, label: 'GALLERY'),
-    (icon: LucideIcons.factory, label: 'PROCESS'),
+    (icon: LucideIcons.listChecks, label: 'QUEUE'),
     (icon: LucideIcons.send, label: 'DELIVERY'),
     (icon: LucideIcons.ellipsis, label: 'MORE'),
   ];

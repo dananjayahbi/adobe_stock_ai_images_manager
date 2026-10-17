@@ -69,19 +69,18 @@ void main() {
   });
 
   group('records lens encoding (frontend-new fetchRecords parity)', () {
-    test('default lens: default state CSV, group_id none, no sort', () async {
+    test('default lens: no state param (Any state), group_id none, no sort', () async {
       await api.records('adobe_stock', const GalleryQuery());
       expect(
         _target(adapter.requests.single),
         '/api/records?limit=60&offset=0'
-        '&state=READY_TO_PUBLISH,PUBLISHED,AS_ACCEPTED'
         '&group_id=none&stage_updated=true',
       );
       expect(adapter.requests.single.queryParameters.containsKey('sort'), isFalse);
-      // The CSV travels with a literal comma (axios un-escapes %2C).
+      // The default lens sends no state filter at all (R7a: Any state).
       expect(
-        adapter.requests.single.queryParameters['state'],
-        'READY_TO_PUBLISH,PUBLISHED,AS_ACCEPTED',
+        adapter.requests.single.queryParameters.containsKey('state'),
+        isFalse,
       );
     });
 
@@ -132,7 +131,7 @@ void main() {
         _target(adapter.requests.single),
         '/api/records?limit=60&offset=0'
         '&search=caf%C3%A9+%26+cr%C3%A8me'
-        '&state=READY_TO_PUBLISH,PUBLISHED,AS_ACCEPTED&group_id=none',
+        '&group_id=none',
       );
       expect(adapter.requests.single.queryParameters.containsKey('sort'), isFalse);
     });
@@ -157,7 +156,6 @@ void main() {
         adapter.requests.map<String>(_target).toList(),
         <String>[
           '/api/platforms/freepik/records?limit=1&offset=0'
-          '&state=READY_TO_PUBLISH,PUBLISHED,AS_ACCEPTED'
           '&group_id=none&stage_updated=true',
           '/api/platforms/freepik/groups',
         ],

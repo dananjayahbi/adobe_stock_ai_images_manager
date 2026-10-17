@@ -21,11 +21,11 @@ interface FilterBarProps {
  * stay visible whatever the current lens says.
  *
  * Options mirror what `/api/records?state=` actually supports: comma-separated
- * lifecycle states, plus usage. The "Publishable" composite is the app's own
- * default lens (same states as page.tsx's initial filter) so the select
- * renders a real option on load — its value must match exactly or the
- * `<select>` would render blank. Anything richer would be a lie the backend
- * could not honour.
+ * lifecycle states, plus usage. The default lens is "Any state" (`""`), which
+ * the select renders as its first option — the file's own rule: the option
+ * value must match the active default exactly or the `<select>` would render
+ * blank. "Publishable" stays as an explicit, non-default composite choice.
+ * Anything richer would be a lie the backend could not honour.
  */
 const STATES: { value: string; label: string }[] = [
   { value: "", label: "Any state" },

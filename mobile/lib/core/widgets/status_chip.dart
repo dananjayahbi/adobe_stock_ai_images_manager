@@ -13,6 +13,7 @@ class StatusChip extends StatelessWidget {
     required this.label,
     required this.icon,
     required this.tone,
+    this.dense = false,
     this.onTap,
   });
 
@@ -24,6 +25,10 @@ class StatusChip extends StatelessWidget {
 
   /// Color family driving the tinted background, icon and text.
   final StatusTone tone;
+
+  /// Compact variant for dense pill walls (keyword lists, R6): smaller
+  /// icon/text and tighter padding — same semantics, less vertical cost.
+  final bool dense;
 
   /// Optional tap handler; the chip grows to a 48 dp touch target when set.
   final VoidCallback? onTap;
@@ -44,21 +49,21 @@ class StatusChip extends StatelessWidget {
     final TextStyle? labelStyle =
         Theme.of(context).textTheme.labelSmall?.copyWith(
               color: color,
-              fontSize: 11,
+              fontSize: dense ? 10 : 11,
               height: 1.2,
               fontWeight: FontWeight.w600,
             );
 
     Widget body = Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.sm,
-        vertical: AppSpacing.xs,
+      padding: EdgeInsets.symmetric(
+        horizontal: dense ? AppSpacing.xs + 2 : AppSpacing.sm,
+        vertical: dense ? 2 : AppSpacing.xs,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 16, color: color),
-          const SizedBox(width: AppSpacing.xs),
+          Icon(icon, size: dense ? 12 : 16, color: color),
+          SizedBox(width: dense ? 3 : AppSpacing.xs),
           Text(label, style: labelStyle),
         ],
       ),
@@ -76,7 +81,9 @@ class StatusChip extends StatelessWidget {
     }
 
     return Container(
-      constraints: BoxConstraints(minHeight: onTap != null ? 48 : 28),
+      constraints: BoxConstraints(
+        minHeight: onTap != null ? 48 : (dense ? 22 : 28),
+      ),
       alignment: Alignment.center,
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.15),

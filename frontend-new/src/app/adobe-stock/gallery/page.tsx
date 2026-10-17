@@ -52,10 +52,10 @@ function GalleryView() {
   const [search, setSearch] = useState("");
   const [draft, setDraft] = useState("");
   const [filters, setFilters] = useState<GalleryFilters>({
-    // Default lens: only what can be published (or already was). The whole
-    // pipeline's worth of images stays reachable via the state filter — the
-    // gallery opens on the operator's next action, not on history.
-    state: "READY_TO_PUBLISH,PUBLISHED,AS_ACCEPTED",
+    // Default lens: Any state — the gallery opens on everything the pipeline
+    // holds (the old composite default hid all but a handful of records).
+    // "Publishable" and the six states stay one select away.
+    state: "",
     used: "all",
   });
   const [groups, setGroups] = useState<GalleryGroup[]>([]);

@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
+import '../../../app/theme/tokens.dart';
 import '../../../core/utils/app_exception.dart';
 import '../../../core/widgets/progress_bar.dart';
 import '../../../core/widgets/stamp_badge.dart';
@@ -29,8 +30,9 @@ const Set<String> _preStampedStates = <String>{
 
 /// Image Detail / Review — the operator's core review loop (05 §2.6).
 ///
-/// Pushed OUTSIDE the shell at `/gallery/:recordId`, so tabs are hidden and
-/// the screen is fully immersive.
+/// Opened at `/gallery/:recordId` **inside** the gallery branch (R4): tabs
+/// stay visible while inspecting, Android back pops detail → grid within
+/// the branch, and hopping tabs and back restores this page.
 class GalleryDetailScreen extends ConsumerWidget {
   const GalleryDetailScreen({super.key, required this.recordId});
 
@@ -56,11 +58,18 @@ class _DetailBody extends ConsumerStatefulWidget {
 
 class _DetailBodyState extends ConsumerState<_DetailBody> {
   late final PageController _pageController;
+  final DraggableScrollableController _sheetController =
+      DraggableScrollableController();
   Timer? _stampTimer;
 
   ImageRecord? _record;
   bool _loading = true;
   Object? _error;
+
+  /// Current sheet size as a fraction of the stack height — the media
+  /// viewport is inset by exactly this much (R5 drawer clearance) so the
+  /// image never sits under the drawer at rest and follows it while dragging.
+  double _sheetExtent = 0.28; // DraggableScrollableSheet.initialChildSize.
 
   /// Last known network health; NetworkException sets it, a successful
   /// fetch/action clears it. Drives the offline note + disabled actions.
@@ -97,7 +106,19 @@ class _DetailBodyState extends ConsumerState<_DetailBody> {
     super.initState();
     _currentId = widget.recordId;
     _pageController = PageController();
+    _sheetController.addListener(_onSheetExtentChanged);
     _fetch();
+  }
+
+  void _onSheetExtentChanged() {
+    if (!_sheetController.isAttached) {
+      return;
+    }
+    final double next = _sheetController.size;
+    if ((next - _sheetExtent).abs() < 0.0005 || !mounted) {
+      return;
+    }
+    setState(() => _sheetExtent = next);
   }
 
   @override
@@ -119,6 +140,8 @@ class _DetailBodyState extends ConsumerState<_DetailBody> {
   @override
   void dispose() {
     _stampTimer?.cancel();
+    _sheetController.removeListener(_onSheetExtentChanged);
+    _sheetController.dispose();
     _pageController.dispose();
     super.dispose();
   }
@@ -326,17 +349,31 @@ class _DetailBodyState extends ConsumerState<_DetailBody> {
 
     return Scaffold(
       backgroundColor: Colors.black,
-      body: Stack(
-        children: <Widget>[
-          _media(pages, record),
-          if (stampUp)
-            Positioned.fill(
-              child: IgnorePointer(
-                child: Center(
-                  child: StampIn(
-                    key: ValueKey<String>('$_currentId#$_stampSeq'),
-                    child: Transform.scale(
-                      scale: 2.4,
+      // R5 drawer clearance: the media viewport is inset by the sheet's
+      // *current* extent (follows the drag live), so the image ends above
+      // the drawer instead of sitting under it. The shell's bottom nav and
+      // queue indicator live in the outer Scaffold's bottomNavigationBar
+      // slot — the body above them never overlaps, so no extra inset.
+      body: LayoutBuilder(
+        builder: (BuildContext context, BoxConstraints constraints) {
+          final double sheetPx = _sheetExtent * constraints.maxHeight;
+          return Stack(
+            children: <Widget>[
+              // Keys keep each slot's element identity stable across
+              // conditional insert/remove (stamp appearing would otherwise
+              // absorb the sheet's slot and recreate its State mid-frame,
+              // colliding with the still-attached scrollable controller).
+              _media(pages, record, sheetPx),
+              if (stampUp)
+                // Top-left postmark at base size (R1): small, never covering the
+                // image center; safe-area inset keeps it under the status bar.
+                Positioned(
+                  key: const ValueKey<String>('detail-stamp'),
+                  top: MediaQuery.paddingOf(context).top + AppSpacing.md,
+                  left: AppSpacing.lg,
+                  child: IgnorePointer(
+                    child: StampIn(
+                      key: ValueKey<String>('$_currentId#$_stampSeq'),
                       child: StampBadge(
                         label: stateLabel(stampState),
                         tone: stateTone(stampState),
@@ -345,33 +382,36 @@ class _DetailBodyState extends ConsumerState<_DetailBody> {
                     ),
                   ),
                 ),
-              ),
-            ),
-          if (notFound && record == null)
-            Positioned.fill(
-              child: Center(
-                child: ErrorView(
-                  message: 'This image no longer exists on the studio.',
-                  onRetry: _goGallery, // Tap → back to the Gallery (05 §2.6).
+              if (notFound && record == null)
+                Positioned.fill(
+                  key: const ValueKey<String>('detail-error'),
+                  child: Center(
+                    child: ErrorView(
+                      message: 'This image no longer exists on the studio.',
+                      onRetry: _goGallery, // Tap → back to the Gallery (05 §2.6).
+                    ),
+                  ),
+                )
+              else if (!(record == null && notFound))
+                Positioned.fill(
+                  key: const ValueKey<String>('detail-sheet'),
+                  child: MetadataSheet(
+                    controller: _sheetController,
+                    record: record,
+                    loading: record == null && _loading,
+                    error: record == null ? _error : null,
+                    onRetry: _retry,
+                    footer: record == null ? null : _actionBar(record),
+                  ),
                 ),
-              ),
-            )
-          else if (!(record == null && notFound))
-            Positioned.fill(
-              child: MetadataSheet(
-                record: record,
-                loading: record == null && _loading,
-                error: record == null ? _error : null,
-                onRetry: _retry,
-                footer: record == null ? null : _actionBar(record),
-              ),
-            ),
-        ],
+            ],
+          );
+        },
       ),
     );
   }
 
-  Widget _media(List<ImageRecord> pages, ImageRecord? record) {
+  Widget _media(List<ImageRecord> pages, ImageRecord? record, double sheetPx) {
     if (record == null) {
       return Center(
         child: _error == null
@@ -379,7 +419,11 @@ class _DetailBodyState extends ConsumerState<_DetailBody> {
             : const SizedBox.shrink(),
       );
     }
-    return Positioned.fill(
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: sheetPx, // Ends exactly at the drawer's top edge (R5).
       child: PageView.builder(
         controller: _pageController,
         // Swipe wins only at zoom 1.0 — while zoomed the pager is inert

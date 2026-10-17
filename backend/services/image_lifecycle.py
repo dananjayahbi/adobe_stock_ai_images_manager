@@ -43,7 +43,10 @@ DELIVERABLE_STATES: frozenset[ImageLifecycleState] = frozenset(
 ALLOWED_STATE_TRANSITIONS: dict[
     ImageLifecycleState, frozenset[ImageLifecycleState]
 ] = {
-    ImageLifecycleState.APPROVED: frozenset({ImageLifecycleState.READY_TO_PUBLISH}),
+    # APPROVED -> REJECTED is the detail page's manual Reject button.
+    ImageLifecycleState.APPROVED: frozenset(
+        {ImageLifecycleState.READY_TO_PUBLISH, ImageLifecycleState.REJECTED}
+    ),
     ImageLifecycleState.REJECTED: frozenset(
         {ImageLifecycleState.READY_TO_PUBLISH, ImageLifecycleState.APPROVED}
     ),

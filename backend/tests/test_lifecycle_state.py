@@ -67,6 +67,7 @@ def _transient(**overrides) -> ImageRecord:
     ("from_state", "to_state"),
     [
         ("APPROVED", "READY_TO_PUBLISH"),
+        ("APPROVED", "REJECTED"),
         ("REJECTED", "READY_TO_PUBLISH"),
         ("READY_TO_PUBLISH", "APPROVED"),
         ("PUBLISHED", "AS_ACCEPTED"),
@@ -120,6 +121,21 @@ def test_state_endpoint_rejects_disallowed_transitions(
     assert response.status_code == 400
     assert from_state in response.json()["detail"]
     assert _reload(db_session_factory, record_id).state == ImageLifecycleState(from_state)
+
+
+def test_state_endpoint_invalid_transition_message_lists_allowed_targets(
+    client, db_session_factory
+):
+    record_id = _seed(db_session_factory, state=ImageLifecycleState.APPROVED)
+
+    response = client.patch(
+        f"/api/records/{record_id}/state", json={"state": "PUBLISHED"}
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    # APPROVED's whitelist now offers both queueing and the manual Reject.
+    assert "Allowed from APPROVED: READY_TO_PUBLISH, REJECTED." in detail
 
 
 def test_state_endpoint_rejects_unknown_value_with_accepted_list(
@@ -624,6 +640,35 @@ def test_state_backfill_runs_once_and_is_idempotent():
                 text("SELECT state FROM image_records WHERE id = 'r6'")
             ).scalar_one()
         assert state == "AS_ACCEPTED"
+    finally:
+        engine.dispose()
+
+
+def test_startup_repair_keeps_manual_rejected():
+    """A manual APPROVED -> REJECTED flip survives every startup repair run.
+
+    r6 is (PASSED, METADATA_READY): the derivation rules would map it to
+    APPROVED if they ever saw ``state = 'COLLECTED'``, so a surviving REJECTED
+    proves the COLLECTED guard holds. The used-push rule only fires for
+    ``is_used = 1`` rows (legacy rows default to 0).
+    """
+    from services.migrations import run_additive_migrations
+
+    engine = _legacy_engine()
+    try:
+        run_additive_migrations(engine)
+        with engine.begin() as connection:
+            connection.execute(
+                text("UPDATE image_records SET state = 'REJECTED' WHERE id = 'r6'")
+            )
+
+        run_additive_migrations(engine)
+
+        with engine.connect() as connection:
+            state = connection.execute(
+                text("SELECT state FROM image_records WHERE id = 'r6'")
+            ).scalar_one()
+        assert state == "REJECTED"
     finally:
         engine.dispose()
 

@@ -53,9 +53,11 @@ def _resolve_download_path(record: ImageRecord) -> Path:
         )
     path = resolve_ready_path(record, settings.READY_DIR)
     if path is None:
+        # Gate passed but nothing is staged yet: a conflict, not a missing
+        # resource — the record exists and may stage its file later.
         raise HTTPException(
-            status_code=404,
-            detail="Staged file is missing from the ready_to_upload directory.",
+            status_code=409,
+            detail="No staged file for this record yet.",
         )
     return path
 

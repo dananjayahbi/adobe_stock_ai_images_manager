@@ -12,6 +12,8 @@ import 'package:ai_stock_studio/core/utils/ui_message.dart';
 import 'package:ai_stock_studio/features/gallery/domain/gallery_repository.dart';
 import 'package:ai_stock_studio/features/gallery/domain/image_record.dart';
 import 'package:ai_stock_studio/features/gallery/presentation/gallery_detail_screen.dart';
+import 'package:ai_stock_studio/features/gallery/presentation/metadata_sheet.dart';
+import 'package:ai_stock_studio/features/queue/presentation/queue_controller.dart';
 import 'package:ai_stock_studio/features/settings/data/profile_store.dart';
 
 /// Mocktail fake — scriptable per method, tolerant of contract growth.
@@ -122,6 +124,14 @@ void main() {
     expect(find.text('READY TO PUBLISH'), findsWidgets);
     expect(find.text('Approved · wire_loop.jpg'), findsOneWidget);
     verify(() => repo.approve('r1')).called(1);
+    // R3: a successful approve hands the record to the readiness queue
+    // instead of blocking on promote work.
+    expect(
+      ProviderScope.containerOf(
+        tester.element(find.byType(GalleryDetailScreen)),
+      ).read(queueProvider).waitingCount,
+      1,
+    );
 
     // Stamp overlay auto-hides after ~1.2 s…
     await tester.pump(const Duration(milliseconds: 1300));
@@ -160,7 +170,7 @@ void main() {
   });
 
   testWidgets('Approve is absent once the record is queued, published or '
-      'accepted', (WidgetTester tester) async {
+      'accepted — Change state replaces it (R2)', (WidgetTester tester) async {
     final FakeGalleryRepository repo = FakeGalleryRepository();
     when(() => repo.approve('r1')).thenAnswer((_) async {});
 
@@ -175,8 +185,63 @@ void main() {
       await settle(tester);
 
       expect(find.text('Approve'), findsNothing, reason: state);
+      expect(find.text('Change state'), findsOneWidget, reason: state);
+      expect(find.text('Reject'), findsNothing, reason: state);
     }
     verifyNever(() => repo.approve('r1'));
+  });
+
+  testWidgets('every generated keyword renders in the sheet (R6 wrap, no '
+      'truncation)', (WidgetTester tester) async {
+    const List<String> keywords = <String>[
+      'wire loop',
+      'sculpting',
+      'ceramics',
+      'pottery tool',
+      'handmade craft',
+      'studio gear',
+      'clay shaping',
+      'artisan workshop',
+    ];
+    final FakeGalleryRepository repo = FakeGalleryRepository();
+    when(() => repo.fetchById('r1')).thenAnswer(
+      (_) async => ImageRecord(
+        id: 'r1',
+        filename: 'wire_loop.jpg',
+        status: 'PASSED',
+        state: 'APPROVED',
+        thumbnailPath: null,
+        generatedTitle: 'Wire loop sculpting tool',
+        generatedDescription: 'A fine loop tool for shaping clay.',
+        generatedKeywords: keywords,
+      ),
+    );
+
+    await pumpDetail(tester, repo);
+    await settle(tester);
+
+    // The keyword wall lives inside the sheet's scroll content — walk it
+    // to the last pill: every keyword must be present exactly once.
+    final Finder sheet = find.byType(MetadataSheet);
+    final Finder sheetScroll = find.descendant(
+      of: sheet,
+      matching: find.byType(Scrollable),
+    );
+    await tester.scrollUntilVisible(
+      find.text(keywords.last),
+      240,
+      scrollable: sheetScroll,
+    );
+    await settle(tester);
+
+    for (final String keyword in keywords) {
+      expect(find.text(keyword), findsOneWidget, reason: keyword);
+    }
+    // One Wrap holds the whole wall (no per-keyword stacks).
+    expect(
+      find.descendant(of: sheet, matching: find.byType(Wrap)),
+      findsWidgets,
+    );
   });
 
   testWidgets('menu shows Mark accepted only for PUBLISHED records', (

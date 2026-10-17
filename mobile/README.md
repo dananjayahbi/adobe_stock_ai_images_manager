@@ -9,7 +9,7 @@ full implementation plan lives in [`../mobile-plan/`](../mobile-plan/README.md).
 ```powershell
 flutter pub get
 flutter analyze          # zero issues expected
-flutter test             # 366 tests — the integration gate
+flutter test             # 394 tests — the integration gate
 flutter build apk --release   # → build/app/outputs/flutter-apk/app-release.apk (55 MB)
                               #   (build/app/outputs/apk/release/app-release.apk is the
                               #    Gradle twin — byte-identical; use flutter-apk/)
@@ -118,6 +118,26 @@ together: `QUARANTINED`, `USED`/`UNUSED` (always exactly one of the two),
 - The startup migration (`services/migrations.py`) runs the legacy→state
   repair every boot as guarded idempotent statements — it can never
   overwrite a manual state, and it self-heals any drift.
+
+## Readiness queue (Queue tab)
+
+Approve (or change state → *Ready to publish*) enqueues the record for the
+promote check/run pass (fills metadata, sRGB, acceptance gaps — the same
+endpoints the web Promote dialog uses, run per record):
+
+- Slim **indicator bar** above the bottom nav on every tab: queue depth,
+  current item, and a play/pause button; tap to open the Queue tab.
+- Queue tab: item list (waiting/running/done/failed + backend error
+  detail, retry/remove) and a bottom Start/Pause control.
+- Semantics: sequential execution; **Pause finishes the current image**
+  then stops; an empty running queue shows *waiting for next image* and
+  auto-picks items added later; restart restores waiting items (in-flight
+  → waiting, running → paused).
+- The **Queue** tab replaced *Process* in the bottom nav; batch routes
+  (`/process/new`, `/process/:batchId`) remain reachable outside the nav.
+- Gallery detail lives **inside** the Gallery branch: tabs stay visible
+  while inspecting, and returning to Gallery restores the open detail
+  page and scroll position. Android back pops detail → list in-branch.
 
 ## Launcher icon & favicon
 

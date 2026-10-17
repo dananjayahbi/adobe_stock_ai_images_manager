@@ -194,7 +194,10 @@ def test_download_missing_staged_file(client, db_session_factory, tmp_path):
 
     response = client.get(f"/api/records/{record_id}/download")
 
-    assert response.status_code == 404
+    # Gate passed, file not staged: a conflict (it may stage later), not a
+    # missing record — 404 is reserved for unknown ids.
+    assert response.status_code == 409
+    assert "No staged file" in response.json()["detail"]
 
 
 def test_download_zip_bundles_staged_files(client, db_session_factory, tmp_path):

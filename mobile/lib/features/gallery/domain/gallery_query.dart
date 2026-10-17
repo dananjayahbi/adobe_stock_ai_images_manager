@@ -5,9 +5,10 @@
 ///
 /// * `state` — backend accepts a **comma-separated CSV** of image states
 ///   (`state.split(",")`, same shape as the old `stage=` filter). The
-///   default lens is `'READY_TO_PUBLISH,PUBLISHED,AS_ACCEPTED'` (queued,
-///   published and Adobe-accepted records); `''` omits the param
-///   (= Any state).
+///   default lens is `''` (**Any state** — no `state` param at all, so the
+///   grid opens on every record); the composite `'READY_TO_PUBLISH,
+///   PUBLISHED,AS_ACCEPTED'` stays available as the explicit **Publishable**
+///   chip in `filter_bar.dart`. `''` omits the param in [toQuery].
 /// * `used` — `all|used|unused`; the web client omits the param when
 ///   `'all'` (backend default), so we do too.
 /// * `groupId` — the web gallery **always** sends `group_id`, defaulting to
@@ -21,7 +22,7 @@
 class GalleryQuery {
   const GalleryQuery({
     this.search,
-    this.state = 'READY_TO_PUBLISH,PUBLISHED,AS_ACCEPTED',
+    this.state = '',
     this.used = 'all',
     this.groupId,
     this.offset = 0,
@@ -29,8 +30,9 @@ class GalleryQuery {
     this.stageUpdated = true,
   });
 
-  /// Default lens: queued, published and Adobe-accepted records.
-  static const String defaultState = 'READY_TO_PUBLISH,PUBLISHED,AS_ACCEPTED';
+  /// Default lens: **Any state** — `''` means "no state filter at all"
+  /// (R7a: the composite CSV default collapsed the grid to one record).
+  static const String defaultState = '';
 
   final String? search;
   final String state;

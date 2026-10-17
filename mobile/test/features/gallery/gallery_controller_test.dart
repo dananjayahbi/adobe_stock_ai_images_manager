@@ -126,8 +126,8 @@ void main() {
     expect(page.items, hasLength(2));
     expect(repo.pageQueries, <GalleryQuery>[const GalleryQuery()]);
     expect(repo.pageQueries.single.offset, 0);
-    expect(repo.pageQueries.single.state,
-        'READY_TO_PUBLISH,PUBLISHED,AS_ACCEPTED');
+    // R7a: default lens is Any state — no state filter is sent.
+    expect(repo.pageQueries.single.state, '');
     expect(repo.pageQueries.single.used, 'all');
     expect(repo.pageQueries.single.limit, 60);
   });

@@ -62,7 +62,14 @@ class AuthCookieJar implements CookieJar {
       return const [];
     }
     try {
-      return [Cookie.fromSetCookieValue(raw)];
+      final Cookie cookie = Cookie.fromSetCookieValue(raw);
+      // Publish the stored pair as the process-wide image-header replay
+      // value (R7b): on a cold start with a persisted session no login
+      // response ever runs, so without this the loaders would rebuild
+      // requests with no `Cookie` header and the backend would 401 every
+      // uncached image. Best-effort — the header is a cache of this value.
+      onSessionChanged?.call('${cookie.name}=${cookie.value}');
+      return <Cookie>[cookie];
     } on Exception catch (_) {
       // Unparseable stored value — behave as logged out.
       return const [];

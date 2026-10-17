@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
@@ -15,21 +16,26 @@ import '../../../core/utils/ui_message.dart';
 import '../../../core/widgets/primary_button.dart';
 import '../../../core/widgets/toast_exception.dart';
 import '../../platforms/presentation/platforms_controller.dart';
+import '../../queue/presentation/queue_controller.dart';
 import '../domain/gallery_repository.dart';
 import '../domain/image_record.dart';
+import 'image_state_presentation.dart';
 
 /// Pinned review bar: **Approve first**, overflow for the rest (05 §2.6).
 ///
-/// * Approve renders only for APPROVED/REJECTED records (the states the
-///   `approve` endpoint flips → READY_TO_PUBLISH) and is disabled + dimmed
-///   while [offline]; every other state simply has no Approve button.
-/// * Overflow (≥44 dp, semantics "More actions"): Download · Mark
-///   used/unused · Mark accepted (PUBLISHED) / Undo accepted
-///   (AS_ACCEPTED) · Reset stage · Delete — confirm dialogs behind the
-///   destructive two, Delete rust-toned.
-/// * Every network failure reports through [onConnectivityChanged] (`false`
-///   on [NetworkException]) so the screen can pin the offline note and
-///   disable everything, per 05's "cached metadata stays viewable".
+/// * APPROVED shows **Approve** (→ READY_TO_PUBLISH) plus a destructive
+///   **Reject** (→ REJECTED, confirmed first); REJECTED keeps Approve
+///   only — together they cover `isApprovable`.
+/// * Every other state (COLLECTED, READY_TO_PUBLISH, PUBLISHED,
+///   AS_ACCEPTED) swaps the Approve area for a neutral **Change state**
+///   picker: a bottom-sheet list of the six contract states (current one
+///   disabled) → confirm dialog → `PATCH records/{id}/state`. Backend 400
+///   `detail` surfaces through the existing toast mapping.
+/// * Approve and a change **into READY_TO_PUBLISH** enqueue the record
+///   for the readiness queue (R3) instead of blocking the operator.
+/// * All three are disabled + dimmed while [offline], like the old
+///   Approve-only bar; every network failure reports through
+///   [onConnectivityChanged] so the screen can pin the offline note.
 class ReviewActionBar extends ConsumerStatefulWidget {
   const ReviewActionBar({
     super.key,
@@ -109,10 +115,160 @@ class _ReviewActionBarState extends ConsumerState<ReviewActionBar> {
     }
     setState(() => _busy = true);
     // Fast state flip (no LLM): APPROVED|REJECTED → READY_TO_PUBLISH.
+    // Success hands the record to the readiness queue (R3) instead of
+    // blocking the operator with promote work.
     await _run(
       'Approved · $_filename',
       () => ref.read(galleryRepositoryProvider).approve(widget.record.id),
-      onSuccess: widget.onApproved,
+      onSuccess: () {
+        unawaited(
+          ref
+              .read(queueProvider.notifier)
+              .enqueue(widget.record.id, filename: _filename),
+        );
+        widget.onApproved();
+      },
+    );
+    if (mounted) {
+      setState(() => _busy = false);
+    }
+  }
+
+  /// APPROVED-only companion to Approve: confirmed `PATCH …/state` to
+  /// REJECTED (destructive look, backend 400 detail toasted on refusal).
+  Future<void> _reject() async {
+    if (widget.offline || _busy) {
+      return;
+    }
+    final bool? confirmed = await _confirm(
+      title: 'Reject this record?',
+      message: '$_filename returns to Rejected. Promotion stays blocked '
+          'until it is approved again.',
+      confirmLabel: 'Reject',
+      destructive: true,
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+    await HapticFeedback.mediumImpact();
+    if (!mounted) {
+      return;
+    }
+    setState(() => _busy = true);
+    await _run(
+      'Rejected · $_filename',
+      () => ref
+          .read(galleryRepositoryProvider)
+          .changeState(widget.record.id, 'REJECTED'),
+      onSuccess: widget.onRecordChanged,
+    );
+    if (mounted) {
+      setState(() => _busy = false);
+    }
+  }
+
+  /// R2: bottom-sheet picker of the six contract states (current state
+  /// shown but not selectable) → confirm → `PATCH …/state`.
+  Future<void> _showChangeStatePicker() async {
+    if (widget.offline || _busy) {
+      return;
+    }
+    final String current = widget.record.state;
+    final String? picked = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: AppColors.parchment50,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(AppRadii.md),
+        ),
+      ),
+      builder: (BuildContext ctx) => SafeArea(
+        top: false,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: <Widget>[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  AppSpacing.lg,
+                  AppSpacing.lg,
+                  AppSpacing.sm,
+                ),
+                child: Text(
+                  'Change state',
+                  style: Theme.of(ctx).textTheme.titleMedium?.copyWith(
+                        color: AppColors.ink800,
+                        fontWeight: FontWeight.w600,
+                      ),
+                ),
+              ),
+              for (final String state in kImageStates)
+                if (state == current)
+                  ListTile(
+                    dense: true,
+                    enabled: false,
+                    leading: const Icon(
+                      LucideIcons.circleCheck,
+                      size: 18,
+                      color: AppColors.olive400,
+                    ),
+                    title: Text(
+                      stateLabel(state),
+                      style: const TextStyle(color: AppColors.ink600),
+                    ),
+                    subtitle: const Text('Current'),
+                  )
+                else
+                  ListTile(
+                    dense: true,
+                    title: Text(
+                      stateLabel(state),
+                      style: const TextStyle(color: AppColors.ink800),
+                    ),
+                    onTap: () => Navigator.of(ctx).pop(state),
+                  ),
+              const SizedBox(height: AppSpacing.sm),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (picked == null || !mounted) {
+      return;
+    }
+    final String label = stateLabel(picked);
+    final bool? confirmed = await _confirm(
+      title: 'Change state?',
+      message: 'Move $_filename to $label?',
+      confirmLabel: 'Change state',
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+    await HapticFeedback.mediumImpact();
+    if (!mounted) {
+      return;
+    }
+    setState(() => _busy = true);
+    await _run(
+      'Changed to $label · $_filename',
+      () => ref
+          .read(galleryRepositoryProvider)
+          .changeState(widget.record.id, picked),
+      onSuccess: () {
+        // The readiness queue (R3) targets READY_TO_PUBLISH records —
+        // only a change INTO that state hands the record to it.
+        if (picked == 'READY_TO_PUBLISH') {
+          unawaited(
+            ref
+                .read(queueProvider.notifier)
+                .enqueue(widget.record.id, filename: _filename),
+          );
+        }
+        widget.onRecordChanged();
+      },
     );
     if (mounted) {
       setState(() => _busy = false);
@@ -361,7 +517,11 @@ class _ReviewActionBarState extends ConsumerState<ReviewActionBar> {
               if (disabled) const _OfflineNote(),
               Row(
                 children: <Widget>[
-                  Expanded(child: _approveButton(disabled)),
+                  Expanded(child: _primaryAction(disabled)),
+                  if (_showReject) ...<Widget>[
+                    const SizedBox(width: AppSpacing.sm),
+                    _rejectButton(disabled),
+                  ],
                   const SizedBox(width: AppSpacing.sm),
                   _overflowButton(disabled),
                 ],
@@ -373,18 +533,45 @@ class _ReviewActionBarState extends ConsumerState<ReviewActionBar> {
     );
   }
 
-  Widget _approveButton(bool disabled) {
-    // Only the APPROVED|REJECTED states may flip to READY_TO_PUBLISH —
-    // queued/published/accepted/collected records simply have no Approve.
-    if (!widget.record.isApprovable) {
-      return const SizedBox.shrink();
+  /// Reject rides next to Approve only on APPROVED records — REJECTED
+  /// keeps the plain Approve-only row (R2).
+  bool get _showReject => widget.record.state == 'APPROVED';
+
+  Widget _primaryAction(bool disabled) {
+    final Widget button;
+    if (widget.record.isApprovable) {
+      // APPROVED|REJECTED → READY_TO_PUBLISH via the fast approve call.
+      button = PrimaryButton(
+        label: 'Approve',
+        expanded: true,
+        loading: _busy,
+        // Disabled state dims instead of PrimaryButton's spinner-on-null.
+        onPressed: disabled ? () {} : _approve,
+      );
+    } else {
+      // Everything else (COLLECTED, READY_TO_PUBLISH, PUBLISHED,
+      // AS_ACCEPTED) gets the neutral Change state picker (R2).
+      button = _SecondaryAction(
+        icon: LucideIcons.refreshCw,
+        label: 'Change state',
+        onPressed: disabled ? () {} : _showChangeStatePicker,
+      );
     }
-    final Widget button = PrimaryButton(
-      label: 'Approve',
-      expanded: true,
-      loading: _busy,
-      // Disabled state dims instead of PrimaryButton's spinner-on-null.
-      onPressed: disabled ? () {} : _approve,
+    if (!disabled) {
+      return button;
+    }
+    return Opacity(
+      opacity: 0.5,
+      child: IgnorePointer(child: button),
+    );
+  }
+
+  Widget _rejectButton(bool disabled) {
+    final Widget button = _SecondaryAction(
+      icon: LucideIcons.x,
+      label: 'Reject',
+      destructive: true,
+      onPressed: disabled ? () {} : _reject,
     );
     if (!disabled) {
       return button;
@@ -455,6 +642,91 @@ class _MenuItem extends StatelessWidget {
         const SizedBox(width: AppSpacing.sm),
         Text(label, style: color == null ? null : TextStyle(color: color)),
       ],
+    );
+  }
+}
+
+/// Parchment-outlined icon button matching [SecondaryButton] metrics
+/// (48 dp floor) — the Change state / Reject row actions (R2). Destructive
+/// paints rust border + label so Reject never reads as a happy path.
+class _SecondaryAction extends StatefulWidget {
+  const _SecondaryAction({
+    required this.icon,
+    required this.label,
+    required this.onPressed,
+    this.destructive = false,
+  });
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onPressed;
+  final bool destructive;
+
+  @override
+  State<_SecondaryAction> createState() => _SecondaryActionState();
+}
+
+class _SecondaryActionState extends State<_SecondaryAction> {
+  static const BorderRadius _kRadius = BorderRadius.all(
+    Radius.circular(AppRadii.sm),
+  );
+
+  bool _pressed = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color color = widget.destructive
+        ? AppColors.rust400
+        : AppColors.ink600;
+    final Color borderColor = widget.destructive
+        ? AppColors.rust400
+        : (_pressed ? AppColors.brass400 : AppColors.parchment400);
+    final TextStyle labelStyle =
+        Theme.of(context).textTheme.labelLarge?.copyWith(color: color) ??
+            TextStyle(color: color, fontSize: 15);
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 150),
+      curve: Curves.easeInOut,
+      decoration: BoxDecoration(
+        color: AppColors.parchment200,
+        border: Border.all(color: borderColor, width: 1),
+        borderRadius: _kRadius,
+      ),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: widget.onPressed,
+          onHighlightChanged: (bool value) => setState(() => _pressed = value),
+          borderRadius: _kRadius,
+          highlightColor: AppColors.parchment300,
+          splashColor: AppColors.parchment400,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 48),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md,
+                vertical: AppSpacing.sm,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: <Widget>[
+                  Icon(widget.icon, size: 18, color: color),
+                  const SizedBox(width: AppSpacing.xs),
+                  Flexible(
+                    child: Text(
+                      widget.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: labelStyle,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

@@ -10,12 +10,14 @@ import {
   flagsFromLegacy,
   flagLabel,
   flagTone,
+  LIFECYCLE_STATES,
   orderFlags,
   stateFromLegacy,
   stateLabel,
   stateTone,
+  STATE_LABELS,
 } from "@/lib/states";
-import type { ImageRecord, ImageStatus } from "@/lib/types";
+import type { ImageLifecycleState, ImageRecord, ImageStatus } from "@/lib/types";
 
 /**
  * Right-side details panel for the viewer: every field the backend's
@@ -182,21 +184,37 @@ export default function InfoPanel({ record, onClose, onRecordChanged }: InfoPane
   const flags = orderFlags(flagsFromLegacy(record));
 
   // Lifecycle actions — each gated strictly on the current state; a state
-  // where none applies renders no Actions section at all.
+  // where none applies renders no Actions section at all. Every state that
+  // can't Approve gets the Change state escape hatch (server still validates
+  // each transition); PUBLISHED/AS_ACCEPTED keep their dedicated buttons too.
   const canApprove = APPROVABLE_STATES.includes(state);
   const canMarkAccepted = state === "PUBLISHED";
   const canUndoAccepted = state === "AS_ACCEPTED";
-  const showActions = canApprove || canMarkAccepted || canUndoAccepted;
+  const canChangeState = !canApprove;
+  const showActions = canApprove || canMarkAccepted || canUndoAccepted || canChangeState;
 
   const [actionPending, setActionPending] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Two-step guard for the destructive Reject (PromptCard's arm → "Sure?"
+  // pattern, with the same timeout so a missed click doesn't stay armed).
+  const [rejectArmed, setRejectArmed] = useState(false);
+  // Change state picker: the state chosen but not yet confirmed.
+  const [targetState, setTargetState] = useState<ImageLifecycleState | null>(null);
 
   // Navigating to another record must not inherit the previous one's
-  // pending/error (same id after a reload — state is already clean then).
+  // pending/error/arm (same id after a reload — state is already clean then).
   useEffect(() => {
     setActionError(null);
     setActionPending(false);
+    setRejectArmed(false);
+    setTargetState(null);
   }, [record.id]);
+
+  useEffect(() => {
+    if (!rejectArmed) return;
+    const timer = setTimeout(() => setRejectArmed(false), 4000);
+    return () => clearTimeout(timer);
+  }, [rejectArmed]);
 
   /** One lifecycle call: pending while in flight, backend `detail` inline on failure. */
   const runStateAction = useCallback(
@@ -258,7 +276,7 @@ export default function InfoPanel({ record, onClose, onRecordChanged }: InfoPane
       <div className="flex-1 divide-y divide-dashed divide-parchment-400/60">
         {showActions && (
           <Section title="Actions">
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               {canApprove && (
                 <Button
                   size="sm"
@@ -267,6 +285,24 @@ export default function InfoPanel({ record, onClose, onRecordChanged }: InfoPane
                   onClick={() => void runStateAction(() => approveRecord(record.id))}
                 >
                   Approve
+                </Button>
+              )}
+              {state === "APPROVED" && (
+                <Button
+                  size="sm"
+                  variant="danger"
+                  loading={actionPending}
+                  disabled={actionPending}
+                  onClick={() => {
+                    if (!rejectArmed) {
+                      setRejectArmed(true);
+                      return;
+                    }
+                    setRejectArmed(false);
+                    void runStateAction(() => changeRecordState(record.id, "REJECTED"));
+                  }}
+                >
+                  {rejectArmed ? "Sure?" : "Reject"}
                 </Button>
               )}
               {canMarkAccepted && (
@@ -294,6 +330,56 @@ export default function InfoPanel({ record, onClose, onRecordChanged }: InfoPane
                   Undo accepted
                 </Button>
               )}
+              {canChangeState && (
+                <span className="flex flex-wrap items-center gap-2">
+                  <label
+                    htmlFor="change-state"
+                    className="label-caps text-ink-400"
+                  >
+                    Change state
+                  </label>
+                  <select
+                    id="change-state"
+                    className="rounded-sm border border-parchment-500/50 bg-ink-900 px-2 py-1.5 text-xs text-ink-50 focus:border-brass-400 focus:outline-none focus:ring-1 focus:ring-brass-400"
+                    value={targetState ?? state}
+                    disabled={actionPending}
+                    onChange={(event) => {
+                      const next = event.target.value as ImageLifecycleState;
+                      setTargetState(next === state ? null : next);
+                    }}
+                  >
+                    {LIFECYCLE_STATES.map((option) => (
+                      <option key={option} value={option}>
+                        {STATE_LABELS[option]}
+                      </option>
+                    ))}
+                  </select>
+                  {targetState && (
+                    <>
+                      <Button
+                        size="sm"
+                        loading={actionPending}
+                        disabled={actionPending}
+                        onClick={() => {
+                          const next = targetState;
+                          setTargetState(null);
+                          void runStateAction(() => changeRecordState(record.id, next));
+                        }}
+                      >
+                        Change
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        disabled={actionPending}
+                        onClick={() => setTargetState(null)}
+                      >
+                        Cancel
+                      </Button>
+                    </>
+                  )}
+                </span>
+              )}
             </div>
             {actionError && (
               <p
@@ -315,8 +401,8 @@ export default function InfoPanel({ record, onClose, onRecordChanged }: InfoPane
               </p>
             )}
             {(record.generated_keywords?.length ?? 0) > 0 && (
-              <div className="py-1.5">
-                <p className="label-caps mb-1">
+              <div className="py-1">
+                <p className="label-caps mb-0.5">
                   Keywords · {record.generated_keywords!.length}
                 </p>
                 <Chips items={record.generated_keywords!} />

@@ -15,6 +15,10 @@ import '../domain/gallery_query.dart';
 const List<({String value, String label})> kGalleryStates =
     <({String value, String label})>[
   (value: '', label: 'Any state'),
+  (
+    value: 'READY_TO_PUBLISH,PUBLISHED,AS_ACCEPTED',
+    label: 'Publishable',
+  ),
   (value: 'COLLECTED', label: 'Collected'),
   (value: 'APPROVED', label: 'Approved'),
   (value: 'REJECTED', label: 'Rejected'),
