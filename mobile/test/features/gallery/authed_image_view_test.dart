@@ -13,11 +13,16 @@ import 'package:ai_stock_studio/features/gallery/presentation/zoom_math.dart';
 import 'package:ai_stock_studio/features/settings/data/profile_store.dart';
 
 ImageRecord _record() => const ImageRecord(
-      id: 'r1',
-      filename: 'wire_loop.jpg',
-      status: 'PASSED',
-      state: 'APPROVED',
-    );
+  id: 'r1',
+  filename: 'wire_loop.jpg',
+  status: 'PASSED',
+  state: 'APPROVED',
+);
+
+/// The viewer's on-screen matrix (`alignment: null` ⇒ pixels == matrix 1:1).
+Matrix4 matrixOf(WidgetTester tester) => tester
+    .widget<Transform>(find.byKey(const ValueKey('authed-image-matrix')))
+    .transform;
 
 void main() {
   setUpAll(() {
@@ -32,9 +37,7 @@ void main() {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     await tester.pumpWidget(
       ProviderScope(
-        overrides: [
-          sharedPreferencesProvider.overrideWithValue(prefs),
-        ],
+        overrides: [sharedPreferencesProvider.overrideWithValue(prefs)],
         child: MaterialApp(
           theme: buildAppTheme(),
           home: Scaffold(
@@ -68,9 +71,7 @@ void main() {
       'origin (R5)', (WidgetTester tester) async {
     final List<bool> zoomEvents = await pumpView(tester);
 
-    final InteractiveViewer viewer = tester.widget(find.byType(InteractiveViewer));
-    final TransformationController controller = viewer.transformationController!;
-    expect(controller.value.isIdentity(), isTrue);
+    expect(matrixOf(tester).isIdentity(), isTrue);
     expect(zoomEvents, isEmpty);
 
     // First double-tap: zoom IN (documented default: clean 2.0× about the
@@ -79,8 +80,8 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(controller.value.getMaxScaleOnAxis(), closeTo(2.0, 0.01));
-    expect(isZoomed(controller.value), isTrue);
+    expect(matrixOf(tester).getMaxScaleOnAxis(), closeTo(2.0, 0.01));
+    expect(isZoomed(matrixOf(tester)), isTrue);
     expect(zoomEvents, <bool>[true]);
 
     // Content must not have jumped from the top-left: the tapped point
@@ -90,14 +91,14 @@ void main() {
       tester.getSize(find.byType(AuthedImageView)).height / 2,
     );
     expect(
-      MatrixUtils.transformPoint(controller.value, center),
+      MatrixUtils.transformPoint(matrixOf(tester), center),
       center,
       reason: 'zoom must stay under the fingers, not anchor at the origin',
     );
 
     // Second double-tap: back to FIT (identity).
     expect(
-      controller.value.getMaxScaleOnAxis(),
+      matrixOf(tester).getMaxScaleOnAxis(),
       closeTo(2.0, 0.01),
       reason: 'still zoomed in when the second double-tap arrives',
     );
@@ -106,15 +107,16 @@ void main() {
     await tester.pump(const Duration(milliseconds: 300));
 
     expect(zoomEvents, <bool>[true, false]);
-    expect(controller.value.isIdentity(), isTrue);
+    expect(matrixOf(tester).isIdentity(), isTrue);
   });
 
   testWidgets('detail image request carries the session Cookie header '
       '(R7b)', (WidgetTester tester) async {
     await pumpView(tester);
 
-    final CachedNetworkImage cold =
-        tester.widget(find.byType(CachedNetworkImage));
+    final CachedNetworkImage cold = tester.widget(
+      find.byType(CachedNetworkImage),
+    );
     expect(
       cold.httpHeaders?['Cookie'],
       isNull, // cold start: no session published yet
@@ -131,9 +133,70 @@ void main() {
 
     // …and the loader rebuilds with the explicit header (mirrors the
     // thumbnail.dart pattern — no header → 401 on uncached images).
-    final CachedNetworkImage warm =
-        tester.widget(find.byType(CachedNetworkImage));
+    final CachedNetworkImage warm = tester.widget(
+      find.byType(CachedNetworkImage),
+    );
     expect(warm.httpHeaders?['Cookie'], 'studio_session=abc123');
     expect(warm.fit, BoxFit.contain);
+  });
+
+  /// Pinch repro (R8): spread two pointers around a point and verify the
+  /// scene content that was under the fingers STAYS under them — the user
+  /// reports the pinch anchors toward a corner on device.
+  testWidgets('pinch scales about the focal point, not a corner (R8)', (
+    WidgetTester tester,
+  ) async {
+    await pumpView(tester);
+
+    expect(matrixOf(tester).isIdentity(), isTrue);
+
+    // Off-center focal: 75% right, 25% down — catches any origin drift
+    // that a center-focal gesture would mask.
+    final Size size = tester.getSize(find.byType(AuthedImageView));
+    final Offset focal = Offset(size.width * 0.75, size.height * 0.25);
+    // The scene point currently under the focal (identity matrix → same).
+    final Offset sceneUnderFocal = MatrixUtils.transformPoint(
+      Matrix4.inverted(matrixOf(tester)),
+      focal,
+    );
+
+    final TestGesture g1 = await tester.startGesture(
+      focal - const Offset(50, 0),
+    );
+    final TestGesture g2 = await tester.startGesture(
+      focal + const Offset(50, 0),
+    );
+    await tester.pump();
+    for (int i = 1; i <= 6; i++) {
+      await g1.moveTo(focal - Offset(50 + i * 20, 0));
+      await g2.moveTo(focal + Offset(50 + i * 20, 0));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await g1.up();
+    await g2.up();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // Spread 50 → 170 px half-width ⇒ ~3.4× (within min 1 / max 4).
+    final double scale = matrixOf(tester).getMaxScaleOnAxis();
+    expect(scale, greaterThan(2.0));
+
+    // THE invariant: the content point that was under the fingers is still
+    // under the (unchanged) focal after the whole gesture.
+    final Offset rendered = MatrixUtils.transformPoint(
+      matrixOf(tester),
+      sceneUnderFocal,
+    );
+    expect(
+      rendered.dx,
+      closeTo(focal.dx, 1.0),
+      reason:
+          'x drifted to ${rendered.dx} (focal ${focal.dx}) — '
+          'zoom is anchoring away from the fingers',
+    );
+    expect(
+      rendered.dy,
+      closeTo(focal.dy, 1.0),
+      reason: 'y drifted to ${rendered.dy} (focal ${focal.dy})',
+    );
   });
 }

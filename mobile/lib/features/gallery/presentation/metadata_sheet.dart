@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../app/theme/tokens.dart';
 import '../../../core/utils/app_exception.dart';
@@ -14,6 +13,7 @@ import '../../../core/widgets/stamp_badge.dart';
 import '../../../core/widgets/status_chip.dart';
 import '../domain/image_record.dart';
 import 'image_state_presentation.dart';
+import 'keyword_chips.dart';
 
 /// Bottom draggable metadata sheet: two snaps (~28% / 75%) holding the
 /// postmark metadata card (05 §2.6).
@@ -211,23 +211,9 @@ class _MetadataCard extends StatelessWidget {
             const SizedBox(height: AppSpacing.md),
             const LabelCaps(text: 'Keywords'),
             const SizedBox(height: AppSpacing.xs),
-            // Single compact Wrap — every keyword, no truncation (R6).
-            // Tight xs spacing + the dense chip variant keeps a long list
-            // to a few rows instead of one chip per line.
-            Wrap(
-              spacing: AppSpacing.xs,
-              runSpacing: AppSpacing.xs,
-              children: record.generatedKeywords!
-                  .map(
-                    (String keyword) => StatusChip(
-                      label: keyword,
-                      icon: LucideIcons.hash,
-                      tone: StatusTone.neutral,
-                      dense: true,
-                    ),
-                  )
-                  .toList(growable: false),
-            ),
+            // Dense brass hairline pills, content-sized so several share
+            // each run — every keyword visible, none stacked full-width.
+            KeywordChips(keywords: record.generatedKeywords!),
           ],
           if (record.flags.isNotEmpty) ...<Widget>[
             const SizedBox(height: AppSpacing.md),

@@ -142,6 +142,7 @@ void main() {
         summary.ready,
       );
       expect(summary.stateCount('APPROVED'), 0);
+      expect(summary.stateCount('AS_ACCEPTED'), 0); // missing key → 0
     });
 
     test('state_counts parses {STATE: n} and answers stateCount', () async {
@@ -181,6 +182,7 @@ void main() {
       expect(summary.stateCount('READY_TO_PUBLISH', fallback: summary.ready), 3);
       expect(summary.stateCount('APPROVED'), 2);
       expect(summary.stateCount('REJECTED', fallback: summary.rejected), 0);
+      expect(summary.stateCount('AS_ACCEPTED'), 5);
       expect(summary.stateCount('UNKNOWN_STATE', fallback: summary.ready), 0);
     });
 

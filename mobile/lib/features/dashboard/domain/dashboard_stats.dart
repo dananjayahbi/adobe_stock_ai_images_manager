@@ -214,7 +214,7 @@ class LatestImage {
 }
 
 /// Composed dashboard model: one [SectionState] per endpoint, plus helpers
-/// the 2×2 stat grid reads directly (05 §2.4).
+/// the 2-column stat grid reads directly (05 §2.4).
 class DashboardStats {
   const DashboardStats({
     required this.stages,
@@ -297,6 +297,10 @@ class DashboardStats {
   int get rejectedCount =>
       stagesValue?.stateCount('REJECTED', fallback: stagesValue?.rejected ?? 0) ??
       0;
+
+  /// "AS Accepted" tile — no legacy equivalent, so 0 until `state_counts`
+  /// ships (tolerant: a missing `AS_ACCEPTED` key reads as 0).
+  int get asAcceptedCount => stagesValue?.stateCount('AS_ACCEPTED') ?? 0;
 
   /// "Queue depth" tile.
   int get queueDepth => queuesValue?.total ?? 0;

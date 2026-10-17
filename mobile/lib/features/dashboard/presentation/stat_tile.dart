@@ -6,8 +6,9 @@ import '../../../core/widgets/label_caps.dart';
 import '../../../core/widgets/skeleton_loader.dart';
 import '../../../core/widgets/status_chip.dart';
 
-/// Compact stat card for the dashboard's 2×2 grid (05 §2.4): Playfair value
-/// tinted by a semantic [StatusTone], label-caps caption, optional chip
+/// Compact stat card for the dashboard's 2-column stats grid (05 §2.4):
+/// Playfair value tinted by a semantic [StatusTone], label-caps caption,
+/// optional chip
 /// (04 §1.2/§4 — never color alone when a chip is attached).
 class StatTile extends StatelessWidget {
   const StatTile({
@@ -64,9 +65,9 @@ class StatTile extends StatelessWidget {
   }
 }
 
-/// Loading twin of [StatTile] for the dashboard's 2×2 grid (05 §2.4 loading
-/// state). Skeletons live beside the tiles they stand in for so the screen
-/// itself stays inside the 400-line rule.
+/// Loading twin of [StatTile] for the dashboard's 2-column stats grid
+/// (05 §2.4 loading state). Skeletons live beside the tiles they stand in
+/// for so the screen itself stays inside the 400-line rule.
 class StatTileSkeleton extends StatelessWidget {
   const StatTileSkeleton({super.key});
 

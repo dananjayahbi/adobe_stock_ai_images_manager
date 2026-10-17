@@ -8,7 +8,6 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import '../../../app/lifecycle_observer.dart';
 import '../../../app/theme/tokens.dart';
 import '../../../core/utils/app_exception.dart';
-import '../../../core/widgets/connection_profile_banner.dart';
 import '../../../core/widgets/error_view.dart';
 import '../../../core/widgets/toast_exception.dart';
 import '../domain/gallery_group.dart';
@@ -125,7 +124,6 @@ class _GalleryScreenState extends ConsumerState<GalleryScreen> {
             : null,
         body: Column(
           children: <Widget>[
-            const ConnectionProfileBanner(),
             const SizedBox(height: AppSpacing.md),
             if (_showFilters) ...<Widget>[
               GalleryFilterBar(query: query, onChanged: _apply),

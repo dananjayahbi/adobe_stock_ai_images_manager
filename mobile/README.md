@@ -9,7 +9,7 @@ full implementation plan lives in [`../mobile-plan/`](../mobile-plan/README.md).
 ```powershell
 flutter pub get
 flutter analyze          # zero issues expected
-flutter test             # 394 tests — the integration gate
+flutter test             # 403 tests — the integration gate
 flutter build apk --release   # → build/app/outputs/flutter-apk/app-release.apk (55 MB)
                               #   (build/app/outputs/apk/release/app-release.apk is the
                               #    Gradle twin — byte-identical; use flutter-apk/)

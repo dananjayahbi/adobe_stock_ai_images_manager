@@ -16,6 +16,7 @@ import 'package:ai_stock_studio/features/dashboard/data/dashboard_repository_imp
 import 'package:ai_stock_studio/features/dashboard/domain/dashboard_repository.dart';
 import 'package:ai_stock_studio/features/dashboard/domain/dashboard_stats.dart';
 import 'package:ai_stock_studio/features/dashboard/presentation/dashboard_screen.dart';
+import 'package:ai_stock_studio/features/dashboard/presentation/stat_tile.dart';
 import 'package:ai_stock_studio/features/settings/data/profile_store.dart';
 
 /// Fake backend: every endpoint independently scriptable — the per-card
@@ -200,15 +201,16 @@ void main() {
     expect(find.text('161'), findsOneWidget);
   });
 
-  testWidgets('stages endpoint failing: its four stat cells error, the '
+  testWidgets('stages endpoint failing: its five stat cells error, the '
       'other cells keep live values', (WidgetTester tester) async {
     final FakeDashboardRepository repo = FakeDashboardRepository()
       ..stagesError = const ServerException(message: 'boom');
     await pumpDashboard(tester, repo);
     await settle(tester);
 
-    expect(find.byType(ErrorView), findsNWidgets(4)); // records/ready/
-    // approved/rejected cells — every stages-backed tile errors together.
+    expect(find.byType(ErrorView), findsNWidgets(5)); // records/ready/
+    // approved/rejected/AS-accepted cells — every stages-backed tile errors
+    // together.
     expect(find.text('3'), findsOneWidget); // queue depth survives
     expect(find.text('1'), findsOneWidget); // running jobs survives
     expect(find.text('161'), findsNothing);
@@ -228,6 +230,7 @@ void main() {
           'READY_TO_PUBLISH': 4,
           'APPROVED': 5,
           'REJECTED': 6,
+          'AS_ACCEPTED': 8,
         },
       );
     await pumpDashboard(tester, repo);
@@ -237,8 +240,51 @@ void main() {
     expect(find.text('4'), findsOneWidget); // Ready to publish
     expect(find.text('5'), findsOneWidget); // Approved
     expect(find.text('6'), findsOneWidget); // Rejected
+    expect(find.text('AS ACCEPTED'), findsOneWidget); // label-caps casing
+    expect(find.text('8'), findsOneWidget); // AS Accepted from state_counts
     expect(find.text('7'), findsNothing); // legacy ready ignored
     expect(find.text('9'), findsNothing); // legacy rejected ignored
+  });
+
+  testWidgets('AS Accepted KPI card reads state_counts and updates on '
+      'pull-to-refresh', (WidgetTester tester) async {
+    final FakeDashboardRepository repo = FakeDashboardRepository();
+    await pumpDashboard(tester, repo);
+    await settle(tester);
+
+    // Tolerant parsing: a payload without state_counts shows 0 in the tile.
+    final Finder tile = find.ancestor(
+      of: find.text('AS ACCEPTED'), // LabelCaps uppercases at build time
+      matching: find.byType(StatTile),
+    );
+    expect(tile, findsOneWidget);
+    expect(
+      find.descendant(of: tile, matching: find.text('0')),
+      findsOneWidget,
+    );
+
+    // Backend starts shipping state_counts — refresh swaps the value.
+    repo.stagesValue = const StagesSummary(
+      counts: <StageCount>[],
+      total: 161,
+      ready: 12,
+      rejected: 0,
+      incompatible: 0,
+      stateCounts: <String, int>{'AS_ACCEPTED': 14},
+    );
+
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, 400));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 400));
+    await settle(tester);
+    await tester.pump(const Duration(milliseconds: 400)); // dismiss spinner
+
+    expect(repo.stagesCalls, 2);
+    expect(
+      find.descendant(of: tile, matching: find.text('14')),
+      findsOneWidget,
+    );
   });
 
   testWidgets('empty records show the batch CTA EmptyState', (

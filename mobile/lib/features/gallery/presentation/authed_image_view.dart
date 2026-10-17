@@ -21,20 +21,21 @@ import 'zoom_math.dart';
 ///
 /// * Full res via `GET /api/records/{id}/file` with the session cookie —
 ///   never [Image.network] (no cookie → 401).
-/// * Pinch zoom 1.0–4.0 ([InteractiveViewer], `alignment: Alignment.center`
-///   anchors the pinch under the fingers); double-tap toggles FIT ↔ 2.0×
-///   about the tap point via [zoomAboutFocalPoint] (never the old
-///   origin-anchored matrix) and flips the chrome overlay; a single tap
-///   only flips the chrome.
+/// * Pinch zoom 1.0–4.0 driven by the app's own focal-point math
+///   ([zoomAboutFocalPoint] + [panBy]/[clampCoverage] every scale frame) —
+///   native [InteractiveViewer] drifted ~25 px off the fingers in the
+///   widget-test repro (R8 boundary/translate corrections), so the pinch is
+///   deterministic here: content stays exactly under the fingers, pan while
+///   zoomed can never expose a blank edge, and the matrix is applied with
+///   `alignment: null` so the on-screen pixels equal the matrix 1:1.
+///   Double-tap toggles FIT ↔ 2.0× about the tap point (never origin-
+///   anchored) and flips the chrome overlay; a single tap only flips the
+///   chrome; single-finger drags do nothing at fit.
 /// * Zoom crossings bubble through [onZoomChanged] so the pager can switch
 ///   to [NeverScrollableScrollPhysics] and the swipe never fights the
 ///   pinch (documented simplification over gesture-arena arbitration).
 class AuthedImageView extends ConsumerStatefulWidget {
-  const AuthedImageView({
-    super.key,
-    required this.record,
-    this.onZoomChanged,
-  });
+  const AuthedImageView({super.key, required this.record, this.onZoomChanged});
 
   /// Record to render; [ImageRecord.id] drives the file endpoint.
   final ImageRecord record;
@@ -60,6 +61,10 @@ class _AuthedImageViewState extends ConsumerState<AuthedImageView>
 
   /// Position of the most recent double-tap down (the zoom focal point).
   Offset _doubleTapFocal = Offset.zero;
+
+  /// Scale at the start of the current pinch gesture —
+  /// [ScaleUpdateDetails.scale] is relative to gesture start, not per frame.
+  double _pinchStartScale = 1.0;
 
   @override
   void initState() {
@@ -135,6 +140,42 @@ class _AuthedImageViewState extends ConsumerState<AuthedImageView>
     setState(() => _chromeVisible = !_chromeVisible);
   }
 
+  /// Pinch start: snapshot the scale ([ScaleUpdateDetails.scale] is
+  /// cumulative from gesture start) and cancel any double-tap tween so the
+  /// two paths can't overwrite each other's frames.
+  void _onScaleStart(ScaleStartDetails details) {
+    if (_zoomAnim.isAnimating) {
+      _zoomAnim.stop();
+      _pendingZoom = null;
+    }
+    _pinchStartScale = _transform.value.getMaxScaleOnAxis();
+  }
+
+  /// One code path for pinch AND pan: move by the focal delta (only while
+  /// zoomed — a finger-drag at FIT must not shift the framing), scale about
+  /// the live focal point through [zoomAboutFocalPoint], then guarantee
+  /// coverage with [clampCoverage]. No inertia on release — the pager owns
+  /// flicks and the clamp owns the edges.
+  void _onScaleUpdate(ScaleUpdateDetails details) {
+    if (_viewport == Size.zero) {
+      return;
+    }
+    Matrix4 matrix = _transform.value;
+    final Offset delta = details.focalPointDelta;
+    if (delta != Offset.zero && isZoomed(matrix)) {
+      matrix = panBy(previousMatrix: matrix, delta: delta, viewport: _viewport);
+    }
+    final double target = (_pinchStartScale * details.scale).clamp(1.0, 4.0);
+    matrix = zoomAboutFocalPoint(
+      targetScale: target,
+      focalPoint: details.localFocalPoint,
+      viewport: _viewport,
+      previousMatrix: matrix,
+    );
+    _transform.value = clampCoverage(matrix: matrix, viewport: _viewport);
+    _reportZoom();
+  }
+
   void _pop() {
     final GoRouter? router = GoRouter.maybeOf(context);
     if (router == null) {
@@ -172,37 +213,46 @@ class _AuthedImageViewState extends ConsumerState<AuthedImageView>
               onDoubleTapDown: (TapDownDetails details) =>
                   _doubleTapFocal = details.localPosition,
               onDoubleTap: _handleDoubleTap,
-              child: InteractiveViewer(
-                transformationController: _transform,
-                minScale: 1.0,
-                maxScale: 4.0,
-                alignment: Alignment.center,
-                onInteractionStart: (_) {},
-                onInteractionUpdate: (_) => _reportZoom(),
-                onInteractionEnd: (_) => _reportZoom(),
-                child: Semantics(
-                  // The full-size image is the screen's content: label it with
-                  // the record's title for screen readers (04 §4).
-                  image: true,
-                  label: widget.record.filename,
-                  child: CachedNetworkImage(
-                    key: ValueKey<String>('${widget.record.id}#$_attempt'),
-                    imageUrl: _fileUrl,
-                    httpHeaders: cookie == null
-                        ? null
-                        : <String, String>{'Cookie': cookie},
-                    fit: BoxFit.contain,
-                    memCacheWidth: 1280,
-                    placeholder: (BuildContext context, String url) =>
-                        _thumbnailPlaceholder(),
-                    errorWidget:
-                        (BuildContext context, String url, Object error) =>
-                            Center(
-                      child: ErrorView(
-                        message: 'Couldn\u2019t load the full-size image.',
-                        onRetry: () =>
-                            setState(() => _attempt += 1), // Re-keys ImageProvider.
-                      ),
+              onScaleStart: _onScaleStart,
+              onScaleUpdate: _onScaleUpdate,
+              child: ClipRect(
+                child: AnimatedBuilder(
+                  animation: _transform,
+                  builder: (BuildContext context, Widget? child) => Transform(
+                    key: const ValueKey<String>('authed-image-matrix'),
+                    transform: _transform.value,
+                    // Raw matrix on screen: zoom_math's exact contract —
+                    // Transform's default center alignment would conjugate
+                    // the matrix and shift the anchor under the fingers.
+                    alignment: null,
+                    child: child,
+                  ),
+                  child: Semantics(
+                    // The full-size image is the screen's content: label it with
+                    // the record's title for screen readers (04 §4).
+                    image: true,
+                    label: widget.record.filename,
+                    child: CachedNetworkImage(
+                      key: ValueKey<String>('${widget.record.id}#$_attempt'),
+                      imageUrl: _fileUrl,
+                      httpHeaders: cookie == null
+                          ? null
+                          : <String, String>{'Cookie': cookie},
+                      fit: BoxFit.contain,
+                      memCacheWidth: 1280,
+                      placeholder: (BuildContext context, String url) =>
+                          _thumbnailPlaceholder(),
+                      errorWidget:
+                          (BuildContext context, String url, Object error) =>
+                              Center(
+                                child: ErrorView(
+                                  message:
+                                      'Couldn\u2019t load the full-size image.',
+                                  onRetry: () => setState(
+                                    () => _attempt += 1,
+                                  ), // Re-keys ImageProvider.
+                                ),
+                              ),
                     ),
                   ),
                 ),
@@ -239,9 +289,7 @@ class _AuthedImageViewState extends ConsumerState<AuthedImageView>
         thumb == null
             ? const ColoredBox(color: AppColors.parchment100)
             : Thumbnail(path: thumb),
-        const Center(
-          child: SizedBox(width: 160, child: ProgressBar()),
-        ),
+        const Center(child: SizedBox(width: 160, child: ProgressBar())),
       ],
     );
   }

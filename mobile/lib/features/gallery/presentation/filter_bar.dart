@@ -35,10 +35,10 @@ const List<({String value, String label})> kGalleryUsage =
   (value: 'used', label: 'Used'),
 ];
 
-/// Search + state + usage lenses (05 §2.5): one horizontal chip strip over
-/// a debounced (300 ms) search field. Every change emits a fresh
-/// [GalleryQuery] through [onChanged]; chips are icon-paired so state never
-/// rides on color alone (04 §4 rule 1).
+/// Search + state + usage lenses (05 §2.5): a debounced (300 ms) search
+/// field on its own full-width row above one horizontal chip strip. Every
+/// change emits a fresh [GalleryQuery] through [onChanged]; chips are
+/// icon-paired so state never rides on color alone (04 §4 rule 1).
 class GalleryFilterBar extends StatefulWidget {
   const GalleryFilterBar({
     super.key,
@@ -95,64 +95,62 @@ class _GalleryFilterBarState extends State<GalleryFilterBar> {
         horizontal: AppSpacing.lg,
         vertical: AppSpacing.sm,
       ),
-      child: Row(
+      // Two rows: the search field gets the full width on top, the chip
+      // strip sits beneath it — one row each instead of a cramped pair.
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
-          SizedBox(
-            width: 150,
-            child: TextField(
-              controller: _search,
-              onChanged: _onSearchChanged,
-              style: const TextStyle(fontSize: 13),
-              decoration: const InputDecoration(
-                hintText: 'Search…',
-                isDense: true,
-                prefixIcon: Icon(LucideIcons.search, size: 16),
-              ),
+          TextField(
+            controller: _search,
+            onChanged: _onSearchChanged,
+            style: const TextStyle(fontSize: 13),
+            decoration: const InputDecoration(
+              hintText: 'Search…',
+              isDense: true,
+              prefixIcon: Icon(LucideIcons.search, size: 16),
             ),
           ),
-          const SizedBox(width: AppSpacing.sm),
-          Expanded(
-            child: SizedBox(
-              height: 48,
-              child: ListView(
-                scrollDirection: Axis.horizontal,
-                children: <Widget>[
-                  for (final ({String value, String label}) state
-                      in kGalleryStates)
-                    Padding(
-                      padding: const EdgeInsets.only(right: AppSpacing.xs),
-                      child: StatusChip(
-                        label: state.label,
-                        icon: query.state == state.value
-                            ? LucideIcons.check
-                            : LucideIcons.funnel,
-                        tone: query.state == state.value
-                            ? StatusTone.accent
-                            : StatusTone.neutral,
-                        onTap: () => widget.onChanged(
-                          query.copyWith(state: state.value),
-                        ),
+          const SizedBox(height: AppSpacing.sm),
+          SizedBox(
+            height: 44,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: <Widget>[
+                for (final ({String value, String label}) state
+                    in kGalleryStates)
+                  Padding(
+                    padding: const EdgeInsets.only(right: AppSpacing.xs),
+                    child: StatusChip(
+                      label: state.label,
+                      icon: query.state == state.value
+                          ? LucideIcons.check
+                          : LucideIcons.funnel,
+                      tone: query.state == state.value
+                          ? StatusTone.accent
+                          : StatusTone.neutral,
+                      onTap: () => widget.onChanged(
+                        query.copyWith(state: state.value),
                       ),
                     ),
-                  for (final ({String value, String label}) usage
-                      in kGalleryUsage)
-                    Padding(
-                      padding: const EdgeInsets.only(right: AppSpacing.xs),
-                      child: StatusChip(
-                        label: usage.label,
-                        icon: query.used == usage.value
-                            ? LucideIcons.check
-                            : _usageIcon(usage.value),
-                        tone: query.used == usage.value
-                            ? StatusTone.accent
-                            : StatusTone.neutral,
-                        onTap: () => widget.onChanged(
-                          query.copyWith(used: usage.value),
-                        ),
+                  ),
+                for (final ({String value, String label}) usage
+                    in kGalleryUsage)
+                  Padding(
+                    padding: const EdgeInsets.only(right: AppSpacing.xs),
+                    child: StatusChip(
+                      label: usage.label,
+                      icon: query.used == usage.value
+                          ? LucideIcons.check
+                          : _usageIcon(usage.value),
+                      tone: query.used == usage.value
+                          ? StatusTone.accent
+                          : StatusTone.neutral,
+                      onTap: () => widget.onChanged(
+                        query.copyWith(used: usage.value),
                       ),
                     ),
-                ],
-              ),
+                  ),
+              ],
             ),
           ),
         ],
@@ -223,7 +221,7 @@ class GroupStrip extends StatelessWidget {
       return const SizedBox.shrink();
     }
     return SizedBox(
-      height: 72,
+      height: 56,
       child: ListView.separated(
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: AppSpacing.lg),
@@ -254,7 +252,7 @@ class GroupCard extends StatelessWidget {
     final TextTheme text = Theme.of(context).textTheme;
 
     return SizedBox(
-      width: 176,
+      width: 140,
       child: AppCard(
         padding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.sm,

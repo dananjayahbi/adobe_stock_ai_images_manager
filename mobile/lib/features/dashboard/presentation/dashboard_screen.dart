@@ -27,7 +27,7 @@ import 'dashboard_controller.dart';
 import 'stat_tile.dart';
 
 /// `/home` — Adobe Dashboard (05 §2.4), parity with web `/adobe-stock`:
-/// connection banner + hero, 2×2 stats, Latest grid, running-job card.
+/// connection banner + hero, 2-column stats, Latest grid, running-job card.
 ///
 /// Each data section renders from its own [SectionState]: loading shows a
 /// per-card skeleton, failure an inline [ErrorView] with retry, and the
@@ -158,10 +158,13 @@ class DashboardScreen extends ConsumerWidget {
 
   // -------------------------------------------------------------- stats ---
 
-  /// 2×3 grid of stat tiles: records/queue/jobs around the three
-  /// `state_counts` lenses (ready/approved/rejected). `IntrinsicHeight` +
-  /// stretched rows keep an inline error cell from clipping while peers
-  /// fill the same row height.
+  /// 2-column grid of stat tiles (7 tiles → 4 rows): records/queue/jobs
+  /// around the four `state_counts` lenses (ready/approved/rejected/
+  /// AS Accepted). Rows are cut from the cell list in pairs, so adding a
+  /// card flows into the next row; an odd trailing cell keeps the column
+  /// rhythm by pairing with an empty spacer. `IntrinsicHeight` + stretched
+  /// rows keep an inline error cell from clipping while peers fill the same
+  /// row height.
   Widget _statsGrid(DashboardStats stats, DashboardController controller) {
     final List<Widget> cells = <Widget>[
       _statCell<StagesSummary>(
@@ -204,6 +207,16 @@ class DashboardScreen extends ConsumerWidget {
           tone: StatusTone.failure,
         ),
       ),
+      _statCell<StagesSummary>(
+        stats.stages,
+        controller,
+        section: DashboardSection.stages,
+        data: (StagesSummary s) => StatTile(
+          value: '${s.stateCount('AS_ACCEPTED')}',
+          label: 'AS Accepted',
+          tone: StatusTone.success,
+        ),
+      ),
       _statCell<QueuesSummary>(
         stats.queues,
         controller,
@@ -226,18 +239,24 @@ class DashboardScreen extends ConsumerWidget {
     // loose 0..∞ heights, which stretch would turn into tight-∞ and crash).
     return Column(
       children: <Widget>[
-        IntrinsicHeight(child: _gridRow(cells[0], cells[1])),
-        const SizedBox(height: AppSpacing.md),
-        IntrinsicHeight(child: _gridRow(cells[2], cells[3])),
-        const SizedBox(height: AppSpacing.md),
-        IntrinsicHeight(child: _gridRow(cells[4], cells[5])),
+        for (int i = 0; i < cells.length; i += 2) ...<Widget>[
+          if (i > 0) const SizedBox(height: AppSpacing.md),
+          IntrinsicHeight(
+            child: _gridRow(
+              cells[i],
+              i + 1 < cells.length ? cells[i + 1] : const SizedBox.shrink(),
+            ),
+          ),
+        ],
       ],
     );
   }
 
   /// Equal-width stat cells. `spacing` (not a gap widget) keeps every child
   /// flexible — a non-flex child would make the Row's cross-intrinsic height
-  /// unbounded under IntrinsicHeight.
+  /// unbounded under IntrinsicHeight. [b] may be an empty spacer when the
+  /// grid has an odd cell left, so the trailing tile stays half-width like
+  /// its peers instead of stretching.
   Widget _gridRow(Widget a, Widget b) => Row(
         spacing: AppSpacing.md,
         crossAxisAlignment: CrossAxisAlignment.stretch,

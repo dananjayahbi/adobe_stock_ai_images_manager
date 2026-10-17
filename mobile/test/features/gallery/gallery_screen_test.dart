@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ai_stock_studio/app/theme/theme.dart';
 import 'package:ai_stock_studio/core/utils/app_exception.dart';
+import 'package:ai_stock_studio/core/widgets/connection_profile_banner.dart';
 import 'package:ai_stock_studio/core/widgets/error_view.dart';
 import 'package:ai_stock_studio/core/widgets/skeleton_loader.dart';
 import 'package:ai_stock_studio/features/gallery/domain/gallery_group.dart';
@@ -226,7 +227,7 @@ void main() {
     expect(find.text('Batch wizard arrives with M4'), findsNothing);
   });
 
-  testWidgets('page error keeps the shell (banner, filters, title) and '
+  testWidgets('page error keeps the shell (filters, title) and '
       'Retry refetches', (WidgetTester tester) async {
     final _FakeGalleryRepository repo = _FakeGalleryRepository()
       ..pageError = const ServerException(message: 'boom');
@@ -322,5 +323,38 @@ void main() {
 
     expect(find.textContaining('Offline — actions disabled'), findsNothing);
     expect(find.byType(SelectionToolbar), findsOneWidget);
+  });
+
+  testWidgets('header is two rows: full-width search above the chip strip, '
+      'with no connection banner and compact folder cards', (
+    WidgetTester tester,
+  ) async {
+    final _FakeGalleryRepository repo = seededRepo()
+      ..groups = <GalleryGroup>[
+        const GalleryGroup(id: 'g1', name: 'wave 2', count: 30),
+      ];
+    await pumpGallery(tester, repo);
+    await settle(tester);
+
+    // The gallery drops the banner other screens keep.
+    expect(find.byType(ConnectionProfileBanner), findsNothing);
+
+    // Row 1: the search field owns the full width (only the lg insets).
+    final Size searchSize = tester.getSize(find.byType(TextField));
+    expect(searchSize.width, greaterThan(700)); // 800 − 2×16 padding
+    final double searchTop = tester.getTopLeft(find.byType(TextField)).dy;
+
+    // Row 2: the chip strip sits beneath the search field.
+    final Finder chipStrip = find.descendant(
+      of: find.byType(GalleryFilterBar),
+      matching: find.byType(ListView),
+    );
+    expect(chipStrip, findsOneWidget);
+    expect(tester.getTopLeft(chipStrip).dy, greaterThan(searchTop));
+
+    // Folder cards underneath are shrunk (140×56, was 176×72).
+    final Size cardSize = tester.getSize(find.byType(GroupCard).first);
+    expect(cardSize.width, 140);
+    expect(cardSize.height, 56);
   });
 }

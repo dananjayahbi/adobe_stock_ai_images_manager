@@ -27,8 +27,10 @@ Matrix4 zoomAboutFocalPoint({
   required Size viewport,
   required Matrix4 previousMatrix,
 }) {
-  final double previousScale =
-      previousMatrix.getMaxScaleOnAxis().clamp(1.0, double.infinity);
+  final double previousScale = previousMatrix.getMaxScaleOnAxis().clamp(
+    1.0,
+    double.infinity,
+  );
   final double scale = targetScale.clamp(1.0, double.infinity);
   final double factor = scale / previousScale;
 
@@ -54,13 +56,12 @@ Matrix4 doubleTapZoomIn({
   required Size viewport,
   required Matrix4 previousMatrix,
   double onTapScale = 2.0,
-}) =>
-    zoomAboutFocalPoint(
-      targetScale: onTapScale,
-      focalPoint: focalPoint,
-      viewport: viewport,
-      previousMatrix: previousMatrix,
-    );
+}) => zoomAboutFocalPoint(
+  targetScale: onTapScale,
+  focalPoint: focalPoint,
+  viewport: viewport,
+  previousMatrix: previousMatrix,
+);
 
 /// Double-tap zoom-out target: back to FIT — plain identity, the
 /// `alignment: Alignment.center` resting position of [InteractiveViewer].
@@ -70,3 +71,45 @@ Matrix4 doubleTapZoomOut() => Matrix4.identity();
 /// Whether [matrix] counts as zoomed for the toggle + pager-physics gate
 /// (matches the viewer's `> 1.01` epsilon against float noise).
 bool isZoomed(Matrix4 matrix) => matrix.getMaxScaleOnAxis() > 1.01;
+
+/// Keeps the transformed child box covering the viewport — no pan or zoom
+/// can expose a blank edge.
+///
+/// The child fills the viewport at fit (BoxFit.contain letterboxes the
+/// pixels inside), so at axis scale `s` its box spans `[t, s·v + t]` per
+/// axis: coverage means `t ∈ [v·(1 − s), 0]`. At fit (`s == 1`) the range
+/// collapses to `0`, which re-centers the framing automatically. Translation
+/// is in viewport space (storage[12..13]); scale ≥ 1 is guaranteed upstream
+/// by [zoomAboutFocalPoint].
+Matrix4 clampCoverage({required Matrix4 matrix, required Size viewport}) {
+  final storage = matrix.storage;
+  final double sx = storage[0];
+  final double sy = storage[5];
+  final double tx = storage[12];
+  final double ty = storage[13];
+  final double cx = tx.clamp(viewport.width * (1.0 - sx), 0.0);
+  final double cy = ty.clamp(viewport.height * (1.0 - sy), 0.0);
+  if (cx == tx && cy == ty) {
+    return matrix;
+  }
+  return matrix.clone()
+    ..storage[12] = cx
+    ..storage[13] = cy;
+}
+
+/// Pans by [delta] (viewport pixels — a gesture's `focalPointDelta`), then
+/// [clampCoverage].
+///
+/// Pan is `T(delta) · previous`: the linear part is untouched and the
+/// translation accumulates, i.e. `storage[12..13] += delta` — no helper
+/// multiplication conventions to get wrong.
+Matrix4 panBy({
+  required Matrix4 previousMatrix,
+  required Offset delta,
+  required Size viewport,
+}) {
+  final Matrix4 matrix = previousMatrix.clone()
+    ..storage[12] += delta.dx
+    ..storage[13] += delta.dy;
+  return clampCoverage(matrix: matrix, viewport: viewport);
+}

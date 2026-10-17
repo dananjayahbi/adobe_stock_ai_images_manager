@@ -78,7 +78,7 @@ Highlights:
 cd mobile
 flutter pub get
 flutter analyze        # clean
-flutter test           # 394 tests
+flutter test           # 403 tests
 flutter build apk --release   # installable release APK → build/app/outputs/flutter-apk/app-release.apk
 flutter build web --release --base-href /flutter/  # served at https://<tunnel>/flutter (see mobile/README.md)
 flutter run -d chrome  # quick look (set the app's profile to your backend URL)
