@@ -21,8 +21,31 @@ class QueueScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final QueueState state = ref.watch(queueProvider);
+    // Dead-button rule: the Clear action only exists while something
+    // terminal (done/failed) can actually be cleared.
+    final bool hasProcessed = state.items.any(
+      (QueueItem item) =>
+          item.status == QueueItemStatus.done ||
+          item.status == QueueItemStatus.failed,
+    );
     return Scaffold(
-      appBar: AppBar(title: const Text('Queue')),
+      appBar: AppBar(
+        title: const Text('Queue'),
+        actions: <Widget>[
+          if (hasProcessed)
+            IconButton(
+              tooltip: 'Clear processed items',
+              constraints: const BoxConstraints(
+                minWidth: 44,
+                minHeight: 44,
+              ),
+              onPressed: () {
+                ref.read(queueProvider.notifier).clearProcessed();
+              },
+              icon: const Icon(LucideIcons.eraser, size: 18),
+            ),
+        ],
+      ),
       body: Column(
         children: <Widget>[
           Padding(

@@ -52,6 +52,9 @@ ADDITIVE_COLUMNS: list[tuple[str, str, str]] = [
     # Prompt Library folders. NULL = ungrouped; the name IS the folder, so a
     # batch can be isolated the moment its prompts are assigned.
     ("prompts", "group_name", "VARCHAR(120)"),
+    # Serial batch queue. NULL until the batch is queued; the worker claims
+    # ``status='queued' ORDER BY queued_at ASC, batch_id ASC``.
+    ("batches", "queued_at", "DATETIME"),
 ]
 
 # Rows that already reached READY under the old two-column model are already

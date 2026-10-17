@@ -112,6 +112,7 @@ class BatchStatus(str, enum.Enum):
     """Lifecycle of one batch pipeline run (batch pipeline v2)."""
 
     DRAFT = "draft"
+    QUEUED = "queued"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
@@ -150,6 +151,12 @@ class Batch(Base):
     step_progress: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     #: Set when status == failed: which step failed and why.
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    #: When the batch entered the serial queue: the worker's claim order is
+    #: ``queued_at ASC, id ASC``. NULL until the batch has been queued once.
+    queued_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utcnow, nullable=False

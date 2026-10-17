@@ -31,9 +31,7 @@ class _RecordingAdapter implements HttpClientAdapter {
         bytes.addAll(chunk);
       }
     }
-    bodies.add(
-      bytes.isEmpty ? null : jsonDecode(utf8.decode(bytes)),
-    );
+    bodies.add(bytes.isEmpty ? null : jsonDecode(utf8.decode(bytes)));
     return ResponseBody.fromString(
       jsonEncode(payload),
       200,
@@ -48,8 +46,7 @@ class _RecordingAdapter implements HttpClientAdapter {
 }
 
 /// `path?query` as the endpoint contract writes it.
-String _target(Uri uri) =>
-    uri.hasQuery ? '${uri.path}?${uri.query}' : uri.path;
+String _target(Uri uri) => uri.hasQuery ? '${uri.path}?${uri.query}' : uri.path;
 
 void main() {
   late _RecordingAdapter adapter;
@@ -70,7 +67,10 @@ void main() {
 
     test('step catalog media type rides the query', () async {
       await api.stepCatalog('adobe_stock', mediaType: 'png');
-      expect(_target(adapter.requests.single), '/api/batches/steps?media_type=png');
+      expect(
+        _target(adapter.requests.single),
+        '/api/batches/steps?media_type=png',
+      );
     });
 
     test('batch list default limit is 50', () async {
@@ -103,14 +103,11 @@ void main() {
       await api.batchDetail('freepik', 'b-1');
       await api.runBatch('freepik', 'b-1');
 
-      expect(
-        adapter.requests.map<String>(_target).toList(),
-        <String>[
-          '/api/platforms/freepik/batches?limit=50',
-          '/api/platforms/freepik/batches/b-1',
-          '/api/platforms/freepik/batches/b-1/run',
-        ],
-      );
+      expect(adapter.requests.map<String>(_target).toList(), <String>[
+        '/api/platforms/freepik/batches?limit=50',
+        '/api/platforms/freepik/batches/b-1',
+        '/api/platforms/freepik/batches/b-1/run',
+      ]);
     });
   });
 
@@ -160,6 +157,34 @@ void main() {
         (body! as Map<String, Object?>).containsKey('profile_id'),
         isFalse,
       );
+      // Wizard parity: no files key unless the picker supplied them.
+      expect((body as Map<String, Object?>).containsKey('files'), isFalse);
+    });
+
+    test('create batch carries files for the picker flow', () async {
+      await api.createBatch(
+        'adobe_stock',
+        name: 'Picker run',
+        mediaType: 'raster',
+        steps: const <Map<String, Object?>>[],
+        files: <String>['a.jpg', 'sub/b.jpg'],
+      );
+
+      expect(_target(adapter.requests.single), '/api/batches');
+      expect(adapter.methods.single, 'POST');
+      expect(adapter.bodies.single, <String, Object?>{
+        'name': 'Picker run',
+        'media_type': 'raster',
+        'steps': <Object?>[],
+        'files': <Object?>['a.jpg', 'sub/b.jpg'],
+      });
+    });
+
+    test('queue posts to /queue with no body', () async {
+      await api.queueBatch('adobe_stock', 'b-7');
+      expect(_target(adapter.requests.single), '/api/batches/b-7/queue');
+      expect(adapter.methods.single, 'POST');
+      expect(adapter.bodies.single, isNull);
     });
 
     test('run posts to /run with no body', () async {

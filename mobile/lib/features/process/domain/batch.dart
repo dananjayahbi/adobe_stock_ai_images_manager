@@ -15,8 +15,8 @@ import 'batch_step.dart';
 ///   `BatchEventsClient.watchBatch`).
 ///
 /// Backend status vocabulary (models.py `BatchStatus` — 02 §6's
-/// `pending|succeeded` wording is stale, backend wins): `draft`, `running`,
-/// `completed`, `failed`, `cancelled`.
+/// `pending|succeeded` wording is stale, backend wins): `draft`, `queued`,
+/// `running`, `completed`, `failed`, `cancelled`.
 class Batch {
   const Batch({
     required this.id,
@@ -31,6 +31,7 @@ class Batch {
     required this.createdAt,
     required this.updatedAt,
     required this.finishedAt,
+    this.queuedAt,
   });
 
   /// Defensive parse of one `BatchResponse` object: missing fields fall back
@@ -43,8 +44,8 @@ class Batch {
       mediaType: _text(json['media_type']) == 'png' ? 'png' : 'raster',
       steps: _steps(json['steps']),
       profileId: _textOrNull(json['profile_id']),
-      // Backend emits draft|running|completed|failed|cancelled; anything
-      // unknown renders as draft rather than crashing a card.
+      // Backend emits draft|queued|running|completed|failed|cancelled;
+      // anything unknown renders as draft rather than crashing a card.
       status: _status(json['status']),
       stepProgress: _stepProgress(json['step_progress']),
       error: _textOrNull(json['error']),
@@ -52,6 +53,7 @@ class Batch {
       createdAt: _dateTime(json['created_at']),
       updatedAt: _dateTime(json['updated_at']),
       finishedAt: _dateTime(json['finished_at']),
+      queuedAt: _dateTime(json['queued_at']),
     );
   }
 
@@ -70,7 +72,7 @@ class Batch {
   /// `profile_id` — the step profile this batch was seeded from, if any.
   final String? profileId;
 
-  /// `status` — `draft|running|completed|failed|cancelled`.
+  /// `status` — `draft|queued|running|completed|failed|cancelled`.
   final String status;
 
   /// `step_progress` — `{step_key: {status, message, counts}} | null`,
@@ -92,7 +94,18 @@ class Batch {
   /// `finished_at` (ISO-8601) — null until a run ends.
   final DateTime? finishedAt;
 
+  /// `queued_at` (ISO-8601 | null) — set when the batch was enqueued;
+  /// drives the queue's FIFO ordering (M4 contract).
+  final DateTime? queuedAt;
+
   bool get isRunning => status == 'running';
+
+  /// Enqueued, waiting for a runner slot.
+  bool get isQueued => status == 'queued';
+
+  /// On the board right now — running or queued (list polling + detail
+  /// actions treat these alike).
+  bool get isActive => status == 'running' || status == 'queued';
 
   /// Terminal per backend `_BATCH_TERMINAL_STATUSES`.
   bool get isTerminal =>
@@ -156,6 +169,7 @@ class Batch {
   static String _status(Object? value) {
     const Set<String> known = <String>{
       'draft',
+      'queued',
       'running',
       'completed',
       'failed',
@@ -227,6 +241,7 @@ class BatchDetail extends Batch {
     required super.createdAt,
     required super.updatedAt,
     required super.finishedAt,
+    super.queuedAt,
     required this.records,
   });
 
@@ -265,6 +280,7 @@ class BatchDetail extends Batch {
       createdAt: batch.createdAt,
       updatedAt: batch.updatedAt,
       finishedAt: batch.finishedAt,
+      queuedAt: batch.queuedAt,
       records: records,
     );
   }
@@ -287,14 +303,14 @@ class BatchRecord {
   });
 
   factory BatchRecord.fromJson(Map<String, Object?> json) => BatchRecord(
-        id: json['id']?.toString() ?? '',
-        filename: json['filename']?.toString() ?? '',
-        thumbnailPath: json['thumbnail_path'] is String
-            ? json['thumbnail_path']! as String
-            : null,
-        stage: json['stage'] is String ? json['stage']! as String : null,
-        status: json['status']?.toString() ?? '',
-      );
+    id: json['id']?.toString() ?? '',
+    filename: json['filename']?.toString() ?? '',
+    thumbnailPath: json['thumbnail_path'] is String
+        ? json['thumbnail_path']! as String
+        : null,
+    stage: json['stage'] is String ? json['stage']! as String : null,
+    status: json['status']?.toString() ?? '',
+  );
 
   /// `id`.
   final String id;
@@ -334,9 +350,12 @@ class BatchList {
         }
       }
     }
-    return BatchList(items: items, total: json['total'] is num
-        ? (json['total']! as num).toInt()
-        : items.length);
+    return BatchList(
+      items: items,
+      total: json['total'] is num
+          ? (json['total']! as num).toInt()
+          : items.length,
+    );
   }
 
   /// `items`.

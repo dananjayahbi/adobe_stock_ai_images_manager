@@ -1,5 +1,7 @@
 """FastAPI application entry point."""
 
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,13 +9,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from config import settings
-from database import Base, engine
+from database import Base, SessionLocal, engine
+from services import batch_queue
 from services.filename_backfill import run_filename_backfill
 from services.legacy_storage_migration import run_legacy_storage_migration
 from services.metric_repair import run_metric_repairs
 from services.migrations import run_additive_migrations
 from services.pipeline_runner import recover_interrupted_batches
 from services.storage import create_data_directories
+
+logger = logging.getLogger(__name__)
+
+#: Strong references to boot-fired queue resumes so the event loop's GC cannot
+#: collect a worker task before it finishes draining a post-restart queue.
+_BOOT_QUEUE_TASKS: set[asyncio.Task] = set()
 
 
 @asynccontextmanager
@@ -42,7 +51,25 @@ async def lifespan(app: FastAPI):
     run_filename_backfill(engine)
     # Batch jobs live in memory: a restart orphans any batch left `running`,
     # which would read as a hung run forever and block re-runs. Fail them once.
+    # `queued` rows deliberately survive this — see the resume below.
     recover_interrupted_batches(engine)
+    # Serial batch queue: fire the worker for any `queued` rows the restart
+    # left behind. The lifespan has no FastAPI BackgroundTasks injection, so
+    # resume_on_boot() hands back a BackgroundTasks with the worker already
+    # scheduled (kicked) and we run it on our own loop — startup never blocks
+    # on a long queue. Guarded: a transient boot-read failure must not stop
+    # the server from coming up (the rows simply wait for the next kick).
+    try:
+        boot_tasks = batch_queue.resume_on_boot(SessionLocal, settings)
+    except Exception:  # noqa: BLE001
+        boot_tasks = None
+        logger.exception(
+            "Serial queue boot-resume check failed; queued batches wait for the next kick"
+        )
+    if boot_tasks is not None:
+        task = asyncio.create_task(boot_tasks())
+        _BOOT_QUEUE_TASKS.add(task)
+        task.add_done_callback(_BOOT_QUEUE_TASKS.discard)
     yield
     # Shutdown cleanup if needed
 
@@ -89,6 +116,7 @@ from routers.groups import router as groups_router
 from routers.gallery_files import router as gallery_files_router
 from routers.setup import router as setup_router
 from routers.promote import router as promote_router
+from routers.fs import router as fs_router
 from platforms.routers import router as platforms_router
 from routers.auth import router as auth_router
 
@@ -110,6 +138,7 @@ app.include_router(groups_router)
 app.include_router(gallery_files_router)
 app.include_router(setup_router)
 app.include_router(promote_router)
+app.include_router(fs_router)
 app.include_router(platforms_router)
 app.include_router(auth_router)
 

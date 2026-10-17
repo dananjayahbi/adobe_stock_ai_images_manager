@@ -11,6 +11,7 @@ import '../features/gallery/presentation/gallery_screen.dart';
 import '../features/platforms/presentation/coming_soon_screen.dart';
 import '../features/platforms/presentation/platform_hub_screen.dart';
 import '../features/process/presentation/batch_detail_screen.dart';
+import '../features/process/presentation/explorer/explorer_screen.dart';
 import '../features/process/presentation/new_batch_screen.dart';
 import '../features/process/presentation/process_screen.dart';
 import '../features/queue/presentation/queue_screen.dart';
@@ -28,18 +29,22 @@ import 'splash_screen.dart';
 ///
 /// `/splash`, `/login`, `/hub`, `/coming-soon/:platformId`, the M5 `/more/*`
 /// sub-screens (connections, editor, account, about), the full-screen
-/// `/error` and the root process routes `/process` (batch list — kept for
-/// "Back to batches"), `/process/new`, `/process/:batchId` live **outside**
-/// the [StatefulShellRoute] (no tab bar — 05 §1.2/§2.9/§2.11); the five
-/// tabs `/home`, `/gallery`, `/queue`, `/delivery`, `/more` sit in
+/// `/error` and `/delivery` (opened from the More page like the other
+/// settings rows — tabs hidden, system back pops) live **outside** the
+/// [StatefulShellRoute] (no tab bar — 05 §1.2/§2.9/§2.11); the five
+/// tabs `/home`, `/gallery`, `/queue`, `/process`, `/more` sit in
 /// indexed-stack branches with their own navigators (back stays in tab).
-/// `/gallery/:recordId` rides **inside** the gallery branch (R4): tabs stay
+/// The **Processes** branch (index [kProcessesBranchIndex]) owns the whole
+/// `/process` family: the list at its root, then `new`, `pick` (the source
+/// explorer) and `:batchId` nested beneath it, so the tab bar stays visible
+/// across list → wizard/picker/detail. `/gallery/:recordId` rides
+/// **inside** the gallery branch (R4): tabs stay
 /// visible while inspecting, Android back pops detail → grid within the
 /// branch, and jumping to another tab and returning restores the open
-/// detail page + list scroll. `/process/new` is declared before
-/// `/process/:batchId` so the literal `new` never becomes a batch id, and
-/// `/more/connections` before `/more/connections/:profileId` likewise. The
-/// `/more` tab is the M5 [SettingsScreen]; `/error` carries
+/// detail page + list scroll. Inside the Processes branch, `new` and `pick`
+/// are declared before `:batchId` so the literals never become a batch id,
+/// and `/more/connections` before `/more/connections/:profileId` likewise.
+/// The `/more` tab is the M5 [SettingsScreen]; `/error` carries
 /// `?reason=offline|server`.
 ///
 /// **Refresh mechanism.** A single [ValueNotifier] holding the current
@@ -105,18 +110,8 @@ GoRouter createRouter({
         builder: (context, state) => const AboutScreen(),
       ),
       GoRoute(
-        path: '/process',
-        builder: (context, state) => const ProcessScreen(),
-      ),
-      GoRoute(
-        path: '/process/new',
-        builder: (context, state) => const NewBatchScreen(),
-      ),
-      GoRoute(
-        path: '/process/:batchId',
-        builder: (context, state) => BatchDetailScreen(
-          batchId: state.pathParameters['batchId'] ?? '',
-        ),
+        path: '/delivery',
+        builder: (context, state) => const DeliveryScreen(),
       ),
       StatefulShellRoute.indexedStack(
         builder: (context, state, shell) => buildShell(context, state, shell),
@@ -150,8 +145,8 @@ GoRouter createRouter({
           ),
           StatefulShellBranch(
             routes: <RouteBase>[
-              // R4: the Queue tab replaces Process in the shell (batches
-              // stay reachable at /process*, outside the shell).
+              // R4: the Queue tab lives at index 2; batches ride their own
+              // Processes branch (index 3) beside it.
               GoRoute(
                 path: '/queue',
                 builder: (context, state) => const QueueScreen(),
@@ -160,9 +155,29 @@ GoRouter createRouter({
           ),
           StatefulShellBranch(
             routes: <RouteBase>[
+              // The Processes tab owns the whole /process family inside
+              // the shell (tab bar stays visible — list → wizard/picker/
+              // detail all ride this branch). Literal segments are
+              // declared before `:batchId` so they never parse as an id.
               GoRoute(
-                path: '/delivery',
-                builder: (context, state) => const DeliveryScreen(),
+                path: '/process',
+                builder: (context, state) => const ProcessScreen(),
+                routes: <RouteBase>[
+                  GoRoute(
+                    path: 'new',
+                    builder: (context, state) => const NewBatchScreen(),
+                  ),
+                  GoRoute(
+                    path: 'pick',
+                    builder: (context, state) => const ExplorerScreen(),
+                  ),
+                  GoRoute(
+                    path: ':batchId',
+                    builder: (context, state) => BatchDetailScreen(
+                      batchId: state.pathParameters['batchId'] ?? '',
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
@@ -184,9 +199,11 @@ GoRouter createRouter({
 ///
 /// * `unknown` → stay put — the splash probe owns bootstrap navigation.
 /// * `authenticated` → allowed at `/hub`, `/coming-soon/*`, `/error`
-///   (offline recovery, 05 §2.11), `/diagnostics` (connection triage) and
-///   the shell routes (tabs included —
-///   the `_shellRoots` prefix match also covers `/more/*` sub-screens);
+///   (offline recovery, 05 §2.11), `/diagnostics` (connection triage),
+///   `/delivery` (More → Delivery, outside the shell) and the shell
+///   routes (tabs included —
+///   the `_shellRoots` prefix match also covers `/more/*` sub-screens and
+///   the `/process/*` branch children);
 ///   anything else bounces to `/hub`
 ///   (covers authenticated-at-`/login`, and auto-advances `/splash`).
 /// * `unauthenticated` → anything but `/login` and `/diagnostics` bounces
@@ -196,8 +213,7 @@ const Set<String> _shellRoots = <String>{
   '/home',
   '/gallery', // prefix match also covers /gallery/:recordId (in-branch)
   '/queue',
-  '/process', // root batch routes: /process, /process/new, /process/:batchId
-  '/delivery',
+  '/process', // Processes branch: /process, new, pick, :batchId
   '/more',
 };
 
@@ -209,6 +225,7 @@ String? _redirect(AuthStatus status, String location) {
       final bool allowed = location == '/hub' ||
           location == '/error' ||
           location == '/diagnostics' ||
+          location == '/delivery' ||
           location.startsWith('/coming-soon/') ||
           _shellRoots.contains(location) ||
           _shellRoots.any((String root) => location.startsWith('$root/'));

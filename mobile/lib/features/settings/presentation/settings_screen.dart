@@ -74,6 +74,18 @@ class SettingsScreen extends ConsumerWidget {
               ),
             ),
             const SizedBox(height: AppSpacing.xl),
+            const LabelCaps(text: 'Transfer'),
+            const SizedBox(height: AppSpacing.sm),
+            AppCard(
+              padding: EdgeInsets.zero,
+              child: _NavRow(
+                icon: LucideIcons.send,
+                title: 'Delivery',
+                caption: 'CSV & bundle downloads',
+                onTap: () => context.push('/delivery'),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.xl),
             const LabelCaps(text: 'Account'),
             const SizedBox(height: AppSpacing.sm),
             AppCard(

@@ -105,6 +105,7 @@ flutter:
 flutter_launcher_icons:
   android: true
   ios: false
-  image_path: assets/logo/app_icon_1024.png
-  adaptive_icon_background: "#17110A"
-  adaptive_icon_foreground: assets/logo/app_icon_fg_1024.png
+  # Reference mark: REFERENCES/as-logo.png → tool/gen_logo_from_ref.py
+  image_path: assets/logo/app_icon_ref_1024.png
+  adaptive_icon_background: "#2A2017"
+  adaptive_icon_foreground: assets/logo/app_icon_ref_fg_1024.png

@@ -15,6 +15,10 @@ import 'package:ai_stock_studio/app/tab_placeholder.dart';
 import 'package:ai_stock_studio/app/theme/theme.dart';
 import 'package:ai_stock_studio/features/auth/presentation/auth_controller.dart';
 import 'package:ai_stock_studio/features/auth/presentation/login_screen.dart';
+import 'package:ai_stock_studio/features/dashboard/data/dashboard_repository_impl.dart';
+import 'package:ai_stock_studio/features/dashboard/domain/dashboard_repository.dart';
+import 'package:ai_stock_studio/features/dashboard/domain/dashboard_stats.dart';
+import 'package:ai_stock_studio/features/dashboard/presentation/dashboard_screen.dart';
 import 'package:ai_stock_studio/features/delivery/presentation/delivery_screen.dart';
 import 'package:ai_stock_studio/features/gallery/domain/gallery_group.dart';
 import 'package:ai_stock_studio/features/gallery/domain/gallery_page.dart';
@@ -29,8 +33,10 @@ import 'package:ai_stock_studio/features/platforms/domain/platform_repository.da
 import 'package:ai_stock_studio/features/platforms/presentation/platform_hub_screen.dart';
 import 'package:ai_stock_studio/features/process/domain/batch.dart';
 import 'package:ai_stock_studio/features/process/domain/batch_step.dart';
+import 'package:ai_stock_studio/features/process/domain/fs_repository.dart';
 import 'package:ai_stock_studio/features/process/domain/process_repository.dart';
 import 'package:ai_stock_studio/features/process/presentation/batch_detail_screen.dart';
+import 'package:ai_stock_studio/features/process/presentation/explorer/explorer_screen.dart';
 import 'package:ai_stock_studio/features/process/presentation/new_batch_screen.dart';
 import 'package:ai_stock_studio/features/process/presentation/process_screen.dart';
 import 'package:ai_stock_studio/features/queue/presentation/queue_indicator_bar.dart';
@@ -219,6 +225,65 @@ class _FakeSettingsRepository implements SettingsRepository {
   Future<String?> fetchUsername() async => 'admin';
 }
 
+/// Offline dashboard fake: the router tests only need `/home` to render its
+/// hero CTA (`New batch` → `/process/pick`) — one latest tile keeps the
+/// label unique (the empty-state CTA would double it).
+class _FakeDashboardRepository implements DashboardRepository {
+  @override
+  Future<StagesSummary> fetchStagesSummary(String platformId) async =>
+      const StagesSummary(
+        counts: <StageCount>[],
+        total: 0,
+        ready: 0,
+        rejected: 0,
+        incompatible: 0,
+      );
+
+  @override
+  Future<QueuesSummary> fetchQueuesSummary(String platformId) async =>
+      const QueuesSummary(counts: <String, int>{}, total: 0);
+
+  @override
+  Future<List<JobSummary>> fetchJobs(String platformId, {int limit = 10}) async =>
+      const <JobSummary>[];
+
+  @override
+  Future<List<LatestImage>> fetchLatest(
+    String platformId, {
+    int limit = 8,
+  }) async =>
+      const <LatestImage>[
+        LatestImage(
+          id: 'r1',
+          filename: 'wire_loop.jpg',
+          stage: 'METADATA_READY',
+        ),
+      ];
+}
+
+/// Configured-source fs fake: `/process/pick` renders its breadcrumbs plus
+/// the honest empty-folder note — no network, no Dio.
+class _FakeFsRepository implements FsRepository {
+  @override
+  Future<FsRoot> fetchRoot() async => const FsRoot(
+        configured: true,
+        path: 'C:/studio/source',
+        exists: true,
+      );
+
+  @override
+  Future<FsListing> fetchListing(String path) async => const FsListing(
+        path: '',
+        segments: <String>[],
+        parent: null,
+        dirs: <String>[],
+        files: <FsFile>[],
+      );
+
+  @override
+  String thumbUrl(String path) => '/fs/thumb?path=$path';
+}
+
 /// Redirect matrix for the M1+M2 routes (05 §1.2), driven through real
 /// [createRouter] instances so `refreshListenable` flips are covered too.
 void main() {
@@ -259,6 +324,9 @@ void main() {
           processRepositoryProvider.overrideWithValue(_FakeProcessRepository()),
           settingsRepositoryProvider
               .overrideWithValue(_FakeSettingsRepository()),
+          dashboardRepositoryProvider
+              .overrideWithValue(_FakeDashboardRepository()),
+          fsRepositoryProvider.overrideWithValue(_FakeFsRepository()),
           activeHealthProvider.overrideWith((Ref ref) async => true),
         ],
         child: MaterialApp.router(
@@ -433,6 +501,55 @@ void main() {
     expect(find.byType(ShellBottomNav), findsOneWidget);
   });
 
+  testWidgets('tab tap PROCESSES opens the batch list in its branch', (
+    WidgetTester tester,
+  ) async {
+    await pumpRouter(
+      tester,
+      initial: AuthStatus.authenticated,
+      location: '/queue',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.tap(find.text('PROCESSES'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(ProcessScreen), findsOneWidget);
+    expect(find.byType(QueueScreen), findsNothing); // branch swapped
+    expect(find.byType(ShellBottomNav), findsOneWidget);
+    expect(find.text('No batches yet'), findsOneWidget);
+  });
+
+  testWidgets('home hero New batch pushes the picker /process/pick (tabs '
+      'stay visible)', (WidgetTester tester) async {
+    await pumpRouter(
+      tester,
+      initial: AuthStatus.authenticated,
+      location: '/home',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 300)); // stats compose
+
+    expect(find.byType(DashboardScreen), findsOneWidget);
+    expect(find.byType(ShellBottomNav), findsOneWidget);
+    // Fake latest has one tile → the empty-state CTA stays hidden and the
+    // hero button is the only "New batch" on screen.
+    expect(find.text('New batch'), findsOneWidget);
+
+    await tester.ensureVisible(find.text('New batch'));
+    await tester.pump();
+    await tester.tap(find.text('New batch'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(ExplorerScreen), findsOneWidget);
+    expect(find.byType(ShellBottomNav), findsOneWidget); // tab bar kept
+    expect(find.text('Select images'), findsOneWidget);
+  });
+
   testWidgets('authenticated at /queue swaps the tab placeholder for the '
       'queue screen (R4)', (WidgetTester tester) async {
     await pumpRouter(
@@ -449,8 +566,8 @@ void main() {
     expect(find.text('Nothing queued'), findsOneWidget); // empty state
   });
 
-  testWidgets('authenticated at /process opens the batch list outside the '
-      'shell (removed from the tabs — R4)', (WidgetTester tester) async {
+  testWidgets('authenticated at /process opens the batch list in the '
+      'Processes branch (tabs visible)', (WidgetTester tester) async {
     await pumpRouter(
       tester,
       initial: AuthStatus.authenticated,
@@ -461,14 +578,13 @@ void main() {
 
     expect(find.byType(ProcessScreen), findsOneWidget);
     expect(find.byType(TabPlaceholder), findsNothing); // placeholder retired
-    // Root-level /process keeps "Back to batches" working, but the QUEUE
-    // tab replaced PROCESS in the shell (tabs hidden here).
-    expect(find.byType(ShellBottomNav), findsNothing);
+    // The PROCESSES tab (index 3) owns /process — the tab bar rides along.
+    expect(find.byType(ShellBottomNav), findsOneWidget);
     expect(find.text('No batches yet'), findsOneWidget); // fake empty state
   });
 
-  testWidgets('authenticated at /process/new opens the wizard outside the '
-      'shell (tabs hidden)', (WidgetTester tester) async {
+  testWidgets('authenticated at /process/new opens the wizard inside the '
+      'Processes branch (tabs visible)', (WidgetTester tester) async {
     await pumpRouter(
       tester,
       initial: AuthStatus.authenticated,
@@ -478,13 +594,14 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(find.byType(NewBatchScreen), findsOneWidget);
+    // The wizard covers the branch root below (element not built).
     expect(find.byType(ProcessScreen), findsNothing);
-    expect(find.byType(ShellBottomNav), findsNothing);
+    expect(find.byType(ShellBottomNav), findsOneWidget);
     expect(find.text('What are we processing?'), findsOneWidget);
   });
 
-  testWidgets('authenticated at /process/:batchId opens detail outside the '
-      'shell (tabs hidden)', (WidgetTester tester) async {
+  testWidgets('authenticated at /process/:batchId opens detail inside the '
+      'Processes branch (tabs visible)', (WidgetTester tester) async {
     await pumpRouter(
       tester,
       initial: AuthStatus.authenticated,
@@ -494,13 +611,32 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
 
     expect(find.byType(BatchDetailScreen), findsOneWidget);
-    expect(find.byType(ProcessScreen), findsNothing);
-    expect(find.byType(ShellBottomNav), findsNothing);
+    expect(find.byType(ProcessScreen), findsNothing); // covered below
+    expect(find.byType(ShellBottomNav), findsOneWidget);
     expect(find.text('Raster run'), findsOneWidget);
   });
 
-  testWidgets('authenticated at /delivery swaps the tab placeholder for the '
-      'delivery screen (M4)', (WidgetTester tester) async {
+  testWidgets('authenticated at /process/pick opens the source explorer in '
+      'the Processes branch (tabs visible)', (WidgetTester tester) async {
+    await pumpRouter(
+      tester,
+      initial: AuthStatus.authenticated,
+      location: '/process/pick',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 300)); // fs root fetch
+
+    expect(find.byType(ExplorerScreen), findsOneWidget);
+    expect(find.byType(ProcessScreen), findsNothing); // covered below
+    expect(find.byType(ShellBottomNav), findsOneWidget); // tab bar present
+    expect(find.text('Select images'), findsOneWidget); // app bar title
+    // Fake fs answers configured + empty → the honest empty-folder note.
+    expect(find.text('No images here'), findsOneWidget);
+  });
+
+  testWidgets('authenticated at /delivery opens the delivery screen OUTSIDE '
+      'the shell (tabs hidden — More-page target)', (WidgetTester tester) async {
     await pumpRouter(
       tester,
       initial: AuthStatus.authenticated,
@@ -511,7 +647,22 @@ void main() {
 
     expect(find.byType(DeliveryScreen), findsOneWidget);
     expect(find.byType(TabPlaceholder), findsNothing);
-    expect(find.byType(ShellBottomNav), findsOneWidget); // tab bar present
+    expect(find.byType(ShellBottomNav), findsNothing); // top-level route
+  });
+
+  testWidgets('unauthenticated at /delivery still bounces to /login', (
+    WidgetTester tester,
+  ) async {
+    await pumpRouter(
+      tester,
+      initial: AuthStatus.unauthenticated,
+      location: '/delivery',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(find.byType(LoginScreen), findsOneWidget);
+    expect(find.byType(DeliveryScreen), findsNothing);
   });
 
   testWidgets('authenticated at /more swaps the placeholder for the M5 '
@@ -528,6 +679,28 @@ void main() {
     expect(find.byType(TabPlaceholder), findsNothing);
     expect(find.byType(ShellBottomNav), findsOneWidget); // tab bar present
     expect(find.text('Connection profiles'), findsOneWidget);
+  });
+
+  testWidgets('More → Delivery row opens DeliveryScreen outside the shell '
+      '(tabs hidden)', (WidgetTester tester) async {
+    await pumpRouter(
+      tester,
+      initial: AuthStatus.authenticated,
+      location: '/more',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // Row may sit below the fold on the default test surface.
+    await tester.ensureVisible(find.text('Delivery'));
+    await tester.pump();
+    await tester.tap(find.text('Delivery'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.byType(DeliveryScreen), findsOneWidget);
+    expect(find.byType(SettingsScreen), findsNothing); // covered / popped
+    expect(find.byType(ShellBottomNav), findsNothing); // top-level route
   });
 
   testWidgets('authenticated at /more/connections opens the profile list '

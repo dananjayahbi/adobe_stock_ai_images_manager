@@ -16,8 +16,10 @@ export async function fetchStepCatalog(mediaType?: MediaType): Promise<StepCatal
   return data;
 }
 
-export async function listBatches(): Promise<{ items: Batch[]; total: number }> {
-  const { data } = await api.get("/api/batches");
+export async function listBatches(
+  limit = 50
+): Promise<{ items: Batch[]; total: number }> {
+  const { data } = await api.get("/api/batches", { params: { limit } });
   return data;
 }
 
@@ -69,6 +71,16 @@ export async function uploadToBatch(
 
 export async function runBatch(id: string): Promise<Batch> {
   const { data } = await api.post(`/api/batches/${id}/run`);
+  return data;
+}
+
+/**
+ * Enqueue a batch explicitly. Since the server queues runs serially, `/queue`
+ * and `/run` are the same enqueue call — Run is just the friendlier name for
+ * the first click, Queue for "get in line behind whatever is running".
+ */
+export async function queueBatch(id: string): Promise<Batch> {
+  const { data } = await api.post(`/api/batches/${id}/queue`);
   return data;
 }
 

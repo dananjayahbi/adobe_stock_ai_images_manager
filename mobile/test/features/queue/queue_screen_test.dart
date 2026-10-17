@@ -188,6 +188,79 @@ void main() {
     expect(find.text('Nothing queued'), findsOneWidget);
   });
 
+  testWidgets('Clear action hides while nothing is processed, clears '
+      'done/failed rows on tap, and leaves waiting/running alone', (
+    WidgetTester tester,
+  ) async {
+    await pumpScreen(tester);
+    final ProviderContainer scope = ProviderScope.containerOf(
+      tester.element(find.byType(QueueScreen)),
+    );
+    final QueueController controller = scope.read(queueProvider.notifier);
+
+    // Waiting-only queue: no dead Clear button in the AppBar.
+    expect(find.byTooltip('Clear processed items'), findsNothing);
+
+    await controller.enqueue('a', filename: 'a.jpg');
+    await controller.enqueue('b', filename: 'b.jpg');
+    await tester.pump();
+    expect(find.byTooltip('Clear processed items'), findsNothing);
+
+    await tester.tap(find.text('Start'));
+    await tester.pump();
+    await flush(tester);
+
+    // a succeeds (done), b is now running; d-style waiting stays via a
+    // third item enqueued pre-start would be picked up — enqueue after
+    // start with the runner alive also auto-picks up, so instead pause
+    // is not needed: we only need one waiting survivor. Enqueue c now
+    // while b is in flight: it waits.
+    await controller.enqueue('c', filename: 'c.jpg');
+    await tester.pump();
+
+    fake.succeed('a');
+    await flush(tester);
+    await tester.pump();
+    expect(scope.read(queueProvider).byId('a')!.status, QueueItemStatus.done);
+    // One done row → the Clear action exists.
+    expect(find.byTooltip('Clear processed items'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Clear processed items'));
+    await tester.pump();
+    await flush(tester);
+
+    // done row gone; running (b) and waiting (c) untouched.
+    expect(scope.read(queueProvider).byId('a'), isNull);
+    expect(scope.read(queueProvider).byId('b')!.status, QueueItemStatus.running);
+    expect(scope.read(queueProvider).byId('c')!.status, QueueItemStatus.waiting);
+    expect(find.text('a.jpg'), findsNothing);
+    expect(find.text('b.jpg'), findsOneWidget);
+    expect(find.text('c.jpg'), findsOneWidget);
+    // Nothing terminal left → button hidden again (no dead button).
+    expect(find.byTooltip('Clear processed items'), findsNothing);
+
+    // Fail b → failed row re-enables Clear; c picked up as running.
+    fake.fail('b', NetworkishFailure());
+    await flush(tester);
+    await tester.pump();
+    expect(
+      scope.read(queueProvider).byId('b')!.status,
+      QueueItemStatus.failed,
+    );
+    expect(find.byTooltip('Clear processed items'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('Clear processed items'));
+    await tester.pump();
+    await flush(tester);
+    expect(scope.read(queueProvider).byId('b'), isNull);
+    // The running/waiting c line survives a second clear.
+    expect(
+      scope.read(queueProvider).byId('c')!.status,
+      QueueItemStatus.running,
+    );
+    expect(find.byTooltip('Clear processed items'), findsNothing);
+  });
+
   group('QueueIndicatorBar (R3)', () {
     Future<void> pumpIndicator(
       WidgetTester tester,

@@ -288,6 +288,41 @@ class TestRunPreconditions:
         assert response.status_code == 409
         assert "image" in response.json()["detail"].lower()
 
+    def test_queue_without_images_is_409(self, client):
+        batch = _create_batch(client, steps=[{"key": "ocr"}])
+        response = client.post(f"/api/batches/{batch['id']}/queue")
+        assert response.status_code == 409
+        assert "image" in response.json()["detail"].lower()
+
+    def test_queue_on_running_is_409(self, client, db_session_factory):
+        batch = _create_batch(client, steps=[{"key": "ocr"}])
+        session = db_session_factory()
+        row = session.get(Batch, batch["id"])
+        row.status = "running"
+        session.commit()
+        session.close()
+
+        response = client.post(f"/api/batches/{batch['id']}/queue")
+        assert response.status_code == 409
+        assert "already running" in response.json()["detail"]
+
+    def test_queue_on_queued_is_409_for_both_run_paths(
+        self, client, db_session_factory
+    ):
+        batch = _create_batch(client, steps=[{"key": "ocr"}])
+        session = db_session_factory()
+        row = session.get(Batch, batch["id"])
+        row.status = "queued"
+        session.commit()
+        session.close()
+
+        assert client.post(
+            f"/api/batches/{batch['id']}/queue"
+        ).status_code == 409
+        assert client.post(
+            f"/api/batches/{batch['id']}/run"
+        ).status_code == 409
+
     def test_cancel_on_draft_is_409(self, client):
         batch = _create_batch(client, steps=[{"key": "ocr"}])
         assert client.post(f"/api/batches/{batch['id']}/cancel").status_code == 409

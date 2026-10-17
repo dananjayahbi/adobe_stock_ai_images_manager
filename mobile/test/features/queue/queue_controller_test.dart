@@ -208,6 +208,78 @@ void main() {
     expect(container.read(queueProvider).byId('b'), isNull);
   });
 
+  test('clearProcessed drops done/failed only and persists the pruned '
+      'deque (waiting/running survive)', () async {
+    final ProviderContainer container = await makeContainer();
+    addTearDown(container.dispose);
+    final QueueController controller = container.read(queueProvider.notifier);
+
+    // a done, b failed, c running (in flight), d waiting — all four
+    // statuses live at once so the filter is unambiguous.
+    await controller.enqueue('a', filename: 'a.jpg');
+    await controller.enqueue('b', filename: 'b.jpg');
+    await controller.enqueue('c', filename: 'c.jpg');
+    await controller.enqueue('d', filename: 'd.jpg');
+    await controller.start();
+    await flush();
+    fake.succeed('a');
+    await flush();
+    fake.fail('b', const ValidationException(message: 'OCR blocks promote.'));
+    await flush();
+
+    QueueState state = container.read(queueProvider);
+    expect(state.byId('a')!.status, QueueItemStatus.done);
+    expect(state.byId('b')!.status, QueueItemStatus.failed);
+    expect(state.byId('c')!.status, QueueItemStatus.running);
+    expect(state.byId('d')!.status, QueueItemStatus.waiting);
+    expect(state.currentId, 'c');
+
+    await controller.clearProcessed();
+    await flush();
+
+    state = container.read(queueProvider);
+    expect(state.byId('a'), isNull); // done → cleared
+    expect(state.byId('b'), isNull); // failed → cleared
+    expect(state.byId('c')!.status, QueueItemStatus.running); // never touched
+    expect(state.byId('d')!.status, QueueItemStatus.waiting); // never touched
+    expect(state.currentId, 'c'); // in-flight id preserved
+    expect(state.runner, QueueRunnerStatus.running);
+
+    // Persistence called: the stored snapshot is already the pruned one,
+    // so a restart cannot resurrect the cleared rows.
+    final String? raw = prefs.getString(QueueStorage.kQueueStorageKey);
+    expect(raw, isNotNull);
+    final QueueState persisted = decodeQueueSnapshot(raw!);
+    expect(
+      persisted.items.map((QueueItem item) => item.recordId).toList(),
+      <String>['c', 'd'],
+    );
+
+    // The in-flight promote continues uninterrupted after the clear.
+    fake.succeed('c');
+    await flush();
+    state = container.read(queueProvider);
+    expect(state.byId('c')!.status, QueueItemStatus.done);
+    expect(state.currentId, 'd');
+  });
+
+  test('clearProcessed on a queue without processed items is a no-op', () async {
+    final ProviderContainer container = await makeContainer();
+    addTearDown(container.dispose);
+    final QueueController controller = container.read(queueProvider.notifier);
+
+    await controller.enqueue('w', filename: 'w.jpg');
+    final QueueState before = container.read(queueProvider);
+
+    await controller.clearProcessed();
+    await flush();
+
+    final QueueState after = container.read(queueProvider);
+    expect(identical(before, after), isTrue); // no commit happened
+    expect(after.items, hasLength(1));
+    expect(after.byId('w')!.status, QueueItemStatus.waiting);
+  });
+
   test('persistence round-trip: waiting items survive, restart maps '
       'running → paused (documented policy)', () async {
     // Phase 1 — a live container writes its deque to SharedPreferences.

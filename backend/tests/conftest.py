@@ -34,6 +34,22 @@ def isolated_app_settings(tmp_path, monkeypatch):
     return store
 
 
+@pytest.fixture(autouse=True)
+def no_boot_queue_resume(monkeypatch):
+    """Keep the lifespan's serial-queue boot resume out of the real database.
+
+    The lifespan runs before (and outside) the ``client`` fixture's dependency
+    overrides, so a leftover ``queued`` row in the developer's real store would
+    start a real pipeline in a background thread mid-suite. Tests that care
+    about resume call the real ``resume_on_boot`` directly with the test
+    factory (captured at import, before this patch applies).
+    """
+    from services import batch_queue
+
+    monkeypatch.setattr(batch_queue, "resume_on_boot", lambda db_factory, cfg: None)
+    yield
+
+
 @pytest.fixture()
 def db_session_factory():
     """In-memory SQLite session factory isolated per test."""

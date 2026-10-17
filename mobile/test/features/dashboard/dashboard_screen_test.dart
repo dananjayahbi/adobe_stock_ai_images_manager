@@ -258,10 +258,7 @@ void main() {
       matching: find.byType(StatTile),
     );
     expect(tile, findsOneWidget);
-    expect(
-      find.descendant(of: tile, matching: find.text('0')),
-      findsOneWidget,
-    );
+    expect(find.descendant(of: tile, matching: find.text('0')), findsOneWidget);
 
     // Backend starts shipping state_counts — refresh swaps the value.
     repo.stagesValue = const StagesSummary(
@@ -297,6 +294,9 @@ void main() {
 
     expect(find.text('No images yet — start a batch'), findsOneWidget);
     expect(find.text('161'), findsOneWidget); // stats still live
+    // Both CTAs exist: hero + empty-state action (each opens the picker
+    // route — navigation is wired in the integrator pass, so no tap here).
+    expect(find.text('New batch'), findsNWidgets(2));
   });
 
   testWidgets('success: running-job card + hero actions', (
@@ -322,7 +322,9 @@ void main() {
     final SemanticsHandle semantics = tester.ensureSemantics();
     expect(find.bySemanticsLabel('Wire loop sculpting tool'), findsOneWidget);
     expect(find.bySemanticsLabel('Oak table on white'), findsOneWidget);
-    await tester.ensureVisible(find.bySemanticsLabel('Wire loop sculpting tool'));
+    await tester.ensureVisible(
+      find.bySemanticsLabel('Wire loop sculpting tool'),
+    );
     await tester.pump();
     await tester.tap(find.bySemanticsLabel('Wire loop sculpting tool'));
     await tester.pump();
@@ -331,15 +333,14 @@ void main() {
     await tester.pump(const Duration(seconds: 3)); // let the toast timer fire
     semantics.dispose();
 
-    // New batch stays visible with an honest M4 toast (no dead nav).
+    // New batch opens the picker route (`/process/pick`, wired later by the
+    // integrator) — assert the CTA exists; tapping without a GoRouter would
+    // throw, and navigation itself is intentionally untested for now.
     await tester.ensureVisible(find.text('New batch'));
     await tester.pump();
-    await tester.tap(find.text('New batch'));
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 450));
-    expect(find.text('Batch wizard arrives with M4'), findsOneWidget);
-    expect(find.text('NOTICE'), findsOneWidget);
-    await tester.pump(const Duration(seconds: 3)); // clear the pending timer
-    expect(find.text('Batch wizard arrives with M4'), findsNothing);
+    expect(
+      find.text('New batch'),
+      findsOneWidget,
+    ); // hero only (latest non-empty)
   });
 }

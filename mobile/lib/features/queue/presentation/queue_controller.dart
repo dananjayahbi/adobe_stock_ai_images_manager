@@ -137,6 +137,34 @@ class QueueController extends Notifier<QueueState> {
     await _persist();
   }
 
+  /// Drop every terminal line — status [QueueItemStatus.done] OR
+  /// [QueueItemStatus.failed] — in one shot. Waiting and running items
+  /// (and the in-flight [QueueState.currentId] record) are never touched.
+  /// One `_commit` + one `_persist`, mirroring [remove]: persistence is
+  /// mandatory or the cleared rows resurrect after a restart.
+  Future<void> clearProcessed() async {
+    if (_disposed) {
+      return;
+    }
+    final List<QueueItem> items = List<QueueItem>.of(state.items)
+      ..removeWhere(
+        (QueueItem queueItem) =>
+            queueItem.status == QueueItemStatus.done ||
+            queueItem.status == QueueItemStatus.failed,
+      );
+    if (items.length == state.items.length) {
+      return; // nothing terminal to clear — no commit, no write
+    }
+    _commit(
+      QueueState(
+        items: items,
+        runner: state.runner,
+        currentId: state.currentId,
+      ),
+    );
+    await _persist();
+  }
+
   /// Start (or resume) the runner: `running` when work waits, `waiting`
   /// when the queue is empty (the runner stays alive either way).
   Future<void> start() async {

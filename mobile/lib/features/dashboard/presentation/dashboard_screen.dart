@@ -39,7 +39,9 @@ class DashboardScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final String platformId = ref.watch(activePlatformIdProvider);
-    final AsyncValue<DashboardStats> stats = ref.watch(dashboardControllerProvider(platformId));
+    final AsyncValue<DashboardStats> stats = ref.watch(
+      dashboardControllerProvider(platformId),
+    );
     // Resume revalidation (03 §4): refresh this tab's controllers when the
     // app returns to the foreground — container-based, so the stored hook
     // outlives this element.
@@ -51,19 +53,33 @@ class DashboardScreen extends ConsumerWidget {
     return Scaffold(
       body: SafeArea(
         child: RefreshIndicator(
-          onRefresh: () => ref.read(dashboardControllerProvider(platformId).notifier).refreshAll(),
+          onRefresh: () => ref
+              .read(dashboardControllerProvider(platformId).notifier)
+              .refreshAll(),
           child: CustomScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: <Widget>[
               const SliverToBoxAdapter(child: ConnectionProfileBanner()),
               SliverPadding(
-                padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, AppSpacing.xxl),
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  AppSpacing.lg,
+                  AppSpacing.lg,
+                  AppSpacing.xxl,
+                ),
                 sliver: SliverToBoxAdapter(
                   child: AsyncView<DashboardStats>(
                     data: stats,
-                    loading: _body(context, ref, platformId, const DashboardStats.loading()),
-                    onRetry: () => ref.invalidate(dashboardControllerProvider(platformId)),
-                    builder: (DashboardStats value) => _body(context, ref, platformId, value),
+                    loading: _body(
+                      context,
+                      ref,
+                      platformId,
+                      const DashboardStats.loading(),
+                    ),
+                    onRetry: () =>
+                        ref.invalidate(dashboardControllerProvider(platformId)),
+                    builder: (DashboardStats value) =>
+                        _body(context, ref, platformId, value),
                   ),
                 ),
               ),
@@ -74,8 +90,15 @@ class DashboardScreen extends ConsumerWidget {
     );
   }
 
-  Widget _body(BuildContext context, WidgetRef ref, String platformId, DashboardStats stats) {
-    final DashboardController controller = ref.read(dashboardControllerProvider(platformId).notifier);
+  Widget _body(
+    BuildContext context,
+    WidgetRef ref,
+    String platformId,
+    DashboardStats stats,
+  ) {
+    final DashboardController controller = ref.read(
+      dashboardControllerProvider(platformId).notifier,
+    );
     final JobSummary? activeJob = stats.activeJob;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -88,7 +111,9 @@ class DashboardScreen extends ConsumerWidget {
         if (stats.jobs case SectionLoading<List<JobSummary>>()) ...<Widget>[
           const SizedBox(height: AppSpacing.xl),
           const AppCard(child: RunningJobSkeleton()),
-        ] else if (stats.jobs case SectionError<List<JobSummary>>(:final error)) ...<Widget>[
+        ] else if (stats.jobs case SectionError<List<JobSummary>>(
+          :final error,
+        )) ...<Widget>[
           const SizedBox(height: AppSpacing.xl),
           ErrorView(
             message: _messageFor(error),
@@ -113,19 +138,24 @@ class DashboardScreen extends ConsumerWidget {
           const LabelCaps(text: 'A local pipeline for Adobe Stock'),
           const SizedBox(height: AppSpacing.md),
           Text.rich(
-            TextSpan(children: <InlineSpan>[
-              TextSpan(text: 'Process images in ', style: textTheme.displaySmall),
-              TextSpan(
-                text: 'batches',
-                style: GoogleFonts.ebGaramond(
-                  fontSize: 36,
-                  height: 1.2,
-                  fontWeight: FontWeight.w600,
-                  fontStyle: FontStyle.italic,
-                  color: AppColors.oxblood400,
+            TextSpan(
+              children: <InlineSpan>[
+                TextSpan(
+                  text: 'Process images in ',
+                  style: textTheme.displaySmall,
                 ),
-              ),
-            ]),
+                TextSpan(
+                  text: 'batches',
+                  style: GoogleFonts.ebGaramond(
+                    fontSize: 36,
+                    height: 1.2,
+                    fontWeight: FontWeight.w600,
+                    fontStyle: FontStyle.italic,
+                    color: AppColors.oxblood400,
+                  ),
+                ),
+              ],
+            ),
             textAlign: TextAlign.center,
           ),
           const SizedBox(height: AppSpacing.md),
@@ -133,7 +163,10 @@ class DashboardScreen extends ConsumerWidget {
             'Choose raster photos or transparent cut-outs, pick exactly the '
             'steps you need, and run the whole pipeline in one go.',
             textAlign: TextAlign.center,
-            style: textTheme.bodyMedium?.copyWith(color: AppColors.ink600, height: 1.5),
+            style: textTheme.bodyMedium?.copyWith(
+              color: AppColors.ink600,
+              height: 1.5,
+            ),
           ),
           const SizedBox(height: AppSpacing.lg),
           Wrap(
@@ -143,7 +176,7 @@ class DashboardScreen extends ConsumerWidget {
             children: <Widget>[
               PrimaryButton(
                 label: 'New batch',
-                onPressed: () => showAppToast(context, 'Batch wizard arrives with M4'),
+                onPressed: () => context.push('/process/pick'),
               ),
               SecondaryButton(
                 label: 'Open gallery',
@@ -258,10 +291,13 @@ class DashboardScreen extends ConsumerWidget {
   /// grid has an odd cell left, so the trailing tile stays half-width like
   /// its peers instead of stretching.
   Widget _gridRow(Widget a, Widget b) => Row(
-        spacing: AppSpacing.md,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: <Widget>[Expanded(child: a), Expanded(child: b)],
-      );
+    spacing: AppSpacing.md,
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: <Widget>[
+      Expanded(child: a),
+      Expanded(child: b),
+    ],
+  );
 
   /// One cell folded from its section state: skeleton / inline error / tile.
   Widget _statCell<T>(
@@ -274,12 +310,12 @@ class DashboardScreen extends ConsumerWidget {
       SectionLoading<T>() => const StatTileSkeleton(),
       SectionData<T>(:final value) => data(value),
       SectionError<T>(:final error) => AppCard(
-          padding: EdgeInsets.zero,
-          child: ErrorView(
-            message: _messageFor(error),
-            onRetry: () => controller.retrySection(section),
-          ),
+        padding: EdgeInsets.zero,
+        child: ErrorView(
+          message: _messageFor(error),
+          onRetry: () => controller.retrySection(section),
         ),
+      ),
     };
   }
 
@@ -301,7 +337,11 @@ class DashboardScreen extends ConsumerWidget {
 
   // ------------------------------------------------------------- latest ---
 
-  Widget _latestSection(BuildContext context, DashboardStats stats, DashboardController controller) {
+  Widget _latestSection(
+    BuildContext context,
+    DashboardStats stats,
+    DashboardController controller,
+  ) {
     final Widget heading = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
@@ -313,32 +353,37 @@ class DashboardScreen extends ConsumerWidget {
     final Widget body = switch (stats.latest) {
       SectionLoading<List<LatestImage>>() => const LatestGridSkeleton(),
       SectionError<List<LatestImage>>(:final error) => ErrorView(
-          message: _messageFor(error),
-          onRetry: () => controller.retrySection(DashboardSection.latest),
-        ),
-      SectionData<List<LatestImage>>(:final value) when value.isEmpty => EmptyState(
+        message: _messageFor(error),
+        onRetry: () => controller.retrySection(DashboardSection.latest),
+      ),
+      SectionData<List<LatestImage>>(:final value) when value.isEmpty =>
+        EmptyState(
           title: 'No images yet — start a batch',
           message: 'Run the pipeline once and the ledger fills up here.',
           action: PrimaryButton(
             label: 'New batch',
-            onPressed: () => showAppToast(context, 'Batch wizard arrives with M4'),
+            onPressed: () => context.push('/process/pick'),
           ),
         ),
       SectionData<List<LatestImage>>(:final value) => GridView.count(
-          crossAxisCount: 2,
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          mainAxisSpacing: AppSpacing.md,
-          crossAxisSpacing: AppSpacing.md,
-          childAspectRatio: 1,
-          children: <Widget>[
-            for (final LatestImage image in value) _latestTile(context, image),
-          ],
-        ),
+        crossAxisCount: 2,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        mainAxisSpacing: AppSpacing.md,
+        crossAxisSpacing: AppSpacing.md,
+        childAspectRatio: 1,
+        children: <Widget>[
+          for (final LatestImage image in value) _latestTile(context, image),
+        ],
+      ),
     };
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[heading, const SizedBox(height: AppSpacing.md), body],
+      children: <Widget>[
+        heading,
+        const SizedBox(height: AppSpacing.md),
+        body,
+      ],
     );
   }
 
@@ -355,7 +400,11 @@ class DashboardScreen extends ConsumerWidget {
               : const ColoredBox(
                   color: AppColors.parchment200,
                   child: Center(
-                    child: Icon(LucideIcons.imageOff, size: 24, color: AppColors.ink400),
+                    child: Icon(
+                      LucideIcons.imageOff,
+                      size: 24,
+                      color: AppColors.ink400,
+                    ),
                   ),
                 ),
         ),
@@ -367,7 +416,9 @@ class DashboardScreen extends ConsumerWidget {
 
   Widget _runningJobCard(BuildContext context, JobSummary job) {
     // A fresh job can report 0 progress — slide until a real fraction exists.
-    final double? fraction = job.total > 0 && job.progress > 0 ? job.progress : null;
+    final double? fraction = job.total > 0 && job.progress > 0
+        ? job.progress
+        : null;
     return AppCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -385,7 +436,9 @@ class DashboardScreen extends ConsumerWidget {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 2),
-                    LabelCaps(text: '${job.processed} of ${job.total} · ${job.stage}'),
+                    LabelCaps(
+                      text: '${job.processed} of ${job.total} · ${job.stage}',
+                    ),
                   ],
                 ),
               ),
@@ -401,7 +454,7 @@ class DashboardScreen extends ConsumerWidget {
   }
 
   String? _messageFor(Object error) => switch (error) {
-        AppException() => uiMessageFor(error),
-        _ => null,
-      };
+    AppException() => uiMessageFor(error),
+    _ => null,
+  };
 }

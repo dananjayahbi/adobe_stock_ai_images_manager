@@ -103,6 +103,9 @@ class _GalleryFilterBarState extends State<GalleryFilterBar> {
           TextField(
             controller: _search,
             onChanged: _onSearchChanged,
+            // The gallery must never grab the keyboard on entry — the web
+            // gallery had this exact autofocus bug; we pin it here too.
+            autofocus: false,
             style: const TextStyle(fontSize: 13),
             decoration: const InputDecoration(
               hintText: 'Search…',

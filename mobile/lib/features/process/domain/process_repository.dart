@@ -18,6 +18,45 @@ final processRepositoryProvider = Provider<ProcessRepository>((ref) {
   return ProcessRepositoryImpl(ref.watch(dioProvider), platformId);
 });
 
+/// File-picker command surface layered **on top of** [ProcessRepository]
+/// (M4): a `files`-importing `createBatch` plus `queueBatch`.
+///
+/// It lives in a separate interface so out-of-domain fakes of the plain
+/// list/detail contract (router tests, list screens) keep compiling
+/// untouched — implementations of the base interface never see the new
+/// members. [processPickerProvider] hands the same instance to picker code:
+/// it downcasts the shared [processRepositoryProvider] when it can (every
+/// production build and every picker-capable fake) and only then falls back
+/// to a fresh [ProcessRepositoryImpl].
+abstract class ProcessPickerRepository implements ProcessRepository {
+  /// `POST batches` with `files: [relpath]` — the server imports the
+  /// source-folder-relative images into the new draft batch.
+  @override
+  Future<Batch> createBatch({
+    required String name,
+    required String mediaType,
+    required List<BatchStep> steps,
+    String? profileId,
+    List<String>? files,
+  });
+
+  /// `POST batches/{id}/queue` → 200 enqueues (409 when running / queued,
+  /// no images, or no steps).
+  Future<Batch> queueBatch(String batchId);
+}
+
+/// Picker-flow commands: the shared repository when it implements
+/// [ProcessPickerRepository] (production impl + picker fakes), otherwise a
+/// standalone impl over the same Dio/platform wiring.
+final processPickerProvider = Provider<ProcessPickerRepository>((ref) {
+  final ProcessRepository repo = ref.watch(processRepositoryProvider);
+  if (repo is ProcessPickerRepository) {
+    return repo;
+  }
+  final String platformId = ref.watch(activePlatformIdProvider);
+  return ProcessRepositoryImpl(ref.watch(dioProvider), platformId);
+});
+
 /// Contract for the batch pipeline API (02 §6, backend `batches.py` +
 /// `step_profiles.py`). Implemented by `ProcessRepositoryImpl`.
 abstract class ProcessRepository {
@@ -31,6 +70,9 @@ abstract class ProcessRepository {
   Future<BatchDetail> fetchBatchDetail(String batchId);
 
   /// `POST platformPath(id, 'batches')` → 201 `BatchResponse` (draft).
+  ///
+  /// The wizard's payload; flows that import `files` go through
+  /// [ProcessPickerRepository.createBatch].
   Future<Batch> createBatch({
     required String name,
     required String mediaType,

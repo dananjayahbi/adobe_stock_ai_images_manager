@@ -47,8 +47,9 @@ class BatchDetailScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final AsyncValue<BatchDetail> detailAsync =
-        ref.watch(batchDetailProvider(batchId));
+    final AsyncValue<BatchDetail> detailAsync = ref.watch(
+      batchDetailProvider(batchId),
+    );
     final BatchEventsState events = ref.watch(batchEventsProvider(batchId));
     return Scaffold(
       appBar: AppBar(title: const Text('Batch')),
@@ -68,12 +69,7 @@ class BatchDetailScreen extends ConsumerWidget {
     BatchEventsState events,
   ) {
     if (events.error != null) {
-      return _failure(
-        context,
-        ref,
-        message: events.error!,
-        gone: events.gone,
-      );
+      return _failure(context, ref, message: events.error!, gone: events.gone);
     }
     final BatchDetail? detail = detailAsync.value;
     if (detail == null) {
@@ -90,8 +86,9 @@ class BatchDetailScreen extends ConsumerWidget {
     }
     final Batch? liveBatch = events.latest?.batch;
     final Batch batch = liveBatch ?? detail;
-    final List<BatchRecord> records =
-        liveBatch is BatchDetail ? liveBatch.records : detail.records;
+    final List<BatchRecord> records = liveBatch is BatchDetail
+        ? liveBatch.records
+        : detail.records;
     return RefreshIndicator(
       onRefresh: () async {
         ref.invalidate(batchDetailProvider(batchId));
@@ -173,16 +170,34 @@ class BatchDetailScreen extends ConsumerWidget {
         ],
         if (batch.status == 'failed' && batch.error != null) ...<Widget>[
           const SizedBox(height: AppSpacing.sm),
-          Text(batch.error!, style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.rust400)),
+          Text(
+            batch.error!,
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: AppColors.rust400),
+          ),
         ],
         const SizedBox(height: AppSpacing.md),
-        Wrap(spacing: AppSpacing.sm, runSpacing: AppSpacing.sm, children: <Widget>[
+        Wrap(
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.sm,
+          children: <Widget>[
             if (offline)
-              Row(mainAxisSize: MainAxisSize.min, children: <Widget>[
-                const Icon(LucideIcons.wifiOff, size: 14, color: AppColors.rust400),
-                const SizedBox(width: AppSpacing.xs),
-                Text('Offline — actions disabled. Pull to refresh.', style: Theme.of(context).textTheme.bodySmall?.copyWith(color: AppColors.rust400)),
-              ]),
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: <Widget>[
+                  const Icon(
+                    LucideIcons.wifiOff,
+                    size: 14,
+                    color: AppColors.rust400,
+                  ),
+                  const SizedBox(width: AppSpacing.xs),
+                  Text(
+                    'Offline — actions disabled. Pull to refresh.',
+                    style: Theme.of(context).textTheme.bodySmall
+                        ?.copyWith(color: AppColors.rust400),
+                  ),
+                ],
+              ),
             if (batch.status == 'draft' ||
                 batch.status == 'failed' ||
                 batch.status == 'cancelled')
@@ -193,7 +208,10 @@ class BatchDetailScreen extends ConsumerWidget {
                   onPressed: () => _run(context, ref, batch),
                 ),
               ),
-            if (batch.isRunning)
+            // Stop doubles as "leave the queue" for queued batches (M4:
+            // cancel works on both states); Run stays reserved for
+            // draft/failed/cancelled above — never while queued|running.
+            if (batch.isActive)
               _offlineGuard(
                 offline,
                 SecondaryButton(
@@ -218,36 +236,43 @@ class BatchDetailScreen extends ConsumerWidget {
       : child;
 
   Widget _timeline(BuildContext context, WidgetRef ref, Batch batch) {
-    final StepCatalog? catalog = ref.watch(stepCatalogProvider(batch.mediaType)).value;
-    return StepTimeline(steps: batch.steps, progress: batch.stepProgress, catalog: catalog);
+    final StepCatalog? catalog = ref
+        .watch(stepCatalogProvider(batch.mediaType))
+        .value;
+    return StepTimeline(
+      steps: batch.steps,
+      progress: batch.stepProgress,
+      catalog: catalog,
+    );
   }
 
   Widget _results(List<BatchRecord> records) => GridView.builder(
-        shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-          crossAxisCount: 3,
-          mainAxisSpacing: AppSpacing.sm,
-          crossAxisSpacing: AppSpacing.sm,
-        ),
-        itemCount: records.length,
-        itemBuilder: (BuildContext context, int index) {
-          final BatchRecord record = records[index];
-          final String path = record.thumbnailPath ?? record.filename;
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: <Widget>[
-              Expanded(child: Thumbnail(path: path)),
-              Text(
-                record.filename,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.labelSmall?.copyWith(color: AppColors.ink400),
-              ),
-            ],
-          );
-        },
+    shrinkWrap: true,
+    physics: const NeverScrollableScrollPhysics(),
+    gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+      crossAxisCount: 3,
+      mainAxisSpacing: AppSpacing.sm,
+      crossAxisSpacing: AppSpacing.sm,
+    ),
+    itemCount: records.length,
+    itemBuilder: (BuildContext context, int index) {
+      final BatchRecord record = records[index];
+      final String path = record.thumbnailPath ?? record.filename;
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          Expanded(child: Thumbnail(path: path)),
+          Text(
+            record.filename,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.labelSmall
+                ?.copyWith(color: AppColors.ink400),
+          ),
+        ],
       );
+    },
+  );
 
   Widget _failure(
     BuildContext context,
@@ -259,19 +284,32 @@ class BatchDetailScreen extends ConsumerWidget {
       return Center(
         child: Padding(
           padding: const EdgeInsets.all(AppSpacing.xl),
-          child:           EmptyState(
+          child: EmptyState(
             title: message,
             message: 'The studio may have restarted. Your batches are safe.',
             icon: LucideIcons.circleAlert,
-            action: SecondaryButton(label: 'Back to batches', onPressed: () => context.go('/process')),
+            action: SecondaryButton(
+              label: 'Back to batches',
+              onPressed: () => context.go('/process'),
+            ),
           ),
         ),
       );
     }
-    return ErrorView(message: message, onRetry: () => ref.read(batchEventsProvider(batchId).notifier).retry());
+    return ErrorView(
+      message: message,
+      onRetry: () => ref.read(batchEventsProvider(batchId).notifier).retry(),
+    );
   }
 
-  Widget _skeletons() => ListView(padding: const EdgeInsets.all(AppSpacing.md), children: const <Widget>[SkeletonLoader(height: 72), SkeletonLoader(height: 140), SkeletonLoader(height: 140)]);
+  Widget _skeletons() => ListView(
+    padding: const EdgeInsets.all(AppSpacing.md),
+    children: const <Widget>[
+      SkeletonLoader(height: 72),
+      SkeletonLoader(height: 140),
+      SkeletonLoader(height: 140),
+    ],
+  );
 
   Future<void> _run(BuildContext context, WidgetRef ref, Batch batch) async {
     final bool? confirmed = await _confirm(
@@ -323,9 +361,14 @@ class BatchDetailScreen extends ConsumerWidget {
   }
 
   /// Save-as-profile posts the batch's current steps (02 §6 `step-profiles`).
-  Future<void> _saveAsProfile(BuildContext context, WidgetRef ref, Batch batch) async {
-    final TextEditingController controller =
-        TextEditingController(text: batch.name);
+  Future<void> _saveAsProfile(
+    BuildContext context,
+    WidgetRef ref,
+    Batch batch,
+  ) async {
+    final TextEditingController controller = TextEditingController(
+      text: batch.name,
+    );
     final String? name = await showDialog<String>(
       context: context,
       builder: (BuildContext dialogContext) => AlertDialog(
@@ -355,7 +398,9 @@ class BatchDetailScreen extends ConsumerWidget {
       return;
     }
     try {
-      await ref.read(processRepositoryProvider).createProfile(
+      await ref
+          .read(processRepositoryProvider)
+          .createProfile(
             name: name,
             mediaType: batch.mediaType,
             steps: batch.steps,
@@ -375,16 +420,21 @@ class BatchDetailScreen extends ConsumerWidget {
     required String title,
     required String body,
     required String action,
-  }) =>
-      showDialog<bool>(
-        context: context,
-        builder: (BuildContext dialogContext) => AlertDialog(
-          title: Text(title),
-          content: Text(body),
-          actions: <Widget>[
-            TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancel')),
-            TextButton(onPressed: () => Navigator.of(dialogContext).pop(true), child: Text(action)),
-          ],
+  }) => showDialog<bool>(
+    context: context,
+    builder: (BuildContext dialogContext) => AlertDialog(
+      title: Text(title),
+      content: Text(body),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('Cancel'),
         ),
-      );
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: Text(action),
+        ),
+      ],
+    ),
+  );
 }

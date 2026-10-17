@@ -7,7 +7,8 @@ import '../domain/process_repository.dart';
 import 'batch_api.dart';
 import 'batch_events_client.dart';
 
-/// [ProcessRepository] over [BatchApi] (REST) + [BatchEventsClient] (SSE).
+/// [ProcessRepository] + [ProcessPickerRepository] over [BatchApi] (REST) +
+/// [BatchEventsClient] (SSE).
 ///
 /// The platform id is captured at construction (the domain provider rebuilds
 /// on `activePlatformIdProvider`), so every path runs through `platformPath`
@@ -15,10 +16,10 @@ import 'batch_events_client.dart';
 /// that JSON becomes domain models — a wrong container is rejected here with
 /// [ServerException] while field-level parsing stays defensive in the models
 /// (M2 contract).
-class ProcessRepositoryImpl implements ProcessRepository {
+class ProcessRepositoryImpl implements ProcessPickerRepository {
   ProcessRepositoryImpl(Dio dio, this.platformId)
-      : _api = BatchApi(dio),
-        _events = BatchEventsClient(dio);
+    : _api = BatchApi(dio),
+      _events = BatchEventsClient(dio);
 
   /// The platform every endpoint is scoped to.
   final String platformId;
@@ -34,8 +35,8 @@ class ProcessRepositoryImpl implements ProcessRepository {
 
   @override
   Future<BatchList> fetchBatches({int limit = 50}) async => BatchList.fromJson(
-        _expectMap(await _api.batches(platformId, limit: limit)),
-      );
+    _expectMap(await _api.batches(platformId, limit: limit)),
+  );
 
   @override
   Future<BatchDetail> fetchBatchDetail(String batchId) async =>
@@ -49,31 +50,34 @@ class ProcessRepositoryImpl implements ProcessRepository {
     required String mediaType,
     required List<BatchStep> steps,
     String? profileId,
-  }) async =>
-      Batch.fromJson(
-        _expectMap(
-          await _api.createBatch(
-            platformId,
-            name: name,
-            mediaType: mediaType,
-            steps: <Map<String, Object?>>[
-              for (final BatchStep step in steps)
-                <String, Object?>{'key': step.key, 'config': step.config},
-            ],
-            profileId: profileId,
-          ),
-        ),
-      );
+    List<String>? files,
+  }) async => Batch.fromJson(
+    _expectMap(
+      await _api.createBatch(
+        platformId,
+        name: name,
+        mediaType: mediaType,
+        steps: <Map<String, Object?>>[
+          for (final BatchStep step in steps)
+            <String, Object?>{'key': step.key, 'config': step.config},
+        ],
+        profileId: profileId,
+        files: files,
+      ),
+    ),
+  );
 
   @override
-  Future<Batch> runBatch(String batchId) async => Batch.fromJson(
-        _expectMap(await _api.runBatch(platformId, batchId)),
-      );
+  Future<Batch> queueBatch(String batchId) async =>
+      Batch.fromJson(_expectMap(await _api.queueBatch(platformId, batchId)));
 
   @override
-  Future<Batch> cancelBatch(String batchId) async => Batch.fromJson(
-        _expectMap(await _api.cancelBatch(platformId, batchId)),
-      );
+  Future<Batch> runBatch(String batchId) async =>
+      Batch.fromJson(_expectMap(await _api.runBatch(platformId, batchId)));
+
+  @override
+  Future<Batch> cancelBatch(String batchId) async =>
+      Batch.fromJson(_expectMap(await _api.cancelBatch(platformId, batchId)));
 
   @override
   Future<void> deleteBatch(String batchId) =>
@@ -108,20 +112,19 @@ class ProcessRepositoryImpl implements ProcessRepository {
     required String name,
     required String mediaType,
     required List<BatchStep> steps,
-  }) async =>
-      StepProfile.fromJson(
-        _expectMap(
-          await _api.createProfile(
-            platformId,
-            name: name,
-            mediaType: mediaType,
-            steps: <Map<String, Object?>>[
-              for (final BatchStep step in steps)
-                <String, Object?>{'key': step.key, 'config': step.config},
-            ],
-          ),
-        ),
-      );
+  }) async => StepProfile.fromJson(
+    _expectMap(
+      await _api.createProfile(
+        platformId,
+        name: name,
+        mediaType: mediaType,
+        steps: <Map<String, Object?>>[
+          for (final BatchStep step in steps)
+            <String, Object?>{'key': step.key, 'config': step.config},
+        ],
+      ),
+    ),
+  );
 
   @override
   Stream<BatchSnapshot> watchBatch(String batchId) =>

@@ -589,7 +589,6 @@ function GalleryView() {
             value={renameValue}
             onChange={(event) => setRenameValue(event.target.value)}
             maxLength={200}
-            autoFocus
             className="w-full rounded-sm border border-parchment-500 bg-parchment-50 px-3 py-2 text-sm text-ink-800 focus:border-brass-400 focus:outline-none focus:ring-1 focus:ring-brass-400"
             aria-label="Folder name"
           />

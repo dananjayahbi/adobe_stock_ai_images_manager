@@ -106,9 +106,9 @@ void main() {
 
     // Section headers (LabelCaps renders uppercased).
     expect(find.text('CONNECTIONS'), findsOneWidget);
+    expect(find.text('TRANSFER'), findsOneWidget);
     expect(find.text('ACCOUNT'), findsOneWidget);
     expect(find.text('APP'), findsOneWidget);
-    expect(find.text('ABOUT'), findsOneWidget);
 
     // Rows with the active-profile caption baked in.
     expect(find.text('Connection profiles'), findsOneWidget);
@@ -118,12 +118,22 @@ void main() {
     );
     expect(find.text('Account & gateway'), findsOneWidget);
     expect(find.text('Local session · one seat'), findsOneWidget);
-    expect(find.text('Reduced motion'), findsOneWidget);
-    expect(find.text('Clear image cache'), findsOneWidget);
 
     // Banner rides above the groups (05 §3).
     expect(find.text('TUNNEL · studio.hotelgo.lk'), findsOneWidget);
     expect(flow.container.read(activeProfileProvider).id, 'tunnel');
+
+    // ABOUT (+ the App rows beneath the Transfer insert) sits below the
+    // fold on the default test surface — scroll it into view.
+    await tester.scrollUntilVisible(
+      find.text('ABOUT'),
+      300,
+      scrollable: find.byType(Scrollable).first,
+    );
+    await tester.pump();
+    expect(find.text('ABOUT'), findsOneWidget);
+    expect(find.text('Reduced motion'), findsOneWidget);
+    expect(find.text('Clear image cache'), findsOneWidget);
 
     // The platform row sits below the fold on the default test surface.
     await tester.scrollUntilVisible(
@@ -133,6 +143,30 @@ void main() {
     );
     await tester.pump();
     expect(find.text('Switch platform'), findsOneWidget);
+  });
+
+  testWidgets('Delivery row exists under Transfer with a live onTap', (
+    WidgetTester tester,
+  ) async {
+    await pumpSettings(tester);
+
+    expect(find.text('TRANSFER'), findsOneWidget);
+
+    // Row may sit just below the fold on the default test surface.
+    await tester.ensureVisible(find.text('Delivery'));
+    await tester.pump();
+    expect(find.text('Delivery'), findsOneWidget);
+    expect(find.text('CSV & bundle downloads'), findsOneWidget);
+
+    // Non-null onTap on the row's InkWell (navigation itself is pinned
+    // by the router integrator pass — /delivery is not in this harness).
+    final Finder row = find.ancestor(
+      of: find.text('Delivery'),
+      matching: find.byType(InkWell),
+    );
+    expect(row, findsOneWidget);
+    final InkWell inkwell = tester.widget<InkWell>(row);
+    expect(inkwell.onTap, isNotNull);
   });
 
   testWidgets('reduced-motion switch flips forceReducedMotionProvider', (

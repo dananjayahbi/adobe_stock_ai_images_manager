@@ -32,9 +32,12 @@ export function useBatchPolling(batchId: string | undefined) {
       if (id !== requestId.current) return; // stale response — a newer id exists
       setBatch(data);
       setError(null);
-      // Recomputed both ways: a completed batch pauses the timer, and a Run
-      // that flips it back to "running" resumes it.
-      terminal.current = data.status !== "running";
+      // Recomputed both ways: a finished batch pauses the timer, and a Run
+      // that flips it back to "queued"/"running" resumes it. Queued is
+      // *active* — the batch is in the run queue and its next poll may show
+      // "running", so treating it as terminal would freeze the page on
+      // "Queued" until a manual refresh.
+      terminal.current = data.status !== "running" && data.status !== "queued";
     } catch (err) {
       if (id === requestId.current) {
         setError(err instanceof Error ? err.message : String(err));

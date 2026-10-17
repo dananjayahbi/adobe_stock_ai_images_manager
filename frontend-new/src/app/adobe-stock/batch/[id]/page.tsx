@@ -13,6 +13,7 @@ import StepCard from "@/components/process/StepCard";
 import UploadZone from "@/components/process/UploadZone";
 import RecordStrip from "@/components/process/RecordStrip";
 import SaveProfileDialog from "@/components/process/SaveProfileDialog";
+import { BATCH_STATUS_TONE, isBatchActive } from "@/components/process/batchStatus";
 import type { BatchStep } from "@/lib/types";
 
 /**
@@ -34,7 +35,11 @@ export default function ProcessingPage() {
   const [profileDialogOpen, setProfileDialogOpen] = useState(false);
 
   const running = batch?.status === "running";
-  const editable = batch != null && batch.status !== "running";
+  const queued = batch?.status === "queued";
+  // Queued counts as active: the run is committed (it will start as soon as
+  // the worker frees up), so edits and uploads must freeze just like running.
+  const active = batch != null && isBatchActive(batch.status);
+  const editable = batch != null && !active;
   const hasImages = (batch?.record_count ?? 0) > 0;
 
   const handleFiles = useCallback(
@@ -158,16 +163,7 @@ export default function ProcessingPage() {
     );
   }
 
-  const statusTone =
-    batch.status === "completed"
-      ? "success"
-      : batch.status === "failed"
-        ? "danger"
-        : batch.status === "running"
-          ? "info"
-          : batch.status === "cancelled"
-            ? "warn"
-            : "neutral";
+  const statusTone = BATCH_STATUS_TONE[batch.status];
 
   return (
     <div className="space-y-6">
@@ -200,10 +196,24 @@ export default function ProcessingPage() {
                 Save as profile
               </Button>
             )}
-            {running ? (
-              <Button variant="danger" size="sm" onClick={handleCancel} loading={busy}>
-                Cancel run
-              </Button>
+            {active ? (
+              <>
+                {queued && (
+                  <span
+                    role="status"
+                    className="inline-flex items-center gap-1.5 rounded-sm border border-brass-400 bg-brass-300/20 px-2.5 py-1.5 font-stamp text-[10px] uppercase tracking-[0.14em] text-brass-300"
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="h-1.5 w-1.5 animate-pulse rounded-full bg-brass-300"
+                    />
+                    Queued
+                  </span>
+                )}
+                <Button variant="danger" size="sm" onClick={handleCancel} loading={busy}>
+                  Cancel run
+                </Button>
+              </>
             ) : (
               <Button
                 size="sm"
@@ -215,7 +225,7 @@ export default function ProcessingPage() {
                     ? "Upload at least one image first"
                     : batch.steps.length === 0
                       ? "This batch has no steps"
-                      : "Run every step in order"
+                      : "Queue this batch — runs start as soon as the worker is free"
                 }
               >
                 Run pipeline

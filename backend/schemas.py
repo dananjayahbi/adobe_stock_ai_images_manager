@@ -645,6 +645,9 @@ class SettingsResponse(BaseModel):
     metadata_delay_seconds: float = 2.0
     metadata_extra_instructions: str = ""
     metadata_priority_terms: str = ""
+    #: Folder the server browses/imports from (``/api/fs`` + batch create with
+    #: ``files``). Plain path string, never secret; "" means "not configured".
+    source_folder: str = ""
     defaults: SettingsDefaults
     bounds: SettingsBounds
 
@@ -675,6 +678,9 @@ class SettingsUpdateRequest(BaseModel):
     metadata_delay_seconds: Optional[float] = None
     metadata_extra_instructions: Optional[str] = None
     metadata_priority_terms: Optional[str] = None
+    #: Source folder for the browse/import APIs. Plain string, stripped on
+    #: save; "" clears the setting (falls back to "not configured").
+    source_folder: Optional[str] = None
 
 
 class SettingsTestRequest(BaseModel):

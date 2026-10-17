@@ -9,7 +9,7 @@ full implementation plan lives in [`../mobile-plan/`](../mobile-plan/README.md).
 ```powershell
 flutter pub get
 flutter analyze          # zero issues expected
-flutter test             # 403 tests — the integration gate
+flutter test             # 430 tests — the integration gate
 flutter build apk --release   # → build/app/outputs/flutter-apk/app-release.apk (55 MB)
                               #   (build/app/outputs/apk/release/app-release.apk is the
                               #    Gradle twin — byte-identical; use flutter-apk/)
@@ -139,16 +139,38 @@ endpoints the web Promote dialog uses, run per record):
   while inspecting, and returning to Gallery restores the open detail
   page and scroll position. Android back pops detail → list in-branch.
 
+## Batch processes & image picker
+
+The **Processes** tab (replaces Delivery in the nav; Delivery lives under
+More → Transfer) lists server-side batch work: **Active** (running +
+queued with `#n` queue positions), **Drafts**, **Finished** — polling
+every 2 s while anything is active. Batches queue serially on the server
+(`POST /api/batches/{id}/queue`; a single-flight worker runs them one at a
+time and resumes queued rows after a restart).
+
+The Home **New batch** button opens the **image explorer**
+(`/process/pick`): a file browser scoped to the `source_folder` set once
+in the web app (Config → Source folder) — breadcrumbs, folder cards,
+thumbnail grid with multi-select, then **Save draft** or **Queue batch**
+via the config sheet (name, Raster/PNG, step profile). The legacy 3-step
+wizard stays reachable as **Wizard** on the Processes screen.
+
+The Queue tab gained a **Clear processed** AppBar action (removes
+done/failed items in one shot, persisted so they stay gone).
+
 ## Launcher icon & favicon
 
-The mark — a faceted studio aperture with AI sparkles, palette-matched to
-`tokens.dart` — is generated, never hand-edited:
+The launcher mark comes from the hand-drawn reference
+`REFERENCES/as-logo.png` (dark tile + copper "AS"):
 
 ```powershell
-..\backend\.venv\Scripts\python.exe tool\gen_logo.py   # assets/logo/*.png + favicon.ico
-dart run flutter_launcher_icons                # → android res/ mipmaps + adaptive icon
-Copy-Item assets\logo\favicon.ico web\favicon.ico -Force   # web favicon (once)
+..\backend\.venv\Scripts\python.exe tool\gen_logo_from_ref.py   # assets/logo/app_icon_ref_*.png (bg sampled #2A2017)
+dart run flutter_launcher_icons                                 # → android res/ mipmaps + adaptive icon
+..\backend\.venv\Scripts\python.exe tool\gen_favicon_from_ref.py # web/favicon.ico from the same mark
 ```
+
+(`tool/gen_logo.py` still builds the older generated mark assets if ever
+needed.)
 
 ## Web build & tunnel serving
 

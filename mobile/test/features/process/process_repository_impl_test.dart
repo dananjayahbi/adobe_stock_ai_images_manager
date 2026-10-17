@@ -81,13 +81,13 @@ void main() {
     });
     when(() => dio.post<Object?>(any(), data: any(named: 'data')))
         .thenAnswer((invocation) async {
-      final String path = invocation.positionalArguments.first! as String;
-      return Response<Object?>(
-        requestOptions: RequestOptions(path: path),
-        statusCode: 201,
-        data: payloads[path] ?? <String, Object?>{},
-      );
-    });
+          final String path = invocation.positionalArguments.first! as String;
+          return Response<Object?>(
+            requestOptions: RequestOptions(path: path),
+            statusCode: 201,
+            data: payloads[path] ?? <String, Object?>{},
+          );
+        });
     when(() => dio.delete<void>(any())).thenAnswer(
       (invocation) async => Response<void>(
         requestOptions: RequestOptions(
@@ -140,8 +140,9 @@ void main() {
   });
 
   test('fetchStepCatalog parses order + labels + media filter', () async {
-    final StepCatalog catalog =
-        await repo.fetchStepCatalog(mediaType: 'raster');
+    final StepCatalog catalog = await repo.fetchStepCatalog(
+      mediaType: 'raster',
+    );
 
     expect(catalog.order, hasLength(9));
     expect(catalog.order.first, 'upscale');
@@ -151,7 +152,8 @@ void main() {
     expect(catalog.labelFor('unknown_key'), 'unknown_key'); // fallback
     expect(catalog.descriptionFor('ocr'), 'Read visible text.');
     expect(
-      catalog.steps.firstWhere((StepDefinition s) => s.key == 'upscale')
+      catalog.steps
+          .firstWhere((StepDefinition s) => s.key == 'upscale')
           .defaultConfig['factor'],
       2,
     );
@@ -161,8 +163,9 @@ void main() {
   });
 
   test('fetchProfiles parses ProfileListResponse items', () async {
-    final List<StepProfile> profiles =
-        await repo.fetchProfiles(mediaType: 'raster');
+    final List<StepProfile> profiles = await repo.fetchProfiles(
+      mediaType: 'raster',
+    );
 
     expect(profiles, hasLength(2));
     expect(profiles.first.id, 'pr-01');
@@ -182,8 +185,9 @@ void main() {
     );
 
     expect(created.id, '');
-    final VerificationResult captured =
-        verify(() => dio.post<Object?>(any(), data: captureAny(named: 'data')));
+    final VerificationResult captured = verify(
+      () => dio.post<Object?>(any(), data: captureAny(named: 'data')),
+    );
     final Object? body = captured.captured.single;
     expect(body, isA<Map<String, Object?>>());
     final Map<String, Object?> map = body! as Map<String, Object?>;
@@ -193,30 +197,78 @@ void main() {
     expect(map['steps'], <Object?>[
       <String, Object?>{'key': 'ocr', 'config': <String, Object?>{}},
     ]);
+    expect(map.containsKey('files'), isFalse); // wizard payload unchanged
   });
 
-  test('runBatch posts to /run and parses the returned BatchResponse',
-      () async {
-    payloads['/api/batches/b-30/run'] = <String, Object?>{
-      'id': 'b-30',
-      'name': 'Cut-outs',
-      'media_type': 'png',
-      'steps': <Object?>[],
+  test('createBatch with files passes the rel paths through', () async {
+    await repo.createBatch(
+      name: 'Picker run',
+      mediaType: 'raster',
+      steps: const <BatchStep>[BatchStep(key: 'ocr')],
+      files: const <String>['a.jpg', 'sub/b.jpg'],
+    );
+
+    final VerificationResult captured = verify(
+      () => dio.post<Object?>(any(), data: captureAny(named: 'data')),
+    );
+    final Map<String, Object?> map =
+        captured.captured.single! as Map<String, Object?>;
+    expect(map['files'], <Object?>['a.jpg', 'sub/b.jpg']);
+  });
+
+  test('queueBatch posts to /queue and parses the queued response', () async {
+    payloads['/api/batches/b-31/queue'] = <String, Object?>{
+      'id': 'b-31',
+      'name': 'On deck',
+      'media_type': 'raster',
+      'steps': <Object?>[
+        <String, Object?>{'key': 'ocr', 'config': <String, Object?>{}},
+      ],
       'profile_id': null,
-      'status': 'running',
+      'status': 'queued',
       'step_progress': null,
       'error': null,
-      'record_count': 5,
-      'created_at': '2026-10-14T09:11:00.000000',
-      'updated_at': '2026-10-14T09:12:00.000000',
+      'record_count': 6,
+      'created_at': '2026-10-17T07:00:00',
+      'updated_at': '2026-10-17T08:00:00',
       'finished_at': null,
+      'queued_at': '2026-10-17T08:00:00',
     };
 
-    final Batch batch = await repo.runBatch('b-30');
-    expect(batch.status, 'running');
-    verify(() => dio.post<Object?>('/api/batches/b-30/run', data: null))
+    final Batch batch = await repo.queueBatch('b-31');
+
+    expect(batch.status, 'queued');
+    expect(batch.isQueued, isTrue);
+    expect(batch.isActive, isTrue);
+    expect(batch.queuedAt, DateTime(2026, 10, 17, 8));
+    verify(() => dio.post<Object?>('/api/batches/b-31/queue', data: null))
         .called(1);
   });
+
+  test(
+    'runBatch posts to /run and parses the returned BatchResponse',
+    () async {
+      payloads['/api/batches/b-30/run'] = <String, Object?>{
+        'id': 'b-30',
+        'name': 'Cut-outs',
+        'media_type': 'png',
+        'steps': <Object?>[],
+        'profile_id': null,
+        'status': 'running',
+        'step_progress': null,
+        'error': null,
+        'record_count': 5,
+        'created_at': '2026-10-14T09:11:00.000000',
+        'updated_at': '2026-10-14T09:12:00.000000',
+        'finished_at': null,
+      };
+
+      final Batch batch = await repo.runBatch('b-30');
+      expect(batch.status, 'running');
+      verify(() => dio.post<Object?>('/api/batches/b-30/run', data: null))
+          .called(1);
+    },
+  );
 
   test('cancelBatch posts to /cancel', () async {
     payloads['/api/batches/b-30/cancel'] = <String, Object?>{

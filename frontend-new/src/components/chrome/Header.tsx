@@ -25,6 +25,7 @@ export default function Header() {
   const navItems = [
     { href: "/adobe-stock", label: "Home", exact: true },
     { href: "/adobe-stock/gallery", label: "Gallery", exact: false },
+    { href: "/adobe-stock/process", label: "Processes", exact: false },
     { href: "/adobe-stock/prompts", label: "Prompts", exact: false },
     { href: "/adobe-stock/settings", label: "Config", exact: false },
   ];

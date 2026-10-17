@@ -12,6 +12,10 @@ import 'theme/tokens.dart';
 /// jumps here through the [StatefulNavigationShell].
 const int kQueueBranchIndex = 2;
 
+/// Branch index of the Processes tab — the whole `/process` family (list,
+/// new batch, source picker, detail) rides this branch with tabs visible.
+const int kProcessesBranchIndex = 3;
+
 /// Builds the app-wide scaffold owning the five branch navigators of the
 /// [StatefulShellRoute] (05 §1.1). Wired by `router.dart`.
 Widget buildShell(
@@ -65,8 +69,10 @@ class AppShell extends StatelessWidget {
 }
 
 /// The five fixed tabs of the studio (05 §1.1) — `type: fixed`, no shifting.
-/// The Process tab became the **Queue** tab (R4): batches remain reachable
-/// through `/process/new` and `/process/:batchId`.
+/// Index 2 is **Queue** (R4) and index 3 is **Processes**: the `/process`
+/// family (list, new batch, picker, detail) lives in that branch with the
+/// tab bar kept. **Delivery** left the tabs — it opens from the More page
+/// as an outside-shell route.
 class ShellBottomNav extends StatelessWidget {
   const ShellBottomNav({
     super.key,
@@ -85,7 +91,7 @@ class ShellBottomNav extends StatelessWidget {
     (icon: LucideIcons.house, label: 'HOME'),
     (icon: LucideIcons.layoutGrid, label: 'GALLERY'),
     (icon: LucideIcons.listChecks, label: 'QUEUE'),
-    (icon: LucideIcons.send, label: 'DELIVERY'),
+    (icon: LucideIcons.workflow, label: 'PROCESSES'),
     (icon: LucideIcons.ellipsis, label: 'MORE'),
   ];
 

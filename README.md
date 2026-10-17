@@ -34,7 +34,16 @@ gated green; full journey E2E'd headless against the real backend).**
 Highlights:
 
 - Vintage dark theme matching the web brand; 5-tab shell (Home · Gallery ·
-  Queue · Delivery · More) + Platform Hub for all six platforms.
+  Queue · Processes · More) + Platform Hub for all six platforms —
+  Delivery moved into the More page.
+- **Serial batch queue** (web + mobile): batches carry a `queued` status;
+  Run/queue enqueues and a single-flight server worker executes them one
+  after another (queued rows survive restarts and resume on boot).
+  The Processes tab (mobile) and Processes page (web nav) show Active /
+  Drafts / Finished with queue positions and jump back into any batch;
+  the Home **New batch** button opens a **scoped image explorer** that
+  browses the `source_folder` configured once in the web Config page
+  (per-folder thumbnails, multi-select → Save draft or Queue batch).
 - **Readiness queue** (Queue tab, replacing Process in the nav): approving
   an image enqueues it, a slim bar above the tab bar shows waiting/running
   state with Start/Pause (pause finishes the current promote run, then
@@ -78,7 +87,7 @@ Highlights:
 cd mobile
 flutter pub get
 flutter analyze        # clean
-flutter test           # 403 tests
+flutter test           # 430 tests
 flutter build apk --release   # installable release APK → build/app/outputs/flutter-apk/app-release.apk
 flutter build web --release --base-href /flutter/  # served at https://<tunnel>/flutter (see mobile/README.md)
 flutter run -d chrome  # quick look (set the app's profile to your backend URL)

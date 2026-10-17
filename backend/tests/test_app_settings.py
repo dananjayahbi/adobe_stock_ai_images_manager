@@ -530,3 +530,41 @@ def test_reset_endpoint_clears_overrides(client, store):
 
     assert response.status_code == 200
     assert response.json()["effective_model"] == "env-model"
+
+
+# --------------------------------------------------------------------------- #
+# Source folder (browse/import APIs)
+# --------------------------------------------------------------------------- #
+
+class TestSourceFolderSetting:
+    def test_roundtrip_through_put_and_get(self, client, store, tmp_path):
+        folder = tmp_path / "photos"
+        folder.mkdir()
+
+        put = client.put("/api/settings", json={"source_folder": str(folder)})
+        assert put.status_code == 200
+        assert put.json()["source_folder"] == str(folder)
+
+        assert client.get("/api/settings").json()["source_folder"] == str(folder)
+
+    def test_blank_value_clears_the_setting(self, client, store, tmp_path):
+        client.put("/api/settings", json={"source_folder": str(tmp_path)})
+
+        put = client.put("/api/settings", json={"source_folder": "   "})
+
+        assert put.status_code == 200
+        assert put.json()["source_folder"] == ""
+        assert client.get("/api/settings").json()["source_folder"] == ""
+
+    def test_omitted_field_is_left_untouched(self, client, store, tmp_path):
+        client.put("/api/settings", json={"source_folder": str(tmp_path)})
+
+        put = client.put("/api/settings", json={"llm_model": "keep-folder"})
+
+        assert put.json()["source_folder"] == str(tmp_path)
+
+    def test_value_is_stored_trimmed(self, client, store, tmp_path):
+        put = client.put(
+            "/api/settings", json={"source_folder": f"  {tmp_path}  "}
+        )
+        assert put.json()["source_folder"] == str(tmp_path)

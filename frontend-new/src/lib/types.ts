@@ -4,6 +4,7 @@ export type MediaType = "raster" | "png";
 
 export type BatchStatus =
   | "draft"
+  | "queued"
   | "running"
   | "completed"
   | "failed"
@@ -138,6 +139,8 @@ export interface Batch {
   steps: BatchStep[];
   profile_id: string | null;
   status: BatchStatus;
+  /** When the batch entered the run queue (ISO); null unless queued/running. */
+  queued_at: string | null;
   step_progress: Record<string, StepProgress> | null;
   error: string | null;
   record_count: number;

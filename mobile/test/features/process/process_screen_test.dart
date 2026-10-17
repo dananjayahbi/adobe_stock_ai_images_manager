@@ -50,8 +50,7 @@ class _FakeProcessRepository implements ProcessRepository {
     required String mediaType,
     required List<BatchStep> steps,
     String? profileId,
-  }) async =>
-      throw UnimplementedError();
+  }) async => throw UnimplementedError();
 
   @override
   Future<Batch> cancelBatch(String batchId) async => throw UnimplementedError();
@@ -68,24 +67,31 @@ class _FakeProcessRepository implements ProcessRepository {
     required String name,
     required String mediaType,
     required List<BatchStep> steps,
-  }) async =>
-      throw UnimplementedError();
+  }) async => throw UnimplementedError();
 }
 
-Batch _batch() => Batch(
-      id: 'b-1',
-      name: 'Alpha run',
-      mediaType: 'raster',
-      steps: const <BatchStep>[BatchStep(key: 'ocr')],
-      profileId: null,
-      status: 'completed',
-      stepProgress: null,
-      error: null,
-      recordCount: 4,
-      createdAt: DateTime(2026, 10, 13, 13, 38),
-      updatedAt: DateTime(2026, 10, 13, 14, 2),
-      finishedAt: null,
-    );
+Batch _batch({
+  String id = 'b-1',
+  String name = 'Alpha run',
+  String status = 'completed',
+  DateTime? createdAt,
+  DateTime? updatedAt,
+  DateTime? queuedAt,
+}) => Batch(
+  id: id,
+  name: name,
+  mediaType: 'raster',
+  steps: const <BatchStep>[BatchStep(key: 'ocr')],
+  profileId: null,
+  status: status,
+  stepProgress: null,
+  error: null,
+  recordCount: 4,
+  createdAt: createdAt ?? DateTime(2026, 10, 13, 13, 38),
+  updatedAt: updatedAt ?? DateTime(2026, 10, 13, 14, 2),
+  finishedAt: null,
+  queuedAt: queuedAt,
+);
 
 void main() {
   setUpAll(() {
@@ -104,10 +110,7 @@ void main() {
           processRepositoryProvider.overrideWithValue(repo),
           sharedPreferencesProvider.overrideWithValue(prefs),
         ],
-        child: MaterialApp(
-          theme: buildAppTheme(),
-          home: const ProcessScreen(),
-        ),
+        child: MaterialApp(theme: buildAppTheme(), home: const ProcessScreen()),
       ),
     );
   }
@@ -129,11 +132,7 @@ void main() {
 
     // Server hiccup on refresh: rows stay, the failure surfaces inline.
     repo.listError = const ServerException(message: 'boom');
-    await tester.fling(
-      find.byType(ListView),
-      const Offset(0, 300),
-      1000,
-    );
+    await tester.fling(find.byType(ListView), const Offset(0, 300), 1000);
     await tester.pump(); // gesture starts
     await tester.pump(const Duration(seconds: 1)); // indicator snaps in
     await tester.pump(const Duration(seconds: 1)); // refresh fails
@@ -143,7 +142,10 @@ void main() {
     expect(find.byType(ErrorView), findsOneWidget);
     expect(find.text('Retry'), findsOneWidget);
     expect(find.text('Alpha run'), findsOneWidget); // stale row retained
-    expect(find.text('The studio server hit an error. Please try again.'), findsOneWidget);
+    expect(
+      find.text('The studio server hit an error. Please try again.'),
+      findsOneWidget,
+    );
 
     // Retry reconnects and clears the inline error.
     repo.listError = null;
@@ -155,5 +157,129 @@ void main() {
     expect(find.byType(ErrorView), findsNothing);
     expect(find.text('Alpha run'), findsOneWidget);
     expect(repo.fetchCalls, 3); // load + failed refresh + retry
+  });
+
+  testWidgets(
+    'orders per contract into ACTIVE/DRAFTS/FINISHED with queue positions '
+    '(#n)',
+    (WidgetTester tester) async {
+      // Tall viewport: every section row must exist for the ordering check.
+      tester.view.physicalSize = const Size(1200, 2600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final _FakeProcessRepository repo = _FakeProcessRepository()
+        ..list = BatchList(
+          items: <Batch>[
+            _batch(
+              id: 'f-old',
+              name: 'Old finish',
+              status: 'completed',
+              updatedAt: DateTime(2026, 10, 13, 10),
+            ),
+            _batch(
+              id: 'd-2',
+              name: 'Draft later',
+              status: 'draft',
+              updatedAt: DateTime(2026, 10, 16, 12),
+            ),
+            _batch(
+              id: 'q-2',
+              name: 'Queue second',
+              status: 'queued',
+              queuedAt: DateTime(2026, 10, 17, 8, 5),
+            ),
+            _batch(id: 'r-1', name: 'Running now', status: 'running'),
+            _batch(
+              id: 'd-1',
+              name: 'Draft earlier',
+              status: 'draft',
+              updatedAt: DateTime(2026, 10, 15, 12),
+            ),
+            _batch(
+              id: 'q-1',
+              name: 'Queue first',
+              status: 'queued',
+              queuedAt: DateTime(2026, 10, 17, 8),
+            ),
+            _batch(
+              id: 'f-new',
+              name: 'New finish',
+              status: 'completed',
+              updatedAt: DateTime(2026, 10, 14, 10),
+            ),
+          ],
+          total: 7,
+        );
+      await pumpProcess(tester, repo);
+      await settle(tester);
+
+      expect(find.text('ACTIVE'), findsOneWidget);
+      expect(find.text('DRAFTS'), findsOneWidget);
+      expect(find.text('FINISHED'), findsOneWidget);
+
+      double y(Finder finder) => tester.getTopLeft(finder).dy;
+      final double running = y(find.text('Running now'));
+      final double queueFirst = y(find.text('Queue first'));
+      final double queueSecond = y(find.text('Queue second'));
+      final double draftLater = y(find.text('Draft later'));
+      final double draftEarlier = y(find.text('Draft earlier'));
+      final double finishNew = y(find.text('New finish'));
+      final double finishOld = y(find.text('Old finish'));
+
+      // running → queued (queued_at asc) → draft (updated desc) → terminal
+      // (updated desc).
+      expect(running < queueFirst, isTrue);
+      expect(queueFirst < queueSecond, isTrue);
+      expect(queueSecond < draftLater, isTrue);
+      expect(draftLater < draftEarlier, isTrue);
+      expect(draftEarlier < finishNew, isTrue);
+      expect(finishNew < finishOld, isTrue);
+
+      // Queue position = index among queued + 1, in queue order.
+      expect(find.text('#1'), findsOneWidget);
+      expect(find.text('#2'), findsOneWidget);
+      expect(y(find.text('#1')), lessThan(y(find.text('#2'))));
+
+      // Section headers sit above their cards.
+      expect(y(find.text('ACTIVE')) < running, isTrue);
+      expect(y(find.text('DRAFTS')) < draftLater, isTrue);
+      expect(y(find.text('FINISHED')) < finishNew, isTrue);
+
+      // The screen owns a 2s poll while active — unmount so the timer dies.
+      await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+      await tester.pump();
+    },
+  );
+
+  testWidgets('polls the list every 2s while a batch is active and stops on '
+      'dispose', (WidgetTester tester) async {
+    final _FakeProcessRepository repo = _FakeProcessRepository()
+      ..list = BatchList(
+        items: <Batch>[
+          _batch(id: 'r-1', name: 'Running now', status: 'running'),
+        ],
+        total: 1,
+      );
+    await pumpProcess(tester, repo);
+    await settle(tester);
+    expect(find.text('Running now'), findsOneWidget);
+
+    final int before = repo.fetchCalls;
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(repo.fetchCalls, before + 1);
+
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(repo.fetchCalls, before + 2);
+
+    // Leaving the screen cancels the loop (03 §4 lifecycle).
+    await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+    await tester.pump();
+    final int atDispose = repo.fetchCalls;
+    await tester.pump(const Duration(seconds: 6));
+    expect(repo.fetchCalls, atDispose);
   });
 }
