@@ -6,7 +6,6 @@ import 'package:go_router/go_router.dart';
 
 import '../../../app/lifecycle_observer.dart';
 import '../../../app/theme/tokens.dart';
-import '../../../core/widgets/connection_profile_banner.dart';
 import '../../../core/widgets/empty_state.dart';
 import '../../../core/widgets/error_view.dart';
 import '../../../core/widgets/ghost_button.dart';
@@ -26,8 +25,10 @@ import 'batch_controller.dart';
 /// AppBar's New batch pushes the picker (`/process/pick`) while a `Wizard`
 /// ghost keeps the 3-step flow reachable.
 ///
-/// List contract (M4): sections `ACTIVE` (running + queued, positions as
-/// `#n`) / `DRAFTS` / `FINISHED` in [sortBatchesForDisplay] order; while
+/// List contract (M4, revised 02 §1): sections `ACTIVE` (running + queued,
+/// positions as `#n`) / `DRAFTS` (draft) / `PROCESSED` (completed — the run
+/// happened; rerun 409s until the batch is deleted) / `FINISHED` (failed +
+/// cancelled) in [sortBatchesForDisplay] order; while
 /// anything is active a 2 s timer refreshes the list (cancelled on
 /// dispose).
 class ProcessScreen extends ConsumerStatefulWidget {
@@ -74,7 +75,6 @@ class _ProcessScreenState extends ConsumerState<ProcessScreen> {
       ),
       body: Column(
         children: <Widget>[
-          const ConnectionProfileBanner(),
           Expanded(child: _content(context, listAsync)),
         ],
       ),
@@ -142,8 +142,16 @@ class _ProcessScreenState extends ConsumerState<ProcessScreen> {
     final List<Batch> drafts = sorted
         .where((Batch batch) => batch.status == 'draft')
         .toList();
+    // Split the terminal statuses (02 §1): a completed run is PROCESSED —
+    // its own section, never a draft; failed/cancelled stay FINISHED.
+    final List<Batch> processed = sorted
+        .where((Batch batch) => batch.status == 'completed')
+        .toList();
     final List<Batch> finished = sorted
-        .where((Batch batch) => batch.isTerminal)
+        .where(
+          (Batch batch) =>
+              batch.status == 'failed' || batch.status == 'cancelled',
+        )
         .toList();
 
     final List<Widget> rows = <Widget>[];
@@ -183,6 +191,7 @@ class _ProcessScreenState extends ConsumerState<ProcessScreen> {
 
     addSection('Active', active);
     addSection('Drafts', drafts);
+    addSection('Processed', processed);
     addSection('Finished', finished);
 
     return RefreshIndicator(

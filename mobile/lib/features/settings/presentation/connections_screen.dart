@@ -5,7 +5,6 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../app/theme/tokens.dart';
 import '../../../core/widgets/app_card.dart';
-import '../../../core/widgets/connection_profile_banner.dart';
 import '../../../core/widgets/stamp_badge.dart';
 import '../../../core/widgets/status_chip.dart';
 import '../../../core/widgets/toast_exception.dart';
@@ -122,7 +121,6 @@ class _ConnectionsScreenState extends ConsumerState<ConnectionsScreen> {
       body: SafeArea(
         child: Column(
           children: <Widget>[
-            const ConnectionProfileBanner(),
             Expanded(
               child: ListView(
                 padding: const EdgeInsets.all(AppSpacing.lg),

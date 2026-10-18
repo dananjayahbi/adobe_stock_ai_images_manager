@@ -587,7 +587,11 @@ async def update_batch(
 async def delete_batch(batch_id: str, db: Session = Depends(get_db)):
     """Delete a batch and the images uploaded into it (files included)."""
     batch = _get_batch_or_404(db, batch_id)
-    if batch.status == "running":
+    # `running` blocks because the pipeline holds the images; `queued` blocks
+    # because the serial worker could claim the row (queued → running) in the
+    # gap between this check and the commit. Cancel flips both to a terminal
+    # state the worker never claims, unblocking the delete.
+    if batch.status in ("running", "queued"):
         raise HTTPException(
             status_code=409,
             detail="Cancel the batch before deleting it.",
@@ -697,7 +701,18 @@ def _enqueue_precheck(db: Session, batch: Batch) -> int:
 
     Returns the record count the response echoes. The messages stay the ones
     ``/run`` always answered with, so existing clients keep parsing them.
+    A ``completed`` batch is terminal: rerunning it is refused ahead of every
+    other precheck so the answer is always "already processed", even if its
+    images or steps were edited away since the run.
     """
+    if batch.status == "completed":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This batch was already processed — delete it to start a "
+                "fresh batch."
+            ),
+        )
     if batch.status == "running":
         raise HTTPException(status_code=409, detail="This batch is already running.")
     if batch.status == "queued":
@@ -749,8 +764,9 @@ async def queue_batch(
 ):
     """Enqueue the batch on the serial worker (one batch at a time).
 
-    409 when the batch is already running/queued, has no images, or has no
-    steps — the same preconditions ``/run`` answers with.
+    409 when the batch was already processed (completed), is already
+    running/queued, has no images, or has no steps — the same
+    preconditions ``/run`` answers with.
     """
     return _enqueue(batch_id, background_tasks, db, session_factory)
 

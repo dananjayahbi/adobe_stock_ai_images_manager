@@ -11,7 +11,7 @@ interface ProcessSectionProps {
   children: ReactNode;
 }
 
-/** One titled group in the Processes page (Active / Drafts / Finished). */
+/** One titled group in the Processes page (Active / Drafts / Processed / Finished). */
 export default function ProcessSection({
   id,
   label,

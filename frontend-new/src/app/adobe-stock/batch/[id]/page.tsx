@@ -2,7 +2,7 @@
 
 import { useCallback, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useBatchPolling } from "@/hooks/useBatchPolling";
 import { cancelBatch, runBatch, updateBatch, uploadToBatch } from "@/lib/batches";
 import { createProfile } from "@/lib/profiles";
@@ -13,7 +13,12 @@ import StepCard from "@/components/process/StepCard";
 import UploadZone from "@/components/process/UploadZone";
 import RecordStrip from "@/components/process/RecordStrip";
 import SaveProfileDialog from "@/components/process/SaveProfileDialog";
-import { BATCH_STATUS_TONE, isBatchActive } from "@/components/process/batchStatus";
+import DeleteBatchDialog from "@/components/process/DeleteBatchDialog";
+import {
+  BATCH_STATUS_LABEL,
+  BATCH_STATUS_TONE,
+  isBatchActive,
+} from "@/components/process/batchStatus";
 import type { BatchStep } from "@/lib/types";
 
 /**
@@ -25,6 +30,7 @@ import type { BatchStep } from "@/lib/types";
 export default function ProcessingPage() {
   const params = useParams<{ id: string }>();
   const batchId = params?.id;
+  const router = useRouter();
   const { batch, error, refresh } = useBatchPolling(batchId);
 
   const [uploading, setUploading] = useState(false);
@@ -33,9 +39,13 @@ export default function ProcessingPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [profileDialogOpen, setProfileDialogOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   const running = batch?.status === "running";
   const queued = batch?.status === "queued";
+  // Processed: the run produced results, and the backend refuses a re-run —
+  // a fresh batch means deleting this one first.
+  const processed = batch?.status === "completed";
   // Queued counts as active: the run is committed (it will start as soon as
   // the worker frees up), so edits and uploads must freeze just like running.
   const active = batch != null && isBatchActive(batch.status);
@@ -173,7 +183,7 @@ export default function ProcessingPage() {
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <p className="label-caps">Processing</p>
-              <Badge tone={statusTone}>{batch.status}</Badge>
+              <Badge tone={statusTone}>{BATCH_STATUS_LABEL[batch.status]}</Badge>
               <Badge tone="info">{batch.media_type}</Badge>
             </div>
             <h1 className="mt-1 font-display text-3xl text-ink-800">
@@ -214,6 +224,10 @@ export default function ProcessingPage() {
                   Cancel run
                 </Button>
               </>
+            ) : processed ? (
+              <p className="text-sm text-ink-400">
+                Processed — delete to run a fresh batch
+              </p>
             ) : (
               <Button
                 size="sm"
@@ -229,6 +243,16 @@ export default function ProcessingPage() {
                 }
               >
                 Run pipeline
+              </Button>
+            )}
+            {!active && (
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={() => setDeleteOpen(true)}
+                title="Delete this batch and its images"
+              >
+                Delete
               </Button>
             )}
             <Link href="/adobe-stock/gallery">
@@ -342,6 +366,15 @@ export default function ProcessingPage() {
         onClose={() => setProfileDialogOpen(false)}
         onSave={handleSaveProfile}
         mediaType={batch.media_type}
+      />
+
+      <DeleteBatchDialog
+        open={deleteOpen}
+        batchId={batch.id}
+        batchName={batch.name}
+        recordCount={batch.record_count}
+        onClose={() => setDeleteOpen(false)}
+        onDeleted={() => router.push("/adobe-stock/process")}
       />
     </div>
   );

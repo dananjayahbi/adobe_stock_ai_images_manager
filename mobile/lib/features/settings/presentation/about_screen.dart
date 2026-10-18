@@ -7,7 +7,6 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../app/theme/tokens.dart';
 import '../../../core/config/app_config.dart';
 import '../../../core/widgets/app_card.dart';
-import '../../../core/widgets/connection_profile_banner.dart';
 import '../../../core/widgets/label_caps.dart';
 import '../../../core/widgets/primary_button.dart';
 import '../../../core/widgets/secondary_button.dart';
@@ -77,8 +76,6 @@ class AboutScreen extends ConsumerWidget {
         child: ListView(
           padding: const EdgeInsets.all(AppSpacing.lg),
           children: <Widget>[
-            const ConnectionProfileBanner(),
-            const SizedBox(height: AppSpacing.lg),
             AppCard(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,

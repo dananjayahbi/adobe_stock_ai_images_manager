@@ -20,9 +20,30 @@ export function isBatchActive(status: BatchStatus): boolean {
   return status === "queued" || status === "running";
 }
 
-/** Terminal states — the run has ended (well or badly). */
+/**
+ * Display text for a stamped status. The Badge already uppercases, so the
+ * only real override is `completed` → **PROCESSED**: a completed batch has
+ * been through the pipeline, and — per the backend contract — re-running it
+ * means deleting it and starting fresh. The status *key* stays `completed`
+ * everywhere in code and on the wire.
+ */
+export const BATCH_STATUS_LABEL: Record<BatchStatus, string> = {
+  draft: "draft",
+  queued: "queued",
+  running: "running",
+  completed: "Processed",
+  failed: "failed",
+  cancelled: "cancelled",
+};
+
+/** A batch that has been through the pipeline (status key `completed`). */
+export function isBatchProcessed(status: BatchStatus): boolean {
+  return status === "completed";
+}
+
+/** Terminal-but-not-processed: the run ended without a usable result. */
 export function isBatchFinished(status: BatchStatus): boolean {
-  return status === "completed" || status === "failed" || status === "cancelled";
+  return status === "failed" || status === "cancelled";
 }
 
 /**

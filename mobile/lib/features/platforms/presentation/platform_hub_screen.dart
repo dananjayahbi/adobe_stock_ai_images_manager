@@ -6,7 +6,6 @@ import '../../../app/theme/tokens.dart';
 import '../../../core/utils/app_exception.dart';
 import '../../../core/utils/ui_message.dart';
 import '../../../core/widgets/app_card.dart';
-import '../../../core/widgets/connection_profile_banner.dart';
 import '../../../core/widgets/error_view.dart';
 import '../../../core/widgets/label_caps.dart';
 import '../../../core/widgets/skeleton_loader.dart';
@@ -15,7 +14,7 @@ import 'platform_card.dart';
 import 'platforms_controller.dart';
 
 /// `/hub` — the master Platform Hub (05 §2.3), parity with the web
-/// `PlatformPicker`: banner, hero card, responsive card grid, pull-to-refresh.
+/// `PlatformPicker`: hero card, responsive card grid, pull-to-refresh.
 ///
 /// Lives outside the shell; choosing a platform is a global act — available
 /// cards select + `go('/home')`, the rest push `/coming-soon/:id`.
@@ -54,8 +53,6 @@ class PlatformHubScreen extends ConsumerWidget {
           child: ListView(
             padding: const EdgeInsets.all(AppSpacing.lg),
             children: [
-              const ConnectionProfileBanner(),
-              const SizedBox(height: AppSpacing.lg),
               _hero(context),
               const SizedBox(height: AppSpacing.xl),
               ..._catalog(context, ref, catalog),

@@ -1,7 +1,7 @@
 import Badge from "@/components/ui/Badge";
 import Button from "@/components/ui/Button";
 import ProgressBar from "@/components/ui/ProgressBar";
-import { BATCH_STATUS_TONE } from "./batchStatus";
+import { BATCH_STATUS_LABEL, BATCH_STATUS_TONE } from "./batchStatus";
 import { STEP_LABELS } from "@/lib/steps";
 import type { Batch } from "@/lib/types";
 
@@ -48,7 +48,9 @@ export default function ProcessRow({ batch, position, onOpen }: ProcessRowProps)
               {batch.name}
             </h3>
             <Badge tone="info">{batch.media_type}</Badge>
-            <Badge tone={BATCH_STATUS_TONE[batch.status]}>{batch.status}</Badge>
+            <Badge tone={BATCH_STATUS_TONE[batch.status]}>
+              {BATCH_STATUS_LABEL[batch.status]}
+            </Badge>
             {position != null && (
               <span className="inline-flex items-center rounded-sm border border-brass-400 bg-brass-300/20 px-2 py-0.5 font-stamp text-[10px] uppercase tracking-[0.14em] text-brass-300">
                 #{position} in queue

@@ -10,6 +10,7 @@ pollution happens.
 from __future__ import annotations
 
 import io
+from pathlib import Path
 
 import numpy as np
 from PIL import Image
@@ -218,6 +219,66 @@ class TestBatchCrud:
         assert response.status_code == 200
         assert client.get(f"/api/batches/{batch['id']}").status_code == 404
 
+    def test_delete_completed_batch_cascades_records_and_files(
+        self, client, db_session_factory, tmp_path
+    ):
+        """Deleting a processed batch wipes rows *and* on-disk artifacts."""
+        batch = _create_batch(client, steps=[{"key": "ocr"}])
+        response = client.post(
+            f"/api/batches/{batch['id']}/files",
+            files=[
+                ("files", ("a.jpg", _jpg_bytes(), "image/jpeg")),
+                ("files", ("b.jpg", _jpg_bytes(), "image/jpeg")),
+            ],
+        )
+        assert response.status_code == 200, response.text
+        record_ids = response.json()["record_ids"]
+        assert len(record_ids) == 2
+
+        session = db_session_factory()
+        paths: list[str] = []
+        for record_id in record_ids:
+            record = session.get(ImageRecord, record_id)
+            paths.extend(
+                p
+                for p in (
+                    record.original_path,
+                    record.thumbnail_path,
+                    record.working_path,
+                )
+                if p
+            )
+        session.get(Batch, batch["id"]).status = "completed"
+        session.commit()
+        session.close()
+
+        # Sanity: the files really are on disk before the delete.
+        assert any(Path(p).is_file() for p in paths)
+        assert any((tmp_path / "inbox").iterdir())
+        assert any((tmp_path / "thumbnails").iterdir())
+
+        response = client.delete(f"/api/batches/{batch['id']}")
+        assert response.status_code == 200, response.text
+        assert response.json() == {"deleted": batch["id"], "images": 2}
+
+        assert client.get(f"/api/batches/{batch['id']}").status_code == 404
+
+        session = db_session_factory()
+        for record_id in record_ids:
+            assert session.get(ImageRecord, record_id) is None
+        assert (
+            session.query(ImageRecord)
+            .filter(ImageRecord.batch_id == batch["id"])
+            .count()
+            == 0
+        )
+        session.close()
+
+        for path in paths:
+            assert not Path(path).exists(), path
+        assert not any((tmp_path / "inbox").iterdir())
+        assert not any((tmp_path / "thumbnails").iterdir())
+
     def test_unknown_batch_is_404(self, client):
         assert client.get("/api/batches/nope").status_code == 404
 
@@ -340,8 +401,27 @@ class TestRunPreconditions:
         assert client.patch(
             f"/api/batches/{batch['id']}", json={"name": "x"}
         ).status_code == 409
-        assert client.delete(f"/api/batches/{batch['id']}").status_code == 409
+        delete = client.delete(f"/api/batches/{batch['id']}")
+        assert delete.status_code == 409
+        assert "cancel" in delete.json()["detail"].lower()
         assert client.post(f"/api/batches/{batch['id']}/run").status_code == 409
+
+    def test_queued_batch_cannot_be_deleted(
+        self, client, db_session_factory
+    ):
+        """A queued batch could be claimed mid-delete — cancel first."""
+        batch = _create_batch(client, steps=[{"key": "ocr"}])
+        session = db_session_factory()
+        row = session.get(Batch, batch["id"])
+        row.status = "queued"
+        session.commit()
+        session.close()
+
+        response = client.delete(f"/api/batches/{batch['id']}")
+        assert response.status_code == 409
+        assert "cancel" in response.json()["detail"].lower()
+        # The guard refused before touching anything.
+        assert client.get(f"/api/batches/{batch['id']}").status_code == 200
 
 
 # --------------------------------------------------------------------------- #

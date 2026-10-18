@@ -11,7 +11,6 @@ import '../../../core/utils/app_exception.dart';
 import '../../../core/utils/ui_message.dart';
 import '../../../core/widgets/app_card.dart';
 import '../../../core/widgets/async_view.dart';
-import '../../../core/widgets/connection_profile_banner.dart';
 import '../../../core/widgets/empty_state.dart';
 import '../../../core/widgets/error_view.dart';
 import '../../../core/widgets/label_caps.dart';
@@ -27,7 +26,7 @@ import 'dashboard_controller.dart';
 import 'stat_tile.dart';
 
 /// `/home` — Adobe Dashboard (05 §2.4), parity with web `/adobe-stock`:
-/// connection banner + hero, 2-column stats, Latest grid, running-job card.
+/// hero, 2-column stats, Latest grid, running-job card.
 ///
 /// Each data section renders from its own [SectionState]: loading shows a
 /// per-card skeleton, failure an inline [ErrorView] with retry, and the
@@ -59,7 +58,6 @@ class DashboardScreen extends ConsumerWidget {
           child: CustomScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: <Widget>[
-              const SliverToBoxAdapter(child: ConnectionProfileBanner()),
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(
                   AppSpacing.lg,

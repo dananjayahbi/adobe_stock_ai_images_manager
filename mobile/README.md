@@ -9,7 +9,7 @@ full implementation plan lives in [`../mobile-plan/`](../mobile-plan/README.md).
 ```powershell
 flutter pub get
 flutter analyze          # zero issues expected
-flutter test             # 430 tests — the integration gate
+flutter test             # 440 tests — the integration gate
 flutter build apk --release   # → build/app/outputs/flutter-apk/app-release.apk (55 MB)
                               #   (build/app/outputs/apk/release/app-release.apk is the
                               #    Gradle twin — byte-identical; use flutter-apk/)
@@ -143,7 +143,10 @@ endpoints the web Promote dialog uses, run per record):
 
 The **Processes** tab (replaces Delivery in the nav; Delivery lives under
 More → Transfer) lists server-side batch work: **Active** (running +
-queued with `#n` queue positions), **Drafts**, **Finished** — polling
+queued with `#n` queue positions), **Drafts**, **Processed**
+(completed — stamped PROCESSED, no re-run; delete it from the detail
+page to clean the batch *and* its images), **Finished**
+(failed/cancelled) — polling
 every 2 s while anything is active. Batches queue serially on the server
 (`POST /api/batches/{id}/queue`; a single-flight worker runs them one at a
 time and resumes queued rows after a restart).

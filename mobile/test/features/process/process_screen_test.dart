@@ -6,7 +6,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ai_stock_studio/app/theme/theme.dart';
 import 'package:ai_stock_studio/core/utils/app_exception.dart';
+import 'package:ai_stock_studio/core/widgets/connection_profile_banner.dart';
 import 'package:ai_stock_studio/core/widgets/error_view.dart';
+import 'package:ai_stock_studio/core/widgets/label_caps.dart';
 import 'package:ai_stock_studio/features/process/domain/batch.dart';
 import 'package:ai_stock_studio/features/process/domain/batch_step.dart';
 import 'package:ai_stock_studio/features/process/domain/process_repository.dart';
@@ -121,6 +123,13 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
   }
 
+  /// Section titles render as [LabelCaps]; `PROCESSED` also prints on the
+  /// stamps of completed cards, so headers are found scoped to LabelCaps.
+  Finder sectionHeader(String title) => find.descendant(
+    of: find.byType(LabelCaps),
+    matching: find.text(title),
+  );
+
   testWidgets('a failed pull-to-refresh keeps the stale rows and pins an '
       'inline retry (05 §3)', (WidgetTester tester) async {
     final _FakeProcessRepository repo = _FakeProcessRepository()
@@ -160,8 +169,8 @@ void main() {
   });
 
   testWidgets(
-    'orders per contract into ACTIVE/DRAFTS/FINISHED with queue positions '
-    '(#n)',
+    'orders per contract into ACTIVE/DRAFTS/PROCESSED/FINISHED with queue '
+    'positions (#n)',
     (WidgetTester tester) async {
       // Tall viewport: every section row must exist for the ordering check.
       tester.view.physicalSize = const Size(1200, 2600);
@@ -209,15 +218,29 @@ void main() {
               status: 'completed',
               updatedAt: DateTime(2026, 10, 14, 10),
             ),
+            _batch(
+              id: 'x-1',
+              name: 'Failed run',
+              status: 'failed',
+              updatedAt: DateTime(2026, 10, 12, 10),
+            ),
+            _batch(
+              id: 'x-2',
+              name: 'Cancelled run',
+              status: 'cancelled',
+              updatedAt: DateTime(2026, 10, 11, 10),
+            ),
           ],
-          total: 7,
+          total: 9,
         );
       await pumpProcess(tester, repo);
       await settle(tester);
 
-      expect(find.text('ACTIVE'), findsOneWidget);
-      expect(find.text('DRAFTS'), findsOneWidget);
-      expect(find.text('FINISHED'), findsOneWidget);
+      expect(sectionHeader('ACTIVE'), findsOneWidget);
+      expect(sectionHeader('DRAFTS'), findsOneWidget);
+      // 02 §1: completed is its own section — never lumped into FINISHED.
+      expect(sectionHeader('PROCESSED'), findsOneWidget);
+      expect(sectionHeader('FINISHED'), findsOneWidget);
 
       double y(Finder finder) => tester.getTopLeft(finder).dy;
       final double running = y(find.text('Running now'));
@@ -227,15 +250,19 @@ void main() {
       final double draftEarlier = y(find.text('Draft earlier'));
       final double finishNew = y(find.text('New finish'));
       final double finishOld = y(find.text('Old finish'));
+      final double failedRun = y(find.text('Failed run'));
+      final double cancelledRun = y(find.text('Cancelled run'));
 
-      // running → queued (queued_at asc) → draft (updated desc) → terminal
-      // (updated desc).
+      // running → queued (queued_at asc) → draft (updated desc) →
+      // completed (updated desc) → failed/cancelled (updated desc).
       expect(running < queueFirst, isTrue);
       expect(queueFirst < queueSecond, isTrue);
       expect(queueSecond < draftLater, isTrue);
       expect(draftLater < draftEarlier, isTrue);
       expect(draftEarlier < finishNew, isTrue);
       expect(finishNew < finishOld, isTrue);
+      expect(finishOld < failedRun, isTrue);
+      expect(failedRun < cancelledRun, isTrue);
 
       // Queue position = index among queued + 1, in queue order.
       expect(find.text('#1'), findsOneWidget);
@@ -243,15 +270,83 @@ void main() {
       expect(y(find.text('#1')), lessThan(y(find.text('#2'))));
 
       // Section headers sit above their cards.
-      expect(y(find.text('ACTIVE')) < running, isTrue);
-      expect(y(find.text('DRAFTS')) < draftLater, isTrue);
-      expect(y(find.text('FINISHED')) < finishNew, isTrue);
+      expect(y(sectionHeader('ACTIVE')) < running, isTrue);
+      expect(y(sectionHeader('DRAFTS')) < draftLater, isTrue);
+      expect(y(sectionHeader('PROCESSED')) < finishNew, isTrue);
+      expect(y(sectionHeader('FINISHED')) < failedRun, isTrue);
 
       // The screen owns a 2s poll while active — unmount so the timer dies.
       await tester.pumpWidget(const MaterialApp(home: SizedBox()));
       await tester.pump();
     },
   );
+
+  testWidgets('a completed batch renders under Processed and never under '
+      'Drafts (02 §1 regression)', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(1200, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
+    final _FakeProcessRepository repo = _FakeProcessRepository()
+      ..list = BatchList(
+        items: <Batch>[
+          _batch(
+            id: 'd-1',
+            name: 'Draft one',
+            status: 'draft',
+            updatedAt: DateTime(2026, 10, 16, 12),
+          ),
+          _batch(
+            id: 'c-1',
+            name: 'Batch done',
+            status: 'completed',
+            updatedAt: DateTime(2026, 10, 15, 12),
+          ),
+        ],
+        total: 2,
+      );
+    await pumpProcess(tester, repo);
+    await settle(tester);
+
+    double y(Finder finder) => tester.getTopLeft(finder).dy;
+    expect(sectionHeader('DRAFTS'), findsOneWidget);
+    expect(sectionHeader('PROCESSED'), findsOneWidget);
+    expect(sectionHeader('FINISHED'), findsNothing); // no failed/cancelled
+    // The completed row sits under PROCESSED, below the Drafts block —
+    // it can never render inside Drafts.
+    expect(y(sectionHeader('DRAFTS')) < y(find.text('Draft one')), isTrue);
+    expect(y(find.text('Draft one')) < y(sectionHeader('PROCESSED')), isTrue);
+    expect(y(sectionHeader('PROCESSED')) < y(find.text('Batch done')), isTrue);
+
+    // Completed-only list → the Drafts section doesn't even exist.
+    final _FakeProcessRepository onlyDone = _FakeProcessRepository()
+      ..list = BatchList(
+        items: <Batch>[
+          _batch(id: 'c-2', name: 'Solo run', status: 'completed'),
+        ],
+        total: 1,
+      );
+    await pumpProcess(tester, onlyDone);
+    await settle(tester);
+    expect(find.text('Solo run'), findsOneWidget);
+    expect(sectionHeader('PROCESSED'), findsOneWidget);
+    expect(sectionHeader('DRAFTS'), findsNothing);
+
+    await tester.pumpWidget(const MaterialApp(home: SizedBox()));
+    await tester.pump();
+  });
+
+  testWidgets('the list carries no connection-profile banner', (
+    WidgetTester tester,
+  ) async {
+    final _FakeProcessRepository repo = _FakeProcessRepository()
+      ..list = BatchList(items: <Batch>[_batch()], total: 1);
+    await pumpProcess(tester, repo);
+    await settle(tester);
+
+    expect(find.byType(ConnectionProfileBanner), findsNothing);
+  });
 
   testWidgets('polls the list every 2s while a batch is active and stops on '
       'dispose', (WidgetTester tester) async {

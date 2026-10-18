@@ -10,7 +10,6 @@ import '../../../core/utils/formatters.dart';
 import '../../../core/utils/ui_message.dart';
 import '../../../core/widgets/app_card.dart';
 import '../../../core/widgets/async_view.dart';
-import '../../../core/widgets/connection_profile_banner.dart';
 import '../../../core/widgets/dashed_divider.dart';
 import '../../../core/widgets/empty_state.dart';
 import '../../../core/widgets/error_view.dart';
@@ -64,7 +63,6 @@ class _DeliveryScreenState extends ConsumerState<DeliveryScreen> {
           child: CustomScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: <Widget>[
-              const SliverToBoxAdapter(child: ConnectionProfileBanner()),
               SliverPadding(
                 padding: const EdgeInsets.fromLTRB(AppSpacing.lg, AppSpacing.lg, AppSpacing.lg, AppSpacing.xxl),
                 sliver: SliverToBoxAdapter(child: _content(context, ref, async)),

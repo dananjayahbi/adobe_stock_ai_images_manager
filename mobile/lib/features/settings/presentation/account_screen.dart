@@ -7,7 +7,6 @@ import '../../../app/theme/tokens.dart';
 import '../../../core/utils/app_exception.dart';
 import '../../../core/utils/ui_message.dart';
 import '../../../core/widgets/app_card.dart';
-import '../../../core/widgets/connection_profile_banner.dart';
 import '../../../core/widgets/error_view.dart';
 import '../../../core/widgets/ghost_button.dart';
 import '../../../core/widgets/label_caps.dart';
@@ -221,8 +220,6 @@ class _AccountScreenState extends ConsumerState<AccountScreen> {
           data: (AppSettings settings) => ListView(
             padding: const EdgeInsets.all(AppSpacing.lg),
             children: <Widget>[
-              const ConnectionProfileBanner(),
-              const SizedBox(height: AppSpacing.lg),
               AppCard(
                 child: Column(
                   children: <Widget>[

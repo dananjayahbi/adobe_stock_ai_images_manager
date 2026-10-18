@@ -50,6 +50,19 @@ class BatchCard extends StatelessWidget {
     _ => StampTone.neutral,
   };
 
+  /// Explicit stamp copy (02 §1): raw statuses read too coarse for the
+  /// card row — a finished run is a **processed** batch (`completed` →
+  /// `PROCESSED`), never the backend's `completed`/`draft` vocabulary.
+  static String labelFor(String status) => switch (status) {
+    'draft' => 'DRAFT',
+    'queued' => 'QUEUED',
+    'running' => 'RUNNING',
+    'completed' => 'PROCESSED',
+    'failed' => 'FAILED',
+    'cancelled' => 'CANCELLED',
+    _ => 'DRAFT', // parser normalises unknown → draft; belt and braces.
+  };
+
   @override
   Widget build(BuildContext context) {
     final String status = batch.status;
@@ -73,7 +86,7 @@ class BatchCard extends StatelessWidget {
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                   ),
-                  StampBadge(label: status, tone: toneFor(status)),
+                  StampBadge(label: labelFor(status), tone: toneFor(status)),
                 ],
               ),
               const SizedBox(height: AppSpacing.sm),

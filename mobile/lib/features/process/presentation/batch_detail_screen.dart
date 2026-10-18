@@ -6,7 +6,6 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import '../../../app/theme/tokens.dart';
 import '../../../core/utils/app_exception.dart';
 import '../../../core/utils/formatters.dart';
-import '../../../core/widgets/connection_profile_banner.dart';
 import '../../../core/widgets/empty_state.dart';
 import '../../../core/widgets/error_view.dart';
 import '../../../core/widgets/ghost_button.dart';
@@ -31,7 +30,9 @@ import 'step_timeline.dart';
 /// `/process/:batchId` (05 §2.7.2): live batch detail — header with status
 /// + transport indicator ([LiveDot] while SSE flows, `POLLING` chip while
 /// the 2.5s fallback runs), job ProgressBar, [StepTimeline] fed by live
-/// snapshots, results grid, and the Run/Stop/Save-as-profile actions.
+/// snapshots, results grid, and the Run/Stop/Delete/Save-as-profile actions
+/// (completed batches swap Run for a "processed — delete to start fresh"
+/// note; Delete is absent while queued|running).
 /// `batchEventsProvider` snapshots override the initial `batchDetailProvider`
 /// payload; when both fail (404 after a studio restart — 02 §16) a friendly
 /// error offers the way back to `/process`.
@@ -55,7 +56,6 @@ class BatchDetailScreen extends ConsumerWidget {
       appBar: AppBar(title: const Text('Batch')),
       body: Column(
         children: <Widget>[
-          const ConnectionProfileBanner(),
           Expanded(child: _content(context, ref, detailAsync, events)),
         ],
       ),
@@ -140,7 +140,7 @@ class BatchDetailScreen extends ConsumerWidget {
                 style: Theme.of(context).textTheme.titleLarge,
               ),
             ),
-            StampBadge(label: batch.status, tone: tone),
+            StampBadge(label: BatchCard.labelFor(batch.status), tone: tone),
           ],
         ),
         const SizedBox(height: AppSpacing.sm),
@@ -208,6 +208,14 @@ class BatchDetailScreen extends ConsumerWidget {
                   onPressed: () => _run(context, ref, batch),
                 ),
               ),
+            // Completed = processed (02 §1): rerun 409s server-side, so the
+            // Run button steps aside for a muted note pointing at delete.
+            if (batch.status == 'completed')
+              Text(
+                'Processed — delete to run a fresh batch',
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: AppColors.ink400),
+              ),
             // Stop doubles as "leave the queue" for queued batches (M4:
             // cancel works on both states); Run stays reserved for
             // draft/failed/cancelled above — never while queued|running.
@@ -217,6 +225,16 @@ class BatchDetailScreen extends ConsumerWidget {
                 SecondaryButton(
                   label: 'Stop',
                   onPressed: () => _cancel(context, ref, batch),
+                ),
+              ),
+            // Delete is the fresh-start path for finished batches — never
+            // while running/queued (backend 409s; the guard mirrors it).
+            if (!batch.isActive)
+              _offlineGuard(
+                offline,
+                GhostButton(
+                  label: 'Delete',
+                  onPressed: () => _delete(context, ref, batch),
                 ),
               ),
             if (batch.steps.isNotEmpty)
@@ -357,6 +375,40 @@ class BatchDetailScreen extends ConsumerWidget {
       }
     } finally {
       if (context.mounted) ref.invalidate(batchDetailProvider(batch.id));
+    }
+  }
+
+  /// Delete (02 §1): confirm (name + image count) → `DELETE batches/{id}`
+  /// → toast + back to the list. The backend 409s running/queued batches —
+  /// the header never offers Delete for those, and a race surfaces the
+  /// backend's `detail` verbatim (same action-flavored copy as the picker).
+  Future<void> _delete(BuildContext context, WidgetRef ref, Batch batch) async {
+    final bool? confirmed = await _confirm(
+      context,
+      title: 'Delete batch?',
+      body:
+          '“${batch.name}” — ${batch.recordCount} images will be deleted with it.',
+      action: 'Delete',
+    );
+    if (confirmed != true) {
+      return;
+    }
+    try {
+      await ref.read(processRepositoryProvider).deleteBatch(batch.id);
+      if (context.mounted) {
+        showAppToast(
+          context,
+          'Batch deleted · ${batch.recordCount} images cleaned',
+          tone: ToastTone.success,
+        );
+        // The list must come back clean — never keep a deleted row cached.
+        ref.invalidate(batchListProvider);
+        context.go('/process');
+      }
+    } catch (error) {
+      if (context.mounted) {
+        showAppToast(context, actionErrorText(error), tone: ToastTone.error);
+      }
     }
   }
 

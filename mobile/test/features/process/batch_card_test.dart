@@ -57,7 +57,7 @@ void main() {
     await pumpCard(tester, queuePosition: 2);
 
     final StampBadge badge = tester.widget<StampBadge>(find.byType(StampBadge));
-    expect(badge.label, 'queued');
+    expect(badge.label, 'QUEUED');
     expect(badge.tone, StampTone.accent); // brass/on-deck family
     expect(find.text('QUEUED'), findsOneWidget); // stamp renders uppercase
 
@@ -86,5 +86,26 @@ void main() {
     expect(BatchCard.toneFor('failed'), StampTone.failure);
     expect(BatchCard.toneFor('draft'), StampTone.neutral);
     expect(BatchCard.toneFor('cancelled'), StampTone.neutral);
+  });
+
+  test('label map prints every status as caps — completed reads PROCESSED', () {
+    expect(BatchCard.labelFor('draft'), 'DRAFT');
+    expect(BatchCard.labelFor('queued'), 'QUEUED');
+    expect(BatchCard.labelFor('running'), 'RUNNING');
+    expect(BatchCard.labelFor('completed'), 'PROCESSED'); // 02 §1
+    expect(BatchCard.labelFor('failed'), 'FAILED');
+    expect(BatchCard.labelFor('cancelled'), 'CANCELLED');
+  });
+
+  testWidgets('a completed batch stamps PROCESSED with the success tone', (
+    WidgetTester tester,
+  ) async {
+    await pumpCard(tester, batch: _batch(status: 'completed'));
+
+    final StampBadge badge = tester.widget<StampBadge>(find.byType(StampBadge));
+    expect(badge.label, 'PROCESSED');
+    expect(badge.tone, StampTone.success);
+    expect(find.text('PROCESSED'), findsOneWidget);
+    expect(find.text('COMPLETED'), findsNothing); // raw status never prints
   });
 }

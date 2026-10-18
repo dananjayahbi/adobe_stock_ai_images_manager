@@ -46,7 +46,14 @@ export async function updateBatch(
   return data;
 }
 
-export async function deleteBatch(id: string): Promise<{ deleted: string }> {
+/**
+ * Delete a batch — cascades its records and on-disk files. The server answers
+ * 409 while the batch is running/queued (surfaced by the client as the
+ * backend's `detail` string) and returns the id plus the images removed.
+ */
+export async function deleteBatch(
+  id: string
+): Promise<{ deleted: string; images: number }> {
   const { data } = await api.delete(`/api/batches/${id}`);
   return data;
 }

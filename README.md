@@ -40,7 +40,9 @@ Highlights:
   Run/queue enqueues and a single-flight server worker executes them one
   after another (queued rows survive restarts and resume on boot).
   The Processes tab (mobile) and Processes page (web nav) show Active /
-  Drafts / Finished with queue positions and jump back into any batch;
+  Drafts / Processed / Finished with queue positions and jump back into
+  any batch; processed (completed) batches can't be re-run — open one to
+  **delete it together with its images**, cleaning it like it never ran;
   the Home **New batch** button opens a **scoped image explorer** that
   browses the `source_folder` configured once in the web Config page
   (per-folder thumbnails, multi-select → Save draft or Queue batch).
@@ -87,7 +89,7 @@ Highlights:
 cd mobile
 flutter pub get
 flutter analyze        # clean
-flutter test           # 430 tests
+flutter test           # 440 tests
 flutter build apk --release   # installable release APK → build/app/outputs/flutter-apk/app-release.apk
 flutter build web --release --base-href /flutter/  # served at https://<tunnel>/flutter (see mobile/README.md)
 flutter run -d chrome  # quick look (set the app's profile to your backend URL)

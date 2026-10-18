@@ -5,7 +5,6 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 
 import '../../../app/theme/tokens.dart';
 import '../../../core/widgets/app_card.dart';
-import '../../../core/widgets/connection_profile_banner.dart';
 import '../../../core/widgets/error_view.dart';
 import '../../../core/widgets/ghost_button.dart';
 import '../../../core/widgets/label_caps.dart';
@@ -47,7 +46,6 @@ class _NewBatchScreenState extends ConsumerState<NewBatchScreen> {
       appBar: AppBar(title: const Text('New batch')),
       body: Column(
         children: <Widget>[
-          const ConnectionProfileBanner(),
           Expanded(child: _currentStep(context)),
           _footer(context),
         ],

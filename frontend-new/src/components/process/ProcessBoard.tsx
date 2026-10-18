@@ -7,6 +7,7 @@ import { useBatchList } from "@/hooks/useBatchList";
 import {
   isBatchActive,
   isBatchFinished,
+  isBatchProcessed,
   queuePositions,
 } from "@/components/process/batchStatus";
 import ProcessSection from "./ProcessSection";
@@ -16,9 +17,10 @@ import Button from "@/components/ui/Button";
 
 /**
  * The Processes ledger: every batch grouped into Active (running → queued in
- * queue order), Drafts, and Finished (most recent first) — the client-side
- * contract order. Rows link back to the batch page, and the dual-cadence
- * hook keeps the queue live without polling hard while idle.
+ * queue order), Drafts, Processed (completed), and Finished (failed or
+ * cancelled) — the client-side contract order. Rows link back to the batch
+ * page, and the dual-cadence hook keeps the queue live without polling hard
+ * while idle.
  */
 export default function ProcessBoard() {
   const { batches, loading, error, refresh } = useBatchList();
@@ -26,9 +28,12 @@ export default function ProcessBoard() {
 
   const positions = useMemo(() => queuePositions(batches), [batches]);
 
-  const { active, drafts, finished } = useMemo(() => {
+  const { active, drafts, processed, finished } = useMemo(() => {
     const active = batches.filter((batch) => isBatchActive(batch.status));
     const drafts = batches.filter((batch) => batch.status === "draft");
+    // Completed splits out of the terminal group: it has a usable result and
+    // must be deleted before a fresh run, so it earns its own section.
+    const processed = batches.filter((batch) => isBatchProcessed(batch.status));
     const finished = batches.filter((batch) => isBatchFinished(batch.status));
 
     // Contract order: running first, then queued by queued_at asc. Ties among
@@ -40,9 +45,10 @@ export default function ProcessBoard() {
     });
     // Drafts and terminal states: most recently touched first.
     drafts.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
+    processed.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
     finished.sort((a, b) => b.updated_at.localeCompare(a.updated_at));
 
-    return { active, drafts, finished };
+    return { active, drafts, processed, finished };
   }, [batches]);
 
   const open = useCallback(
@@ -134,10 +140,21 @@ export default function ProcessBoard() {
       </ProcessSection>
 
       <ProcessSection
+        id="processed"
+        label="Processed"
+        caption="run completed"
+        emptyText="No processed batches yet."
+      >
+        {processed.map((batch) => (
+          <ProcessRow key={batch.id} batch={batch} onOpen={open} />
+        ))}
+      </ProcessSection>
+
+      <ProcessSection
         id="finished"
         label="Finished"
-        caption="completed, failed or cancelled"
-        emptyText="No finished runs yet."
+        caption="failed or cancelled"
+        emptyText="No failed or cancelled runs."
       >
         {finished.map((batch) => (
           <ProcessRow key={batch.id} batch={batch} onOpen={open} />

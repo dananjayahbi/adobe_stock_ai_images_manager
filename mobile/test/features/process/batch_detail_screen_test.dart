@@ -4,11 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:ai_stock_studio/app/theme/theme.dart';
 import 'package:ai_stock_studio/core/utils/app_exception.dart';
+import 'package:ai_stock_studio/core/widgets/connection_profile_banner.dart';
 import 'package:ai_stock_studio/features/process/domain/batch.dart';
 import 'package:ai_stock_studio/features/process/domain/batch_step.dart';
 import 'package:ai_stock_studio/features/process/domain/process_repository.dart';
@@ -87,8 +89,17 @@ class _FakeProcessRepository implements ProcessRepository {
   @override
   Future<Batch> cancelBatch(String batchId) async => detail!;
 
+  Object? deleteError;
+  final List<String> deleteCalls = <String>[];
+
   @override
-  Future<void> deleteBatch(String batchId) async => throw UnimplementedError();
+  Future<void> deleteBatch(String batchId) async {
+    deleteCalls.add(batchId);
+    final Object? error = deleteError;
+    if (error != null) {
+      throw error; // ignore: only_throw_errors — fake failure injection
+    }
+  }
 
   @override
   Future<List<StepProfile>> fetchProfiles({String? mediaType}) async =>
@@ -340,5 +351,161 @@ void main() {
     // Flush the network-error toast timer so no timer dangles.
     await tester.pump(const Duration(seconds: 3));
     await tester.pump(const Duration(milliseconds: 100));
+  });
+
+  testWidgets('action matrix: completed → processed note + Delete (no Run), '
+      'draft/failed/cancelled → Run + Delete, running/queued → Stop only '
+      '(02 §1)', (WidgetTester tester) async {
+    final _FakeProcessRepository repo = _FakeProcessRepository();
+
+    Future<void> pumpStatus(String status) async {
+      // Full unmount between statuses so each pump gets a fresh container
+      // (the detail + events providers cache per scope).
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump();
+      repo.detail = _detail(status: status);
+      await pumpDetail(tester, repo);
+    }
+
+    await pumpStatus('completed');
+    expect(find.text('PROCESSED'), findsOneWidget); // header stamp
+    expect(
+      find.text('Processed — delete to run a fresh batch'),
+      findsOneWidget,
+    );
+    expect(find.text('Run batch'), findsNothing);
+    expect(find.text('Stop'), findsNothing);
+    expect(find.text('Delete'), findsOneWidget);
+
+    for (final String status in <String>['draft', 'failed', 'cancelled']) {
+      await pumpStatus(status);
+      expect(find.text('Run batch'), findsOneWidget);
+      expect(find.text('Delete'), findsOneWidget);
+      expect(find.text('Stop'), findsNothing);
+      expect(find.textContaining('delete to run a fresh batch'), findsNothing);
+      expect(repo.runCalls, isEmpty); // gated behind a confirm dialog
+      expect(repo.deleteCalls, isEmpty);
+    }
+
+    for (final String status in <String>['running', 'queued']) {
+      await pumpStatus(status);
+      expect(find.text('Stop'), findsOneWidget);
+      expect(find.text('Run batch'), findsNothing);
+      expect(find.text('Delete'), findsNothing); // backend would 409
+    }
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump();
+  });
+
+  testWidgets('Delete asks for confirmation with name + count, posts, toasts '
+      'and returns to /process', (WidgetTester tester) async {
+    final _FakeProcessRepository repo = _FakeProcessRepository()
+      ..detail = _detail(status: 'completed');
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    final GoRouter router = GoRouter(
+      initialLocation: '/process/b-1',
+      routes: <RouteBase>[
+        GoRoute(
+          path: '/process',
+          builder: (BuildContext context, GoRouterState state) =>
+              const Text('PROCESS LIST'),
+        ),
+        GoRoute(
+          path: '/process/:batchId',
+          builder: (BuildContext context, GoRouterState state) =>
+              BatchDetailScreen(batchId: state.pathParameters['batchId']!),
+        ),
+      ],
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          processRepositoryProvider.overrideWithValue(repo),
+          sharedPreferencesProvider.overrideWithValue(prefs),
+        ],
+        child: MaterialApp.router(
+          theme: buildAppTheme(),
+          routerConfig: router,
+        ),
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    await tester.tap(find.text('Delete'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+
+    // Confirm carries the name and the record_count sentence (02 §1).
+    expect(find.text('Delete batch?'), findsOneWidget);
+    expect(
+      find.descendant(
+        of: find.byType(AlertDialog),
+        matching: find.textContaining('Raster run'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('4 images will be deleted with it'),
+      findsOneWidget,
+    );
+    expect(repo.deleteCalls, isEmpty); // not posted yet
+
+    await tester.tap(find.widgetWithText(TextButton, 'Delete'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 300)); // route transition
+
+    expect(repo.deleteCalls, <String>['b-1']);
+    expect(
+      find.text('Batch deleted · 4 images cleaned'),
+      findsOneWidget,
+    ); // success toast
+    expect(find.text('PROCESS LIST'), findsOneWidget); // context.go
+    expect(find.text('Raster run'), findsNothing); // detail gone
+
+    // Flush the toast timer (3 s) so no timer dangles.
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(find.text('Batch deleted · 4 images cleaned'), findsNothing);
+  });
+
+  testWidgets('delete 409 surfaces the backend detail verbatim in an error '
+      'toast', (WidgetTester tester) async {
+    final _FakeProcessRepository repo = _FakeProcessRepository()
+      ..detail = _detail(status: 'completed')
+      ..deleteError = const ServerException(
+        message: 'already processed — delete it to start a fresh',
+      );
+    await pumpDetail(tester, repo);
+
+    await tester.tap(find.text('Delete'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.tap(find.widgetWithText(TextButton, 'Delete'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 100));
+
+    expect(repo.deleteCalls, <String>['b-1']);
+    expect(
+      find.text('already processed — delete it to start a fresh'),
+      findsOneWidget,
+    );
+    expect(find.text('Raster run'), findsOneWidget); // stayed on the screen
+
+    await tester.pump(const Duration(seconds: 3));
+    await tester.pump(const Duration(milliseconds: 100));
+  });
+
+  testWidgets('the detail screen carries no connection-profile banner', (
+    WidgetTester tester,
+  ) async {
+    final _FakeProcessRepository repo = _FakeProcessRepository()
+      ..detail = _detail(status: 'completed');
+    await pumpDetail(tester, repo);
+
+    expect(find.byType(ConnectionProfileBanner), findsNothing);
   });
 }

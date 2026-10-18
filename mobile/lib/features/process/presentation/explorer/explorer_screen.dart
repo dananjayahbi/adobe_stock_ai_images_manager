@@ -5,7 +5,6 @@ import 'package:lucide_flutter/lucide_flutter.dart';
 import '../../../../app/theme/tokens.dart';
 import '../../../../core/network/session_cookie.dart';
 import '../../../../core/widgets/app_card.dart';
-import '../../../../core/widgets/connection_profile_banner.dart';
 import '../../../../core/widgets/empty_state.dart';
 import '../../../../core/widgets/error_view.dart';
 import '../../../../core/widgets/label_caps.dart';
@@ -39,7 +38,6 @@ class ExplorerScreen extends ConsumerWidget {
       appBar: AppBar(title: const Text('Select images')),
       body: Column(
         children: <Widget>[
-          const ConnectionProfileBanner(),
           Expanded(child: _content(context, ref, async)),
         ],
       ),

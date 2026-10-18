@@ -186,6 +186,40 @@ class TestQueuePreconditions:
         assert response.status_code == 409
         assert "already queued" in response.json()["detail"]
 
+    def test_completed_batch_is_rejected_on_both_paths(
+        self, client, db_session_factory, queue_env
+    ):
+        """A processed batch is terminal: rerun requires a fresh batch."""
+        batch_id = _ready_batch(client)
+        _set_status(
+            db_session_factory, batch_id, "completed", finished_at=utcnow()
+        )
+
+        for path in ("run", "queue"):
+            response = client.post(f"/api/batches/{batch_id}/{path}")
+            assert response.status_code == 409, response.text
+            detail = response.json()["detail"]
+            assert "processed" in detail
+            assert "delete" in detail
+
+        # Refused before any state change or worker kick.
+        assert _get_row(db_session_factory, batch_id).status == "completed"
+        assert queue_env.calls == []
+
+    def test_cancelled_batch_can_be_reenqueued(
+        self, client, db_session_factory, queue_env
+    ):
+        """Only `completed` is ban-from-rerun; a cancelled batch is runnable."""
+        batch_id = _ready_batch(client)
+        _set_status(
+            db_session_factory, batch_id, "cancelled", finished_at=utcnow()
+        )
+
+        response = client.post(f"/api/batches/{batch_id}/run")
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == "queued"
+        assert queue_env.calls == [batch_id]
+
 
 # --------------------------------------------------------------------------- #
 # Enqueue semantics
