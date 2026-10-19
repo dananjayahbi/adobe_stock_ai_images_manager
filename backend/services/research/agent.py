@@ -28,6 +28,7 @@ mode that is invisible without care:
 from __future__ import annotations
 
 import logging
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Callable, Iterator
@@ -96,6 +97,46 @@ MAX_MALFORMED_REPLIES = 2
 #: idea would otherwise search until its budget was gone. When the attempts are
 #: spent the run reports the best it found, with its real score.
 MAX_TARGET_ATTEMPTS = 2
+
+#: The idea count written in the operator's message ("give me 5 best ideas").
+#:
+#: Deliberately trivial: the *objective* is what makes the model produce N
+#: distinct ideas — this parse only lets the loop notice when fewer than N have
+#: been given a scorecard, so it must never invent a number the operator did
+#: not write. Matches a number followed (within two words) by "idea(s)",
+#: "niche(s)" or "concept(s)".
+_IDEA_COUNT_RE = re.compile(
+    r"\b(\d{1,3})\s+(?:\w+\s+){0,2}?(?:ideas?|niches|concepts)\b",
+    re.IGNORECASE,
+)
+
+
+def _requested_ideas(message: str) -> int | None:
+    """The idea count the operator asked for, or ``None`` when unstated.
+
+    Capped at the synthesis prompt cap so a malformed number cannot ask the
+    loop for an unbounded number of nudge turns.
+    """
+    match = _IDEA_COUNT_RE.search(message or "")
+    if not match:
+        return None
+    count = int(match.group(1))
+    if count < 1:
+        return None
+    return min(count, synthesis.MAX_PROMPTS)
+
+
+def _idea_nudge_limit(requested: int) -> int:
+    """How many count nudges an ideas run may get before its answer is accepted.
+
+    Each nudge asks for **all** remaining assessments at once, and one reply
+    may carry at most ``protocol.MAX_CALLS_PER_REPLY`` calls — so the limit
+    scales with the request but never falls below the ordinary
+    :data:`MAX_TARGET_ATTEMPTS` floor. Bounded on every path: a model that
+    never complies still finishes.
+    """
+    per_reply = -(-requested // protocol.MAX_CALLS_PER_REPLY)
+    return max(MAX_TARGET_ATTEMPTS, per_reply)
 
 #: How many times a research run may be told "you announced research but did not
 #: perform any" before its prose is accepted anyway.
@@ -223,7 +264,10 @@ def _initial_messages(
 
     user_text = (request.message or "").strip()
     if request.wants_prompts and request.count > 0:
-        user_text += synthesis.prompt_format_instruction(request.count)
+        user_text += synthesis.prompt_format_instruction(
+            request.count,
+            aspect_token=prompt_module.aspect_token_for(request.mode),
+        )
     messages.append({"role": "user", "content": user_text})
     return messages, folded
 
@@ -361,6 +405,14 @@ def run(request: RunRequest) -> Iterator[dict]:
     #: The subject of that best assessment, reported back to the operator when the
     #: attempts are spent so they know which idea the number belongs to.
     best_subject = ""
+    #: How many distinct ideas have been given a scorecard this turn. On an
+    #: `ideas` run the operator's message may ask for several ("give me 5 best
+    #: ideas"), and the loop has to know how many were actually assessed before
+    #: it can decide whether the answer is complete or has collapsed to one.
+    assessed_ideas = 0
+    #: The count parsed from the operator's message, or None when unstated
+    #: (then the objective's "propose five" default governs, not the loop).
+    requested_ideas = _requested_ideas(request.message)
 
     #: A prompt-producing run answers in the JSON contract, so its content deltas
     #: are a machine payload, not prose. Streaming them would print raw JSON with
@@ -639,19 +691,79 @@ def run(request: RunRequest) -> Iterator[dict]:
                 )
                 continue
 
-            # A gated run whose best score is below the operator's target has not
-            # answered the question it was asked. The prompt tells the model to keep
-            # searching, but a prompt is a request: measured live, a run researched a
-            # replacement idea, scored it **53%** — below the 72% of the idea the
-            # operator had just rejected — and presented it as the answer, because
-            # nothing in the loop compared the score to the target.
+            # An `ideas` run the operator asked for several scores ("give me 5
+            # best ideas") must not collapse to the one idea that happened to
+            # be assessed first. While fewer ideas than requested carry a
+            # scorecard, send the model back to assess the rest — regardless of
+            # how good the one it has looks, because a high score on idea #1 is
+            # not an answer to "give me 5".
+            if (
+                request.mode == "ideas"
+                and request.validity_check
+                and not request.wants_prompts
+                and requested_ideas is not None
+                and assessed_ideas < requested_ideas
+                and target_attempts < _idea_nudge_limit(requested_ideas)
+            ):
+                target_attempts += 1
+                missing = requested_ideas - assessed_ideas
+                scored_verb = "has" if assessed_ideas == 1 else "have"
+                missing_noun = "idea" if missing == 1 else "ideas"
+                yield event_module.event(
+                    event_module.NOTICE,
+                    text=(
+                        f"The operator asked for {requested_ideas} ideas and "
+                        f"only {assessed_ideas} {scored_verb} a scorecard. "
+                        f"Asking the agent to assess the remaining {missing} "
+                        f"{missing_noun} before answering."
+                    ),
+                )
+                messages.append({"role": "assistant", "content": reply})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            f"The operator asked for {requested_ideas} distinct "
+                            f"ideas; you have assessed only {assessed_ideas} so "
+                            f"far. Call `assess_validity` once for EACH of the "
+                            f"remaining {missing} {missing_noun} — pass "
+                            "`subject` = "
+                            "that idea — then answer with ALL "
+                            f"{requested_ideas} ideas, strongest first, each "
+                            "presented together with the score its own "
+                            "assessment returned.\n\n"
+                            "Do not stop at one idea and do not drop an idea "
+                            "for scoring below the "
+                            f"{validity_module.TARGET_AVERAGE:g}% target: "
+                            "present it with its real score and mark it as "
+                            "lower confidence. Report every idea with its own "
+                            "score — that is what was asked for."
+                        ),
+                    }
+                )
+                continue
+
+            # A gated *research* run whose best score is below the operator's
+            # target has not answered the question it was asked. The prompt
+            # tells the model to keep searching, but a prompt is a request:
+            # measured live, a run researched a replacement idea, scored it
+            # **53%** — below the 72% of the idea the operator had just
+            # rejected — and presented it as the answer, because nothing in the
+            # loop compared the score to the target.
             #
             # Only enforced when the gate is on and *not* released: a released run is
             # writing prompts for an idea the operator already accepted, so its score
             # is no longer the deciding question.
+            #
+            # Deliberately NOT applied to `ideas` runs: their contract is "the
+            # number I asked for, each with its real score", so the target
+            # ranks and recommends there — it never sends the loop hunting for
+            # one better idea to replace the set (the count nudge above is the
+            # only ideas-mode nudge).
             if (
                 request.validity_check
                 and not request.wants_prompts
+                and request.mode != "ideas"
                 and best_average is not None
                 and best_average < validity_module.TARGET_AVERAGE
                 and target_attempts < MAX_TARGET_ATTEMPTS
@@ -892,6 +1004,7 @@ def run(request: RunRequest) -> Iterator[dict]:
                 if scored is not None and (best_average is None or scored > best_average):
                     best_average = scored
                     best_subject = str(presented.get("subject") or "").strip()
+                assessed_ideas += 1
                 yield event_module.event(
                     event_module.VALIDITY,
                     validity=presented,
@@ -1065,7 +1178,11 @@ def _finalise(
             yield
         return
 
-    drafts, pairs, note, summary = synthesis.build_drafts(answer)
+    from services.research import prompts as prompt_module
+
+    drafts, pairs, note, summary = synthesis.build_drafts(
+        answer, aspect_token=prompt_module.aspect_token_for(request.mode)
+    )
 
     if note:
         yield event_module.event(event_module.NOTICE, text=note)

@@ -1,5 +1,6 @@
 "use client";
 
+import { useFolderDrop } from "@/hooks/useFolderDrop";
 import type { GalleryGroup } from "@/lib/types";
 
 interface GroupCardProps {
@@ -7,15 +8,39 @@ interface GroupCardProps {
   onOpen: (group: GalleryGroup) => void;
   onRename: (group: GalleryGroup) => void;
   onDelete: (group: GalleryGroup) => void;
+  /**
+   * When provided the card accepts a dropped selection of images and moves
+   * them into this folder (gallery drag-and-drop).
+   */
+  onDropRecords?: (recordIds: string[]) => void;
 }
 
 /**
  * A folder tile in the gallery. Folder cards sit *outside* the image filters
  * by design: filtering never hides a folder, only the images inside one.
  */
-export default function GroupCard({ group, onOpen, onRename, onDelete }: GroupCardProps) {
+export default function GroupCard({
+  group,
+  onOpen,
+  onRename,
+  onDelete,
+  onDropRecords,
+}: GroupCardProps) {
+  const drop = useFolderDrop({
+    droppable: onDropRecords !== undefined,
+    onDropRecords: onDropRecords ?? (() => {}),
+  });
+
   return (
-    <div className="frame-card group relative mb-4 block w-full break-inside-avoid transition-all hover:-translate-y-0.5 hover:shadow-raised">
+    <div
+      onDragEnter={drop.onDragEnter}
+      onDragOver={drop.onDragOver}
+      onDragLeave={drop.onDragLeave}
+      onDrop={drop.onDrop}
+      className={`frame-card group relative mb-4 block w-full break-inside-avoid transition-all hover:-translate-y-0.5 hover:shadow-raised ${
+        drop.dragOver ? "ring-2 ring-oxblood-400 shadow-raised" : ""
+      }`}
+    >
       <button
         type="button"
         onClick={() => onOpen(group)}
@@ -40,6 +65,15 @@ export default function GroupCard({ group, onOpen, onRename, onDelete }: GroupCa
           </div>
         </div>
       </button>
+
+      {/* Drop affordance: shown only while a gallery selection hovers. */}
+      {drop.dragOver && (
+        <p className="pointer-events-none absolute inset-x-0 bottom-0 bg-oxblood-500 px-3 py-1 text-center font-stamp text-[10px] uppercase tracking-[0.14em] text-ink-50">
+          {drop.dropCount > 0
+            ? `Move ${drop.dropCount} image${drop.dropCount === 1 ? "" : "s"} here`
+            : "Move images here"}
+        </p>
+      )}
 
       <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
         <button

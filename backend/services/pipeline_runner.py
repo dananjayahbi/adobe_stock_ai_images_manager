@@ -44,6 +44,7 @@ from services import (
     record_metrics,
     step_progress,
 )
+from services.image_lifecycle import refresh_state_for_stage
 from services.jobs import (
     STATUS_CANCELLED,
     STATUS_COMPLETED,
@@ -516,6 +517,8 @@ def _step_diversity_gate(
                 record.stage = PipelineStage.QUARANTINED
                 record.queued_stage = None
                 record.stage_updated_at = utcnow()
+                # Diversity rejection is a pipeline failure: leave the queue.
+                refresh_state_for_stage(record)
                 item.status = "succeeded"
                 item.message = decision["reason"]
                 item.progress = 100.0

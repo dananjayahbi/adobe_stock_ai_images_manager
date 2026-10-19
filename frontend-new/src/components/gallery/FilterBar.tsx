@@ -1,9 +1,10 @@
 "use client";
 
+import { LIFECYCLE_STATES, STATE_LABELS } from "@/lib/states";
 import type { RecordFilters } from "@/lib/records";
 
 export interface GalleryFilters extends RecordFilters {
-  stage: string;
+  state: string;
   used: "all" | "used" | "unused";
 }
 
@@ -19,21 +20,20 @@ interface FilterBarProps {
  * reflows a folder card — folders are the operator's own structure and must
  * stay visible whatever the current lens says.
  *
- * Options mirror what `/api/records` actually supports: pipeline stage and
- * usage. Anything richer would be a lie the backend could not honour.
+ * Options mirror what `/api/records?state=` actually supports: comma-separated
+ * lifecycle states, plus usage. The default lens is "Any state" (`""`), which
+ * the select renders as its first option — the file's own rule: the option
+ * value must match the active default exactly or the `<select>` would render
+ * blank. "Publishable" stays as an explicit, non-default composite choice.
+ * Anything richer would be a lie the backend could not honour.
  */
-const STAGES: { value: string; label: string }[] = [
-  { value: "", label: "Any stage" },
-  { value: "COLLECTED", label: "Collected" },
-  { value: "OCR_CLEAR", label: "OCR clear" },
-  { value: "OCR_REJECTED", label: "OCR rejected" },
-  { value: "UPSCALED", label: "Upscaled" },
-  { value: "REFINED", label: "Refined" },
-  { value: "COMPATIBLE", label: "Compatible" },
-  { value: "INCOMPATIBLE", label: "Incompatible" },
-  { value: "METADATA_READY", label: "Metadata ready" },
-  { value: "PUBLISHED", label: "Published" },
-  { value: "QUARANTINED", label: "Quarantined" },
+const STATES: { value: string; label: string }[] = [
+  { value: "", label: "Any state" },
+  { value: "READY_TO_PUBLISH,PUBLISHED,AS_ACCEPTED", label: "Publishable" },
+  ...LIFECYCLE_STATES.map((state) => ({
+    value: state,
+    label: STATE_LABELS[state],
+  })),
 ];
 
 const USAGE: { value: GalleryFilters["used"]; label: string }[] = [
@@ -46,22 +46,22 @@ const SELECT_CLASS =
   "rounded-sm border border-parchment-500 bg-parchment-50 px-2.5 py-1.5 text-sm text-ink-800 focus:border-brass-400 focus:outline-none focus:ring-1 focus:ring-brass-400";
 
 export default function FilterBar({ filters, onChange }: FilterBarProps) {
-  const active = filters.stage !== "" || filters.used !== "all";
+  const active = filters.state !== "" || filters.used !== "all";
 
   return (
     <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Image filters">
-      <label className="sr-only" htmlFor="filter-stage">
-        Stage
+      <label className="sr-only" htmlFor="filter-state">
+        State
       </label>
       <select
-        id="filter-stage"
+        id="filter-state"
         className={SELECT_CLASS}
-        value={filters.stage}
-        onChange={(event) => onChange({ ...filters, stage: event.target.value })}
+        value={filters.state}
+        onChange={(event) => onChange({ ...filters, state: event.target.value })}
       >
-        {STAGES.map((stage) => (
-          <option key={stage.value} value={stage.value}>
-            {stage.label}
+        {STATES.map((state) => (
+          <option key={state.value} value={state.value}>
+            {state.label}
           </option>
         ))}
       </select>
@@ -87,7 +87,7 @@ export default function FilterBar({ filters, onChange }: FilterBarProps) {
       {active && (
         <button
           type="button"
-          onClick={() => onChange({ ...filters, stage: "", used: "all" })}
+          onClick={() => onChange({ ...filters, state: "", used: "all" })}
           className="rounded-sm border border-transparent px-2 py-1.5 font-stamp text-[11px] uppercase tracking-[0.14em] text-ink-400 hover:text-ink-800"
         >
           Clear filters

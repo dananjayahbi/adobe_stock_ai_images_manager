@@ -1,6 +1,7 @@
 "use client";
 
 import { thumbnailUrl } from "@/lib/client";
+import { stateFromLegacy, stateLabel } from "@/lib/states";
 import type { ImageRecord } from "@/lib/types";
 
 interface ImageCardProps {
@@ -58,7 +59,9 @@ export default function ImageCard({ record, onOpen }: ImageCardProps) {
           {caption}
         </p>
         <p className="label-caps mt-0.5">
-          {record.stage.replace(/_/g, " ").toLowerCase()}
+          {/* Lifecycle state, derived from legacy stage/status when the
+              response predates the `state` field. */}
+          {stateLabel(stateFromLegacy(record)).toLowerCase()}
         </p>
       </div>
     </>

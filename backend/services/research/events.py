@@ -143,7 +143,16 @@ class EventAccumulator:
         self.tool_calls: list[dict] = []
         self.sources: list[dict] = []
         self.prompts: list[dict] = []
+        #: The first assessment, kept under the legacy single-slot name so
+        #: readers of ``result["validity"]`` (and runs stored before multi-idea
+        #: support) keep working. First rather than last: with one assessment —
+        #: the only shape those readers were written for — the two agree, and
+        #: the first is what "the run's scorecard" means when several exist.
         self.validity: dict | None = None
+        #: Every validity assessment, in arrival order. An ideas run scores one
+        #: idea per ``assess_validity`` call, and each one must survive — the
+        #: single slot above collapses them to one card.
+        self.validities: list[dict] = []
         self.context: dict | None = None
         self.notices: list[str] = []
         self.error: str = ""
@@ -175,7 +184,13 @@ class EventAccumulator:
         elif event_type == PROMPTS:
             self.prompts = list(payload.get("prompts") or [])
         elif event_type == VALIDITY:
-            self.validity = payload.get("validity")
+            # One event per assessment: accumulate them all, and keep the first
+            # under the legacy single-slot name for older readers.
+            entry = payload.get("validity")
+            if isinstance(entry, dict):
+                if self.validity is None:
+                    self.validity = entry
+                self.validities.append(entry)
         elif event_type == CONTEXT:
             # Latest wins: the report is a measurement of the conversation as it
             # stands, so the final one describes the completed run.
@@ -251,7 +266,11 @@ class EventAccumulator:
             "tool_calls": self.tool_calls,
             "sources": self.sources,
             "prompts": self.prompts,
+            # The legacy single slot (first assessment) plus the full ordered
+            # list, so a client that only knows `validity` still renders one
+            # card and one that knows `validities` renders a card per idea.
             "validity": self.validity,
+            "validities": self.validities,
             # The final measurement of the window, so a replayed conversation
             # shows the same indicator the live one did. Without it a reloaded
             # thread would render the bar empty, which reads as "no data" rather

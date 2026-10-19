@@ -10,9 +10,9 @@ from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
-from config import STORAGE_ROOT, settings
+from config import ADOBE_STOCK_ROOT, settings
 from database import get_db
-from models import ImageRecord, ImageStatus, utcnow
+from models import ImageRecord, utcnow
 from schemas import (
     BulkActionResult,
     BulkUsedRequest,
@@ -21,6 +21,7 @@ from schemas import (
     UsedRequest,
 )
 from services import asset_naming
+from services.image_lifecycle import DELIVERABLE_STATES, push_state_for_used
 from services.storage import delete_record_files, resolve_ready_path
 from services.upload_table import build_download_name, build_upload_row
 
@@ -41,19 +42,22 @@ def _get_record_or_404(db: Session, record_id: str) -> ImageRecord:
 
 def _resolve_download_path(record: ImageRecord) -> Path:
     """Resolve the staged file for a record, raising a helpful HTTP error."""
-    if record.status != ImageStatus.READY:
+    if record.state not in DELIVERABLE_STATES:
+        allowed = ", ".join(sorted(state.value for state in DELIVERABLE_STATES))
         raise HTTPException(
             status_code=409,
             detail=(
-                f"Record is in {record.status.value} state. Only READY "
-                "(upload-ready) assets can be downloaded."
+                f"Record is in {record.state.value} state. Only records queued "
+                f"for publish ({allowed}) can be downloaded."
             ),
         )
     path = resolve_ready_path(record, settings.READY_DIR)
     if path is None:
+        # Gate passed but nothing is staged yet: a conflict, not a missing
+        # resource — the record exists and may stage its file later.
         raise HTTPException(
-            status_code=404,
-            detail="Staged file is missing from the ready_to_upload directory.",
+            status_code=409,
+            detail="No staged file for this record yet.",
         )
     return path
 
@@ -72,6 +76,8 @@ async def set_record_used(
     record = _get_record_or_404(db, record_id)
     record.is_used = bool(request.is_used)
     record.used_at = utcnow() if request.is_used else None
+    if request.is_used:
+        push_state_for_used(record)
     db.commit()
     return BulkActionResult(updated=1)
 
@@ -101,6 +107,8 @@ async def set_records_used(
     for record in records:
         record.is_used = bool(request.is_used)
         record.used_at = timestamp if request.is_used else None
+        if request.is_used:
+            push_state_for_used(record)
 
     db.commit()
 
@@ -196,7 +204,7 @@ async def download_records_zip(request: DeleteRequest, db: Session = Depends(get
         raise HTTPException(status_code=404, detail="No matching records found.")
 
     tmp = tempfile.NamedTemporaryFile(
-        suffix=".zip", delete=False, dir=str(STORAGE_ROOT)
+        suffix=".zip", delete=False, dir=str(ADOBE_STOCK_ROOT)
     )
     tmp.close()
     zip_path = Path(tmp.name)

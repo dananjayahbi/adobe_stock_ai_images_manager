@@ -24,6 +24,8 @@ export interface SettingsDraft {
   metadata_delay_seconds: string;
   metadata_extra_instructions: string;
   metadata_priority_terms: string;
+  /** Root folder for the mobile image picker — "" means unset. */
+  source_folder: string;
 }
 
 const EMPTY_DRAFT: SettingsDraft = {
@@ -38,6 +40,7 @@ const EMPTY_DRAFT: SettingsDraft = {
   metadata_delay_seconds: "2",
   metadata_extra_instructions: "",
   metadata_priority_terms: "",
+  source_folder: "",
 };
 
 export interface UseSettingsResult {
@@ -91,6 +94,7 @@ export function useSettings(): UseSettingsResult {
       metadata_delay_seconds: String(next.metadata_delay_seconds ?? 2),
       metadata_extra_instructions: next.metadata_extra_instructions ?? "",
       metadata_priority_terms: next.metadata_priority_terms ?? "",
+      source_folder: next.source_folder ?? "",
       brave_search_enabled: next.brave_search_enabled,
       // Blank-seeded like the LLM key: the server only returns a mask.
       brave_search_api_key: "",
@@ -152,6 +156,9 @@ export function useSettings(): UseSettingsResult {
 
     payload.metadata_extra_instructions = draft.metadata_extra_instructions;
     payload.metadata_priority_terms = draft.metadata_priority_terms;
+    // Always travels: the draft mirrors the stored value, so sending "" is
+    // how an operator deliberately clears the folder ("" = unset).
+    payload.source_folder = draft.source_folder.trim();
     return payload;
   };
 

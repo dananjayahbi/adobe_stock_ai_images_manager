@@ -8,8 +8,11 @@ column order, header spelling, and quoting rules mirror Adobe's own sample
 
 Three details matter for the portal to accept the file and match rows to assets:
 
-* ``Filename`` must be the *exact* uploaded filename including extension, and is
-  capped at **30 characters** by Adobe.
+* ``Filename`` must be the *exact* uploaded filename including extension.
+  Adobe's console *lists* "30 characters maximum" for filenames, but that
+  figure is advisory — longer names upload fine and the enforced rule is the
+  exact CSV↔file match, so names are kept full up to the tool's own
+  filesystem-safe cap (``settings.CSV_MAX_FILENAME_LENGTH``).
 * ``Title`` is capped at **70 characters** and must be plain text *without commas
   or special characters* - a separate constraint from CSV quoting.
 * ``Keywords`` is one comma-separated quoted field, so a keyword containing a
@@ -286,18 +289,18 @@ def build_csv(
     # make one of them unreachable (and one asset silently un-described).
     #
     # The suffix is carved out of the stem, so when a title-derived name already
-    # fills the 30-character budget the marked row is clipped one word shorter:
+    # fills the filename budget the marked row is clipped one word shorter:
     #
-    #   ``fleet-of-autonomous-transp.jpg``  (first)
-    #   ``fleet-of-autonomous-tran-2.jpg``  (collision)
+    #   ``fleet-of-autonomous-transports.jpg``  (first)
+    #   ``fleet-of-autonomous-transpo-2.jpg``   (collision)
     #
-    # That is a real limitation of a hard 30-character cap with no identifier to
-    # disambiguate on, and it is preferable to the alternative it replaced - the
-    # old derivation appended a slice of the record id to *every* truncated name
-    # (``futuristic-automat-b2d58dd.jpg``), which put a meaningless code in the
-    # operator's deliverable. Rebuilding the shorter name from the title was tried
-    # and is provably unreachable: the marked stem is clipped to the *same* budget
-    # as the unmarked one, so it is never shorter and there is no marker to detect.
+    # Clipping the marked stem is deliberate, and it is preferable to the
+    # alternative it replaced - the old derivation appended a slice of the record
+    # id to *every* truncated name (``futuristic-automat-b2d58dd.jpg``), which put
+    # a meaningless code in the operator's deliverable. Rebuilding the shorter
+    # name from the title was tried and is provably unreachable: the marked stem
+    # is clipped to the *same* budget as the unmarked one, so it is never shorter
+    # and there is no marker to detect.
     unique_names = asset_naming.deduplicate([row[0] for row in rows])
     for row, name in zip(rows, unique_names):
         if row[0] != name:

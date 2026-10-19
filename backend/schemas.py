@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from pydantic import BaseModel, ConfigDict
 
-from models import ImageStatus, PipelineStage, PromptStatus
+from models import ImageLifecycleState, ImageStatus, PipelineStage, PromptStatus
 
 
 class RecordResponse(BaseModel):
@@ -17,6 +17,13 @@ class RecordResponse(BaseModel):
     original_path: str
     thumbnail_path: Optional[str] = None
     status: ImageStatus
+    #: Lifecycle state: the single coordinate the publish/download/export flow
+    #: reads (see ``models.ImageLifecycleState``). ``status``/``stage`` stay
+    #: alongside it because the pipeline screens still show them.
+    state: ImageLifecycleState
+    #: Derived badges (QUARANTINED, USED/UNUSED, ...), computed at
+    #: serialization by ``services.image_lifecycle.compute_flags`` — never stored.
+    flags: list[str]
     width: Optional[int] = None
     height: Optional[int] = None
     megapixels: Optional[float] = None
@@ -84,11 +91,25 @@ class ApproveRequest(BaseModel):
 
 
 class ApproveResponse(BaseModel):
-    """Response returned after a successful approval action."""
+    """Response returned after a successful (fast) approval action.
+
+    The endpoint is a state flip into ``READY_TO_PUBLISH``: no metadata is
+    generated, so ``title``/``keywords_count`` echo what already exists.
+    """
     record_id: str
     status: ImageStatus
+    state: ImageLifecycleState
     title: Optional[str] = None
     keywords_count: int = 0
+
+
+class StateChangeRequest(BaseModel):
+    """Request body for PATCH /api/records/{id}/state.
+
+    Kept a plain string so the router can answer an unknown value with a 400
+    that lists every accepted state, rather than a framework-shaped 422.
+    """
+    state: str
 
 
 class UsedRequest(BaseModel):
@@ -240,6 +261,47 @@ class StageRunRequest(BaseModel):
     #: Stage 3 only - the full upscale configuration. Omitted or partial bodies
     #: fall back to the configured defaults for every field.
     upscale: Optional["UpscaleSettingsPayload"] = None
+
+
+# --------------------------------------------------------------------------- #
+# Manual promotion to ready-to-upload (gallery override)
+# --------------------------------------------------------------------------- #
+
+class PromoteStepStatus(BaseModel):
+    """One requirement's state for one record in the promote pre-flight."""
+    key: str
+    label: str
+    ok: bool
+    detail: str = ""
+
+
+class PromoteCheckItem(BaseModel):
+    """Pre-flight report for a single record."""
+    record_id: str
+    filename: str
+    stage: str
+    #: False when the record must not be promoted (e.g. OCR_REJECTED).
+    eligible: bool = True
+    blocker: Optional[str] = None
+    steps: list[PromoteStepStatus] = []
+
+
+class PromoteCheckRequest(BaseModel):
+    """Request body for the promote pre-flight check."""
+    record_ids: list[str]
+
+
+class PromoteCheckResponse(BaseModel):
+    """Which requirements are missing per record, before anything runs."""
+    items: list[PromoteCheckItem] = []
+    missing: list[str] = []
+
+
+class PromoteRunRequest(BaseModel):
+    """Request body for running the missing steps and promoting."""
+    record_ids: list[str]
+    #: Include the LLM semantic audit in the acceptance QC re-run.
+    use_semantic: bool = False
 
 
 class UpscaleSettingsPayload(BaseModel):
@@ -408,6 +470,9 @@ class StageSummaryResponse(BaseModel):
     rejected: int
     incompatible: int
     average_score: Optional[float] = None
+    #: One key per lifecycle state (zero-filled), counted from the ``state``
+    #: column — the publish-queue view's counterpart to the per-stage ``counts``.
+    state_counts: dict[str, int] = {}
 
 
 class MetadataUpdateRequest(BaseModel):
@@ -445,7 +510,7 @@ class RenameRequest(BaseModel):
 
     Adobe matches a CSV row to an uploaded file by filename, so the name is part
     of the deliverable. Names are normalised server-side (slugified, forced to a
-    JPEG extension, truncated to Adobe's 30-character cap) and reported back so
+    JPEG extension, truncated to the filename cap) and reported back so
     the operator sees exactly what will be uploaded.
     """
 
@@ -580,6 +645,9 @@ class SettingsResponse(BaseModel):
     metadata_delay_seconds: float = 2.0
     metadata_extra_instructions: str = ""
     metadata_priority_terms: str = ""
+    #: Folder the server browses/imports from (``/api/fs`` + batch create with
+    #: ``files``). Plain path string, never secret; "" means "not configured".
+    source_folder: str = ""
     defaults: SettingsDefaults
     bounds: SettingsBounds
 
@@ -610,6 +678,9 @@ class SettingsUpdateRequest(BaseModel):
     metadata_delay_seconds: Optional[float] = None
     metadata_extra_instructions: Optional[str] = None
     metadata_priority_terms: Optional[str] = None
+    #: Source folder for the browse/import APIs. Plain string, stripped on
+    #: save; "" clears the setting (falls back to "not configured").
+    source_folder: Optional[str] = None
 
 
 class SettingsTestRequest(BaseModel):

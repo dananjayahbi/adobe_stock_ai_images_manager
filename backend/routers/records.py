@@ -5,7 +5,7 @@ from sqlalchemy import String, func, or_, select
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import ImageRecord, ImageStatus, PipelineStage
+from models import ImageLifecycleState, ImageRecord, ImageStatus, PipelineStage
 from schemas import RecordListResponse, RecordResponse
 
 router = APIRouter(tags=["records"])
@@ -30,6 +30,12 @@ PROMPT_NONE_SENTINEL = "none"
 #: drift. A typo in a query string is reported rather than silently matching
 #: nothing, which would look like "the filter is broken".
 _PIPELINE_STAGE_VALUES: frozenset[str] = frozenset(stage.value for stage in PipelineStage)
+
+#: Valid values for the ``state`` filter — same reasoning as the stage set:
+#: a typo is reported instead of silently matching nothing.
+_LIFECYCLE_STATE_VALUES: frozenset[str] = frozenset(
+    state.value for state in ImageLifecycleState
+)
 
 #: SQL type used to cast JSON and integer columns to text for a substring match.
 _TEXT = String()
@@ -93,6 +99,13 @@ async def list_records(
         description=(
             "Comma-separated pipeline stages to include, e.g. 'PUBLISHED'. "
             "Used by the published gallery to scope itself to finished assets."
+        ),
+    ),
+    state: str | None = Query(
+        default=None,
+        description=(
+            "Comma-separated lifecycle states to include, e.g. "
+            "'READY_TO_PUBLISH,PUBLISHED'."
         ),
     ),
     search: str | None = Query(
@@ -203,6 +216,25 @@ async def list_records(
         if stage_filter:
             base = base.where(ImageRecord.stage.in_(stage_filter))
             count_stmt = count_stmt.where(ImageRecord.stage.in_(stage_filter))
+
+    if state:
+        state_filter = [
+            value.strip().upper() for value in state.split(",") if value.strip()
+        ]
+        invalid_states = [
+            value for value in state_filter if value not in _LIFECYCLE_STATE_VALUES
+        ]
+        if invalid_states:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Invalid state(s): {', '.join(invalid_states)}. Accepted "
+                    f"values: {', '.join(sorted(_LIFECYCLE_STATE_VALUES))}."
+                ),
+            )
+        parsed_states = [ImageLifecycleState(value) for value in state_filter]
+        base = base.where(ImageRecord.state.in_(parsed_states))
+        count_stmt = count_stmt.where(ImageRecord.state.in_(parsed_states))
 
     if search and search.strip():
         term = search.strip()

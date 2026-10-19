@@ -1,6 +1,16 @@
 "use client";
 
 import { thumbnailUrl } from "@/lib/client";
+import Badge from "@/components/ui/Badge";
+import {
+  flagsFromLegacy,
+  flagLabel,
+  flagTone,
+  orderFlags,
+  stateFromLegacy,
+  stateLabel,
+  stateTone,
+} from "@/lib/states";
 import type { ImageRecord } from "@/lib/types";
 
 interface GalleryTileProps {
@@ -11,6 +21,13 @@ interface GalleryTileProps {
   onToggleSelect?: (record: ImageRecord) => void;
   /** Select mode: the checkbox is always visible, clicking ticks the tile. */
   selectMode?: boolean;
+  /**
+   * Makes the tile draggable so it can be dropped onto a folder card. Set for
+   * *selected* tiles only — one drag then carries the whole selection (the
+   * desktop convention), and the marquee ignores presses on a drag source.
+   */
+  draggable?: boolean;
+  onDragStart?: (event: React.DragEvent, record: ImageRecord) => void;
 }
 
 /** True when the thumbnail is a transparent PNG cut-out. */
@@ -31,6 +48,8 @@ export default function GalleryTile({
   selected = false,
   onToggleSelect,
   selectMode = false,
+  draggable = false,
+  onDragStart,
 }: GalleryTileProps) {
   const thumb = thumbnailUrl(record.thumbnail_path);
   const cutout = isCutout(record);
@@ -38,12 +57,25 @@ export default function GalleryTile({
     record.generated_title ||
     record.filename.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ");
 
+  // Lifecycle at a glance: the state badge plus every flag the tile can
+  // afford (usage keeps its own stamp below); the full list lives in the
+  // detail panel.
+  const state = stateFromLegacy(record);
+  const flags = orderFlags(flagsFromLegacy(record));
+  const stampFlags = flags.filter((flag) => flag !== "USED" && flag !== "UNUSED");
+  const isUsed = flags.includes("USED") || record.is_used;
+
   return (
     <div
       data-record-id={record.id}
+      draggable={draggable}
+      // The marquee checks this before starting, so a press on a drag source
+      // belongs to the native drag, not the rubber band.
+      data-drag-src={draggable ? "true" : undefined}
+      onDragStart={onDragStart ? (event) => onDragStart(event, record) : undefined}
       className={`frame-card group relative mb-4 block w-full overflow-hidden break-inside-avoid transition-all hover:-translate-y-0.5 hover:shadow-raised ${
         selected ? "ring-2 ring-oxblood-400" : ""
-      } ${selectMode ? "cursor-pointer" : ""}`}
+      } ${selectMode ? "cursor-pointer" : ""} ${draggable ? "cursor-grab active:cursor-grabbing" : ""}`}
     >
       <button
         type="button"
@@ -93,6 +125,29 @@ export default function GalleryTile({
           {selected ? "✓" : ""}
         </button>
       )}
+
+      {/* Lifecycle stamps over the image's top-right: state badge, then any
+          non-usage flags (contract order), then the used stamp — which keeps
+          its original look and is still driven by flags/is_used, so which
+          images are delivered is answerable at a glance (the default usage
+          filter is "any"). The dark plate keeps tone text legible on any
+          thumbnail. */}
+      <div className="absolute right-2 top-2 flex max-w-[calc(100%_-_3.5rem)] flex-wrap items-start justify-end gap-1 rounded-sm bg-ink-900/70 p-1">
+        <Badge tone={stateTone(state)}>{stateLabel(state)}</Badge>
+        {stampFlags.map((flag) => (
+          <Badge key={flag} tone={flagTone(flag)}>
+            {flagLabel(flag)}
+          </Badge>
+        ))}
+        {isUsed && (
+          <span
+            aria-label="Marked as used"
+            className="rounded-sm border border-brass-400/70 bg-ink-900/80 px-1.5 py-0.5 font-stamp text-[10px] uppercase tracking-[0.14em] text-brass-300"
+          >
+            Used
+          </span>
+        )}
+      </div>
     </div>
   );
 }

@@ -19,6 +19,8 @@ Endpoints:
 * ``POST   /api/research/sources``             - upload a priority-source file
 * ``DELETE /api/research/sources``             - remove it
 * ``GET    /api/research/sources/template``    - download the exact JSON format
+* ``GET    /api/research/blocked``             - URLs fetch_page refuses to retry
+* ``DELETE /api/research/blocked``             - unblock one (``?url=``) or all
 
 Why both a buffered and a streaming way to continue a conversation
 ------------------------------------------------------------------
@@ -57,6 +59,7 @@ from schemas import (
 from services import app_settings
 from services.research import (
     agent,
+    blocked_store,
     context as context_module,
     events as event_module,
     inflight,
@@ -324,7 +327,15 @@ def _finish(db: Session, run, accumulated: dict, emitted: list[dict]) -> None:
     """
     runs.record_events(db, run, emitted)
     failed = bool(accumulated.get("error"))
+    # The legacy single slot stays (first assessment — older clients and
+    # `has_validity` read it); the full ordered list is stored beside it so an
+    # ideas run round-trips one scorecard per idea on reload.
     validity_view = validity.describe(accumulated.get("validity"))
+    validity_views = [
+        view
+        for entry in (accumulated.get("validities") or [])
+        if (view := validity.describe(entry)) is not None
+    ]
     runs.finish_run(
         db,
         run,
@@ -333,6 +344,7 @@ def _finish(db: Session, run, accumulated: dict, emitted: list[dict]) -> None:
             "prompts": accumulated.get("prompts") or [],
             "sources": accumulated.get("sources") or [],
             "validity": validity_view.to_dict() if validity_view else None,
+            "validities": [view.to_dict() for view in validity_views],
             "context": accumulated.get("context") or None,
             "notices": accumulated.get("notices") or [],
             "tool_calls": accumulated.get("tool_calls") or [],
@@ -388,7 +400,7 @@ def _summary(run) -> ResearchRunSummary:
         created_at=run.created_at,
         updated_at=run.updated_at,
         prompt_count=len(result.get("prompts") or []),
-        has_validity=bool(result.get("validity")),
+        has_validity=bool(result.get("validity") or result.get("validities")),
     )
 
 
@@ -533,6 +545,49 @@ async def download_source_template() -> Response:
             "Content-Disposition": 'attachment; filename="research-priority-sources.json"'
         },
     )
+
+
+# --------------------------------------------------------------------------- #
+# Blocked fetch URLs
+# --------------------------------------------------------------------------- #
+
+def _blocked_payload() -> dict:
+    """The stored blocked entries, newest first, with the total.
+
+    A plain dict like the sources payload: this is a pass-through of what the
+    store holds, and pinning it to a response model would turn a new optional
+    field on an entry into a 500 instead of something the panel can show.
+    """
+    entries = blocked_store.load()
+    return {"entries": entries, "total": len(entries)}
+
+
+@router.get("/api/research/blocked")
+async def get_blocked_urls() -> dict:
+    """The URLs ``fetch_page`` now refuses to read, and why.
+
+    Exposed so the operator can see what the agent stopped attempting — a
+    silently shrinking fetch surface would be indistinguishable from the agent
+    losing interest in a source.
+    """
+    return _blocked_payload()
+
+
+@router.delete("/api/research/blocked")
+async def delete_blocked_urls(url: str | None = Query(default=None)) -> dict:
+    """Release one blocked URL (``?url=``) or the whole list.
+
+    Single-delete is a query parameter rather than a path segment because the
+    URL *is* an arbitrary external string with slashes and schemes — embedding
+    it in the path would need encoding at every call site and invites routing
+    ambiguity for no gain. Returns the updated payload so one request is both
+    the action and the repaint.
+    """
+    if url:
+        blocked_store.remove(url)
+    else:
+        blocked_store.clear()
+    return _blocked_payload()
 
 
 # --------------------------------------------------------------------------- #

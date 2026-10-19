@@ -2,6 +2,99 @@
 
 A local desktop application for managing, auditing, and preparing AI-generated images for Adobe Stock submission. Uses a Python FastAPI backend with automated quality control and a Next.js frontend dashboard.
 
+## Universal Platform Foundation (2026-10)
+
+The app is now the foundation of a **universal, multi-platform image-upload studio**: after login you land on a master platform picker, with Adobe Stock fully wired as the first platform and five more marketplaces registered behind "Coming Soon" pages — all sharing one backend, one design system, and the shared upscale/QC/metadata processing layer, while keeping completely isolated storage and databases per platform.
+
+**Route map:** `/login` → `/` (platform picker) → `/adobe-stock/*` (live pipeline) plus `/freepik`, `/vecteezy`, `/dreamstime`, `/123rf`, `/wirestock` (coming soon).
+
+**Auth quick-start:** sign in with `admin` / `admin` (defaults), configured in `.env` via `AUTH_ENABLED`, `AUTH_USERNAME`, `AUTH_PASSWORD`, `AUTH_SECRET_KEY`, and `AUTH_SESSION_TTL_HOURS` (see `backend/.env.example`). Browse on **localhost** — the `studio_session` session cookie is host-scoped, so reaching the app through a different hostname or LAN IP drops the session. This is deliberately lightweight local-first auth, not production-hardened.
+
+**Storage layout:**
+
+```text
+storage/
+  app_settings.json             # shared, app-level settings
+  platforms/adobe_stock/        # Adobe data: 10 data dirs + adobe_stock.db (161 records migrated)
+  platforms/<id>/               # one isolated root per future platform (created lazily)
+  _recovery_backup/             # one-time migration recovery snapshot
+```
+
+System design, isolation rules, and the step-by-step add-a-platform checklist live in [ARCHITECTURE.md](ARCHITECTURE.md).
+
+## Mobile app (Flutter)
+
+The `mobile/` Flutter app is the remote control for the studio: review gallery
+images, run pipelines, and watch live progress (live SSE with polling
+fallback) from a phone — anywhere, over a Cloudflare tunnel. The full plan
+lives in [mobile-plan/](mobile-plan/README.md).
+
+**Status: MVP feature-complete and release-verified (milestones M0–M6
+gated green; full journey E2E'd headless against the real backend).**
+Highlights:
+
+- Vintage dark theme matching the web brand; 5-tab shell (Home · Gallery ·
+  Queue · Processes · More) + Platform Hub for all six platforms —
+  Delivery moved into the More page.
+- **Serial batch queue** (web + mobile): batches carry a `queued` status;
+  Run/queue enqueues and a single-flight server worker executes them one
+  after another (queued rows survive restarts and resume on boot).
+  The Processes tab (mobile) and Processes page (web nav) show Active /
+  Drafts / Processed / Finished with queue positions and jump back into
+  any batch; processed (completed) batches can't be re-run — open one to
+  **delete it together with its images**, cleaning it like it never ran;
+  the Home **New batch** button opens a **scoped image explorer** that
+  browses the `source_folder` configured once in the web Config page
+  (per-folder thumbnails, multi-select → Save draft or Queue batch).
+- **Readiness queue** (Queue tab, replacing Process in the nav): approving
+  an image enqueues it, a slim bar above the tab bar shows waiting/running
+  state with Start/Pause (pause finishes the current promote run, then
+  holds; an empty running queue keeps waiting and auto-picks new images).
+  Detail pages got Approve+Reject (APPROVED), a Change-state picker for
+  everything else, a small top-left state stamp, focal-point pinch zoom
+  with double-tap fit↔zoom toggle above the drawer, and dense keyword
+  chips; gallery detail lives inside the Gallery branch, so tab-hopping
+  returns you exactly where you left off. Gallery default view is
+  **Any state** again (the state-lens default had collapsed it to 1 tile)
+  and detail images replay the stored session cookie (401 on cold start
+  was the "loading failed" cause).
+- Cookie auth against `/api/auth/*`, per-profile session isolation,
+  **tunnel-first** connection profiles (seeded: `https://studio.hotelgo.lk`;
+  the legacy localhost seed is purged once on upgrade, LAN/emulator profiles
+  added manually in Settings) with health gating on switch, plus an
+  app-side **DNS fallback** (system → dual-stack DoH → UDP → pinned tunnel
+  IPs + loopback CONNECT relay that races IPv4/IPv6) so the phone resolves
+  even when the device's own resolver fails, and a pre-login-reachable
+  **Network diagnostics** screen that reports the connection ladder layer
+  by layer with full selectable error text. The Flutter web build is
+  served by the backend at
+  `https://studio.hotelgo.lk/flutter/` (`--base-href /flutter/`).
+- Gallery review loop (grid, filters, swipe detail, approve-first with stamp
+  feedback), batch wizard + live progress via `GET /api/batches/{id}/events`,
+  delivery CSV/ZIP/force-accept, settings/account/about + offline matrix.
+- **Lifecycle model:** exactly one *state* per image (`COLLECTED →
+  APPROVED/REJECTED → READY_TO_PUBLISH → PUBLISHED → AS_ACCEPTED`, manual
+  only into ready; `PATCH …/state` whitelist; approve is a fast state flip
+  with no LLM) plus multiple *flags* displayed together (`QUARANTINED`,
+  `USED/UNUSED`, `METADATA_READY`, `INCOMPATIBLE`, `REFINED`, `UPSCALED`,
+  `OCR_REJECTED`) across web + mobile; old stage/status values remain
+  internal for the pipeline and legacy filters.
+- **Postmortem:** [missing INTERNET permission in the first release
+  APK](POSTMORTEM-RELEASE-INTERNET-PERMISSION.md) — the symptoms, why
+  Flutter's template caused it, the fix, and the guardrails added
+  (repo note + a global user-level agent instruction) to keep it from
+  recurring in future projects.
+
+```powershell
+cd mobile
+flutter pub get
+flutter analyze        # clean
+flutter test           # 440 tests
+flutter build apk --release   # installable release APK → build/app/outputs/flutter-apk/app-release.apk
+flutter build web --release --base-href /flutter/  # served at https://<tunnel>/flutter (see mobile/README.md)
+flutter run -d chrome  # quick look (set the app's profile to your backend URL)
+```
+
 ## Quick Start
 
 ### Prerequisites
@@ -268,7 +361,7 @@ headings:
   "prompts": [
     {
       "title": "short human label",
-      "body": "the full generation prompt paragraph, ending with --ar 16:9",
+      "body": "the full generation prompt paragraph, ending with the House Standard's aspect token (e.g. --ar 1:1)",
       "tags": ["2-4 short topical tags"],
       "category": 1,
       "notes": "optional one-line note for the operator"

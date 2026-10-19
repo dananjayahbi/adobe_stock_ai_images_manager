@@ -49,6 +49,20 @@ async def save_uploaded_file(upload_file: UploadFile, inbox_dir: Path) -> tuple[
     return uuid_filename, full_path
 
 
+def copy_into_inbox(source: Path | str, inbox_dir: Path | str) -> Path:
+    """Copy an existing file into the inbox under a fresh uuid name.
+
+    The server-side import path for ``POST /api/batches`` with ``files``:
+    the source-folder file is read-only, so the inbox copy *is* the upload —
+    identical to what :func:`save_uploaded_file` produces for a client upload,
+    which lets the shared ingestion helper treat both the same way.
+    """
+    src = Path(source)
+    dest = Path(inbox_dir) / f"{uuid.uuid4().hex}{src.suffix.lower()}"
+    shutil.copy2(src, dest)
+    return dest
+
+
 def generate_thumbnail(source_path: Path | str, thumbnails_dir: Path | str, file_uuid: str) -> str:
     """Generate a 400x400 thumbnail using Pillow, maintaining aspect ratio.
 
@@ -122,6 +136,29 @@ def resolve_ready_path(record, ready_dir: Path | str | None = None) -> Path | No
             if candidate.is_file() and candidate.suffix.lower() != ".tmp":
                 return candidate
 
+    return None
+
+
+def resolve_current_path(record) -> Path | None:
+    """The record's best file **on disk right now**, or ``None`` if it has none.
+
+    Working copy first, then the inbox original — the same preference the
+    publish path uses (``audit_orchestrator._resolve_staging_source``), so
+    bundling a not-yet-published record ships exactly the bytes a later
+    publish would stage.
+
+    Existence is checked, unlike ``_current_path`` in the orchestrators: a
+    path column can outlive the file behind it (tests, moved storage), and
+    handing a missing file to the ZIP archiver is a 500, not a fallback.
+    """
+    if record is None:
+        return None
+    for candidate in (
+        getattr(record, "working_path", None),
+        getattr(record, "original_path", None),
+    ):
+        if candidate and Path(candidate).is_file():
+            return Path(candidate)
     return None
 
 

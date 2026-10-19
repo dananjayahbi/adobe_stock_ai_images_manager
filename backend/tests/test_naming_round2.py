@@ -25,6 +25,21 @@ from services.upload_table import MAX_FILENAME_LENGTH
 from tests.test_stage_pipeline import pipeline_env  # noqa: F401  (shared fixture)
 
 
+def _state_for_stage(stage: PipelineStage) -> str:
+    """Lifecycle these export tests assume for a fixture record.
+
+    METADATA_READY stands in for "queued by the operator" — the CSV gate now
+    reads lifecycle states, not stages.
+    """
+    from models import ImageLifecycleState
+
+    if stage == PipelineStage.PUBLISHED:
+        return ImageLifecycleState.PUBLISHED.value
+    if stage == PipelineStage.METADATA_READY:
+        return ImageLifecycleState.READY_TO_PUBLISH.value
+    return ImageLifecycleState.COLLECTED.value
+
+
 @pytest.fixture()
 def make_record(db_session_factory):
     """Insert a record directly, since the naming layer only reads fields."""
@@ -45,6 +60,7 @@ def make_record(db_session_factory):
             original_path=f"/tmp/{filename}",
             file_size_bytes=1024,
             stage=stage,
+            state=_state_for_stage(stage),
             generated_title=title,
             download_name=download_name,
             suggested_filename=suggested_filename,
@@ -84,8 +100,8 @@ def _stage_file(tmp_path, monkeypatch, record_id, suffix=".jpg"):
 # 1. No code in the name
 # --------------------------------------------------------------------------- #
 
-#: Long enough that the derived name is truncated, which is exactly the case that
-#: used to grow an identifier suffix.
+#: Long enough that the old 30-char cap truncated the derived name — the case
+#: that used to grow an identifier suffix.
 LONG_TITLE = "Futuristic automated warehouse with robotic sorting arms"
 
 
@@ -98,7 +114,7 @@ def test_derived_name_carries_no_identifier(make_record, db_session_factory):
 
     name = asset_naming.derive_name(record)
 
-    assert name == "futuristic-automated-wareh.jpg"
+    assert name == "futuristic-automated-warehouse-with-robotic-sorting-arms.jpg"
     assert len(name) <= MAX_FILENAME_LENGTH
     # The id, or any fragment of it, must not appear.
     assert record_id[:6] not in name
@@ -144,10 +160,10 @@ def test_colliding_names_are_made_unique_and_keep_their_opening_words(
 ):
     """Two rows must not ship under one name, and the marker must be readable.
 
-    A hard 30-character cap with no identifier to disambiguate on means the
-    marked name has to give up a word to make room. What matters is that the
+    A filled filename budget with no identifier to disambiguate on means the
+    marked name may have to give up a word to make room. What matters is that the
     marker is a readable ``-2`` in the stem - not a hash - and that both names
-    stay inside Adobe's cap with the extension intact.
+    stay inside the filename cap with the extension intact.
     """
     from services import asset_naming
 
@@ -165,7 +181,7 @@ def test_colliding_names_are_made_unique_and_keep_their_opening_words(
     assert all(len(name) <= MAX_FILENAME_LENGTH for name in names)
     assert all(name.endswith(".jpg") for name in names)
     # Both still open with the same words, and the second carries a plain marker.
-    assert names[0] == "futuristic-automated-wareh.jpg"
+    assert names[0] == "futuristic-automated-warehouse-with-robotic-sorting-arms.jpg"
     assert names[1].endswith("-2.jpg")
     assert names[1].startswith("futuristic-automated")
 
@@ -318,7 +334,7 @@ def test_generate_metadata_normalises_the_model_filename(monkeypatch):
 
     result = gemini_metadata.generate_metadata("whatever.jpg")
 
-    assert result["suggested_filename"] == "robotic-arm-sorting-parcel.jpg"
+    assert result["suggested_filename"] == "robotic-arm-sorting-parcels.jpg"
     assert len(result["suggested_filename"]) <= MAX_FILENAME_LENGTH
 
 
@@ -366,11 +382,9 @@ def test_generate_metadata_keeps_the_proposal_separate_from_the_title(monkeypatc
     result = gemini_metadata.generate_metadata("whatever.jpg")
 
     assert result["title"] == "Robotic arm sorting parcels in a depot"
-    # `robotic-arm-sorting-parcels.jpg` would be 32 characters, so the stem is
-    # clipped to fit Adobe's 30-character cap — the assertion is on the rules, not
-    # on one exact string.
-    assert result["suggested_filename"].startswith("robotic-arm-sorting-parcel")
-    assert result["suggested_filename"].endswith(".jpg")
+    # The full stem now fits — no truncation — so the proposal arrives exactly
+    # as proposed, extension added by the normaliser.
+    assert result["suggested_filename"] == "robotic-arm-sorting-parcels.jpg"
     assert len(result["suggested_filename"]) <= MAX_FILENAME_LENGTH
 
 
@@ -385,7 +399,7 @@ def test_metadata_stage_stores_the_proposal_without_applying_it(
     monkeypatch.setattr(
         gemini_metadata,
         "generate_metadata",
-        lambda path, api_key=None: {
+        lambda *args, **kwargs: {
             "title": "A Named Asset",
             "description": "d",
             "keywords": ["a"],
@@ -481,13 +495,14 @@ def test_the_proposal_reaches_the_record_response(client, make_record):
 # 4. The bundle is only offered where it can work
 # --------------------------------------------------------------------------- #
 
-def test_bundle_refusal_explains_that_publishing_stages_the_file(
+def test_bundle_refusal_explains_missing_files_and_points_at_the_csv(
     client, make_record, tmp_path, monkeypatch
 ):
     """The 409 an operator actually hit must say what to do about it.
 
-    The old message ("Publish them first.") never said that *publishing* is what
-    creates the staged file, which is the whole reason the button failed.
+    With no staged, working, or original file on disk there is nothing to
+    archive — the message must say that plainly and offer the CSV, which
+    needs no files at all.
     """
     from config import settings
 
@@ -501,8 +516,8 @@ def test_bundle_refusal_explains_that_publishing_stages_the_file(
 
     assert response.status_code == 409
     detail = response.json()["detail"]
-    assert "Publishing" in detail
-    # It must also point at the action that does work in this state.
+    assert "no staged" in detail or "file to bundle" in detail
+    # It must point at the action that does work in this state.
     assert "CSV" in detail
 
 

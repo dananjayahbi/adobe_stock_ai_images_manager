@@ -1,5 +1,7 @@
 """FastAPI application entry point."""
 
+import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -7,16 +9,31 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
 from config import settings
-from database import Base, engine
+from database import Base, SessionLocal, engine
+from services import batch_queue
+from services.filename_backfill import run_filename_backfill
+from services.legacy_storage_migration import run_legacy_storage_migration
 from services.metric_repair import run_metric_repairs
 from services.migrations import run_additive_migrations
 from services.pipeline_runner import recover_interrupted_batches
 from services.storage import create_data_directories
 
+logger = logging.getLogger(__name__)
+
+#: Strong references to boot-fired queue resumes so the event loop's GC cannot
+#: collect a worker task before it finishes draining a post-restart queue.
+_BOOT_QUEUE_TASKS: set[asyncio.Task] = set()
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown lifecycle: create DB tables and data directories."""
+    # One-time move of legacy storage/* data into the Adobe platform root.
+    # FIRST action: it must run before create_data_directories() builds the
+    # destination skeleton and before Base.metadata.create_all opens the new
+    # DB path. Self-limiting — the .migrated marker makes later starts no-op,
+    # and failures are logged without crashing so the next start retries.
+    run_legacy_storage_migration()
     # Import models to ensure they are registered with Base.metadata
     import models  # noqa: F401
 
@@ -28,16 +45,38 @@ async def lifespan(app: FastAPI):
     # carry the original upload's geometry and size. Repair them once; the pass
     # is self-limiting, so later starts do nothing.
     run_metric_repairs(engine)
+    # Records pinned by an old CSV download still carry the pre-raise
+    # 30-character filename; upgrade those pins to the full derived name
+    # (self-limiting — hand-chosen names never match the old truncation).
+    run_filename_backfill(engine)
     # Batch jobs live in memory: a restart orphans any batch left `running`,
     # which would read as a hung run forever and block re-runs. Fail them once.
+    # `queued` rows deliberately survive this — see the resume below.
     recover_interrupted_batches(engine)
+    # Serial batch queue: fire the worker for any `queued` rows the restart
+    # left behind. The lifespan has no FastAPI BackgroundTasks injection, so
+    # resume_on_boot() hands back a BackgroundTasks with the worker already
+    # scheduled (kicked) and we run it on our own loop — startup never blocks
+    # on a long queue. Guarded: a transient boot-read failure must not stop
+    # the server from coming up (the rows simply wait for the next kick).
+    try:
+        boot_tasks = batch_queue.resume_on_boot(SessionLocal, settings)
+    except Exception:  # noqa: BLE001
+        boot_tasks = None
+        logger.exception(
+            "Serial queue boot-resume check failed; queued batches wait for the next kick"
+        )
+    if boot_tasks is not None:
+        task = asyncio.create_task(boot_tasks())
+        _BOOT_QUEUE_TASKS.add(task)
+        task.add_done_callback(_BOOT_QUEUE_TASKS.discard)
     yield
     # Shutdown cleanup if needed
 
 
 app = FastAPI(
-    title="Adobe Stock AI Image Studio",
-    description="Local pipeline for auditing and preparing AI-generated images for Adobe Stock.",
+    title="AI Stock Studio",
+    description="Universal local pipeline for preparing AI-generated images for stock marketplaces (Adobe Stock first).",
     version="0.1.0",
     lifespan=lifespan,
 )
@@ -51,6 +90,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Session-cookie auth: installed after CORS so preflight responses are not
+# blocked, and before routers so every route is covered when AUTH_ENABLED.
+from services.auth_middleware import install_auth_middleware
+
+install_auth_middleware(app)
 
 # Include routers
 from routers.upload import router as upload_router
@@ -70,6 +115,10 @@ from routers.step_profiles import router as step_profiles_router
 from routers.groups import router as groups_router
 from routers.gallery_files import router as gallery_files_router
 from routers.setup import router as setup_router
+from routers.promote import router as promote_router
+from routers.fs import router as fs_router
+from platforms.routers import router as platforms_router
+from routers.auth import router as auth_router
 
 app.include_router(upload_router)
 app.include_router(records_router)
@@ -88,6 +137,10 @@ app.include_router(step_profiles_router)
 app.include_router(groups_router)
 app.include_router(gallery_files_router)
 app.include_router(setup_router)
+app.include_router(promote_router)
+app.include_router(fs_router)
+app.include_router(platforms_router)
+app.include_router(auth_router)
 
 # Serve generated thumbnails to the frontend grid.
 create_data_directories()
@@ -113,6 +166,20 @@ app.mount(
     StaticFiles(directory=str(settings.THUMBNAILS_DIR)),
     name="thumbnails",
 )
+
+# Serve the Flutter web build under /flutter so the mobile app rides the
+# *same origin as the API* through the Cloudflare tunnel (cookie-auth and
+# CSP-free by construction). Guarded: the directory only exists after
+# `flutter build web` — without it the mount is skipped, never fatal.
+from pathlib import Path as _Path
+
+_FLUTTER_WEB_DIR = _Path(__file__).resolve().parent.parent / "mobile" / "build" / "web"
+if _FLUTTER_WEB_DIR.is_dir():
+    app.mount(
+        "/flutter",
+        StaticFiles(directory=str(_FLUTTER_WEB_DIR), html=True),
+        name="flutter",
+    )
 
 
 @app.get("/health")

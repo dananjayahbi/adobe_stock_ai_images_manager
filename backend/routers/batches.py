@@ -6,21 +6,31 @@ Endpoints are grouped by concern:
 * ``GET    /api/batches``           - list batches, newest first
 * ``POST   /api/batches``           - create a draft batch
 * ``GET    /api/batches/{id}``      - batch + step progress + records
+* ``GET    /api/batches/{id}/events`` - SSE stream of BatchResponse frames
 * ``PATCH  /api/batches/{id}```     - edit name/steps while not running
 * ``DELETE /api/batches/{id}```     - delete a batch (and its records)
 * ``POST   /api/batches/{id}/files``  - upload images into the batch
-* ``POST   /api/batches/{id}/run``    - run the whole pipeline once
+* ``POST   /api/batches/{id}/queue``  - enqueue on the serial worker
+* ``POST   /api/batches/{id}/run``    - enqueue (compat alias of /queue)
 * ``POST   /api/batches/{id}/cancel`` - cooperative cancel
+
+Batches run one at a time: ``/queue`` (and ``/run``, which now shares its
+semantics) stamps ``status='queued'`` and the module-level worker in
+``services.batch_queue`` claims rows FIFO.
 
 The legacy stage workspace endpoints are untouched; batches are additive.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from PIL import Image
 from pydantic import BaseModel, Field
 from sqlalchemy import func
@@ -28,11 +38,25 @@ from sqlalchemy.orm import Session
 
 from config import settings
 from database import SessionLocal, get_db
-from models import Batch, ImageRecord, ImageStatus, PipelineStage, generate_uuid, utcnow
+from models import (
+    Batch,
+    ImageLifecycleState,
+    ImageRecord,
+    ImageStatus,
+    PipelineStage,
+    generate_uuid,
+    utcnow,
+)
 from schemas import RecordResponse
-from services import pipeline_defs, pipeline_runner
+from services import batch_queue, pipeline_defs, pipeline_runner, source_folder
 from services.image_normalizer import convert_png_to_jpeg, needs_conversion
-from services.storage import delete_record_files, generate_thumbnail, save_uploaded_file
+from services.research.events import SSE_DONE_FRAME, sse_frame
+from services.storage import (
+    copy_into_inbox,
+    delete_record_files,
+    generate_thumbnail,
+    save_uploaded_file,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +86,10 @@ class BatchCreateRequest(BaseModel):
     media_type: str = "raster"  # raster | png
     steps: list[StepEntry] = Field(default_factory=list)
     profile_id: str | None = None
+    #: Server-side import: relative paths under the configured source folder
+    #: (browse via ``/api/fs``). ``None``/omitted keeps the legacy flow of
+    #: creating an empty draft and uploading through ``POST .../files``.
+    files: list[str] | None = None
 
 
 class BatchUpdateRequest(BaseModel):
@@ -76,6 +104,8 @@ class BatchResponse(BaseModel):
     steps: list[dict]
     profile_id: str | None = None
     status: str
+    #: When the batch entered the serial queue (ISO); null until queued once.
+    queued_at: str | None = None
     step_progress: dict | None = None
     error: str | None = None
     record_count: int = 0
@@ -115,6 +145,7 @@ def _batch_response(batch: Batch, record_count: int = 0) -> BatchResponse:
         steps=batch.steps or [],
         profile_id=batch.profile_id,
         status=batch.status,
+        queued_at=_iso(batch.queued_at),
         step_progress=batch.step_progress,
         error=batch.error,
         record_count=record_count,
@@ -154,6 +185,126 @@ def _normalise_or_400(steps: list, media_type: str) -> list[dict]:
         return pipeline_defs.normalise_steps(steps, media_type)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+def _ingest_inbox_file(
+    db: Session,
+    batch: Batch,
+    full_path: Path,
+    display_name: str,
+    *,
+    written: list[Path],
+) -> str:
+    """Create the ImageRecord for one file already staged in the inbox.
+
+    The single ingestion path shared by ``POST .../files`` and the
+    create-with-``files`` import: dimensions → (raster) PNG-to-JPEG
+    conversion → thumbnail → record insert. It does **not** commit — the
+    caller owns the transaction — and appends every file it creates to
+    ``written`` so the caller's failure path can unlink them all.
+
+    Returns the new record id.
+    """
+    keep_alpha = batch.media_type == "png"
+
+    file_size = full_path.stat().st_size
+    width = height = megapixels = None
+    try:
+        with Image.open(full_path) as img:
+            width, height = img.size
+            megapixels = round((width * height) / 1_000_000, 2)
+    except Exception:  # noqa: BLE001
+        logger.warning("Could not read dimensions for %s", full_path)
+
+    record_id = generate_uuid()
+    working_path = str(full_path)
+    stage_detail: dict | None = None
+
+    if not keep_alpha and needs_conversion(full_path, settings):
+        conversion = convert_png_to_jpeg(
+            full_path,
+            settings.CONVERTED_DIR,
+            record_id,
+            quality=settings.PNG_CONVERSION_QUALITY,
+        )
+        if conversion.converted and conversion.output_path:
+            working_path = conversion.output_path
+            written.append(Path(conversion.output_path))
+        stage_detail = {"collector": conversion.to_dict()}
+
+    # For alpha, the thumbnail keeps its channel: the gallery shows
+    # the cut-out over the card's own background (a white JPEG would
+    # paint a plate over the dark theme).
+    if keep_alpha:
+        from services import png_ops
+
+        thumb_path = png_ops.alpha_thumbnail(
+            working_path, settings.THUMBNAILS_DIR, full_path.stem
+        )
+    else:
+        thumb_path = generate_thumbnail(
+            working_path, settings.THUMBNAILS_DIR, full_path.stem
+        )
+    if thumb_path:
+        written.append(Path(thumb_path))
+
+    record = ImageRecord(
+        id=record_id,
+        filename=display_name,
+        original_path=str(full_path),
+        thumbnail_path=thumb_path or None,
+        status=ImageStatus.PENDING,
+        stage=PipelineStage.COLLECTED,
+        state=ImageLifecycleState.COLLECTED,
+        batch_id=batch.id,
+        working_path=working_path,
+        # Deliberately NULL until a pipeline step touches the record:
+        # `stage_updated_at IS NOT NULL` is the "processed" signal the
+        # new home/gallery use, and an upload alone is not processing.
+        stage_updated_at=None,
+        stage_details=stage_detail,
+        width=width,
+        height=height,
+        megapixels=megapixels,
+        file_size_bytes=file_size,
+    )
+    db.add(record)
+    return record_id
+
+
+def _resolve_import_paths(rel_paths: list[str]) -> list[tuple[str, Path]]:
+    """Validate ``BatchCreateRequest.files`` against the source folder.
+
+    Contract order: containment inside the source root (403 on escape),
+    then existence + extension (400, naming the offender), then the batch
+    image cap (409). Runs *before* the batch row is created, so any
+    rejection leaves nothing behind.
+    """
+    resolved: list[tuple[str, Path]] = []
+    for raw in rel_paths:
+        rel = str(raw)
+        # 400 when no source folder is configured, 403 on a realpath escape.
+        target = source_folder.resolve_inside(rel)
+        if not target.is_file():
+            raise HTTPException(
+                status_code=400,
+                detail=f"File not found in the source folder: {rel}",
+            )
+        if target.suffix.lower() not in ALLOWED_UPLOADS:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Disallowed file extension for: {rel}. "
+                    f"Allowed: {', '.join(sorted(ALLOWED_UPLOADS))}."
+                ),
+            )
+        resolved.append((rel, target))
+    if len(resolved) > MAX_BATCH_IMAGES:
+        raise HTTPException(
+            status_code=409,
+            detail=f"A batch holds at most {MAX_BATCH_IMAGES} images.",
+        )
+    return resolved
 
 
 # --------------------------------------------------------------------------- #
@@ -207,7 +358,12 @@ async def list_batches(
 
 @router.post("/api/batches", response_model=BatchResponse, status_code=201)
 async def create_batch(request: BatchCreateRequest, db: Session = Depends(get_db)):
-    """Create a draft batch. Steps may be omitted to inherit a profile's."""
+    """Create a draft batch. Steps may be omitted to inherit a profile's.
+
+    When ``files`` is given, each relative path is imported from the
+    configured source folder through the same ingestion helper the upload
+    endpoint uses (inbox copy → convert → thumbnail → record).
+    """
     media_type = _validate_media_type(request.media_type)
 
     steps = [entry.model_dump() for entry in request.steps]
@@ -217,6 +373,10 @@ async def create_batch(request: BatchCreateRequest, db: Session = Depends(get_db
         steps = _load_profile_steps(db, profile_id, media_type)
 
     normalised = _normalise_or_400(steps, media_type)
+
+    # Validate every import path before the batch row exists: a 400/403/409
+    # rejection must leave nothing to roll back.
+    imports = _resolve_import_paths(request.files) if request.files else []
 
     batch = Batch(
         id=generate_uuid(),
@@ -228,9 +388,32 @@ async def create_batch(request: BatchCreateRequest, db: Session = Depends(get_db
         step_progress=None,
     )
     db.add(batch)
+
+    written: list[Path] = []
+    imported: list[str] = []
+    if imports:
+        try:
+            for _, target in imports:
+                inbox_path = copy_into_inbox(target, settings.INBOX_DIR)
+                written.append(inbox_path)
+                imported.append(
+                    _ingest_inbox_file(
+                        db, batch, inbox_path, target.name, written=written
+                    )
+                )
+            db.commit()
+        except Exception:
+            db.rollback()
+            for path in written:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    logger.warning("Could not clean up %s", path)
+            raise
+
     db.commit()
     db.refresh(batch)
-    return _batch_response(batch)
+    return _batch_response(batch, len(imported))
 
 
 def _default_batch_name(media_type: str) -> str:
@@ -272,6 +455,106 @@ async def get_batch(batch_id: str, db: Session = Depends(get_db)):
     return detail
 
 
+# --------------------------------------------------------------------------- #
+# Live stream (SSE)
+# --------------------------------------------------------------------------- #
+
+#: Once the batch lands in one of these states the stream sends the final
+#: frame followed by the done event and closes.
+_BATCH_TERMINAL_STATUSES = frozenset({"completed", "failed", "cancelled"})
+
+#: Seconds between state polls inside the generator: fast enough to feel live,
+#: slow enough not to hammer the database.
+_BATCH_POLL_SECONDS = 0.5
+
+#: Silence after which a comment ping is due, so an idle proxy (or tunnel)
+#: does not close the connection before the batch finishes.
+_BATCH_PING_SECONDS = 15.0
+
+#: SSE comment ping - comment lines are consumed by the parser without
+#: producing a client-visible event, exactly what a keep-alive needs.
+_BATCH_PING_FRAME = ": ping\n\n"
+
+#: Headers that stop a proxy from buffering the SSE stream. Mirrors the set in
+#: routers/research.py so every stream in this app behaves the same behind
+#: Cloudflare.
+_BATCH_SSE_HEADERS = {
+    "Cache-Control": "no-cache, no-transform",
+    "Connection": "keep-alive",
+    "X-Accel-Buffering": "no",
+}
+
+
+def get_batch_session_factory():
+    """Session factory the SSE generator opens its own sessions from.
+
+    A dependency (same pattern as research's ``get_session_factory``): FastAPI
+    closes the request-scoped session before a streaming body is consumed, so
+    the generator must open its own - and tests can override the dependency to
+    point the stream at their database.
+    """
+    return SessionLocal
+
+
+def _current_batch_payload(session_factory, batch_id: str) -> BatchResponse | None:
+    """One poll of the batch's current state; None once the batch is gone."""
+    with session_factory() as session:
+        batch = session.get(Batch, batch_id)
+        if batch is None:
+            return None
+        return _batch_response(batch, _record_count(session, batch_id))
+
+
+@router.get("/api/batches/{batch_id}/events")
+async def stream_batch_events(
+    batch_id: str,
+    db: Session = Depends(get_db),
+    session_factory=Depends(get_batch_session_factory),
+) -> StreamingResponse:
+    """Stream BatchResponse frames while the batch progresses (mobile SSE).
+
+    The frames carry the exact ``BatchResponse`` JSON that
+    ``GET /api/batches/{id}`` serves (without the record list), so a client
+    parses one model for polling and streaming alike: an immediate snapshot,
+    then a frame whenever status/step_progress changes, then the
+    research-style ``event: done`` marker once the batch reaches a terminal
+    state. Idle stretches get a comment ping every 15 seconds so proxies do
+    not time the connection out.
+    """
+    # Probe while the request session is still open, so an unknown id is a
+    # normal 404 instead of a stream that opens and never produces a frame.
+    _get_batch_or_404(db, batch_id)
+
+    async def generate() -> AsyncIterator[str]:
+        last_frame: str | None = None
+        last_ping = time.monotonic()
+        while True:
+            payload = _current_batch_payload(session_factory, batch_id)
+            if payload is None:
+                # Deleted mid-stream: no further state will ever appear, so
+                # close cleanly rather than pinging an id that cannot move.
+                yield SSE_DONE_FRAME
+                return
+            frame = sse_frame(payload.model_dump())
+            if frame != last_frame:
+                yield frame
+                last_frame = frame
+                last_ping = time.monotonic()
+            if payload.status in _BATCH_TERMINAL_STATUSES:
+                yield SSE_DONE_FRAME
+                return
+            if time.monotonic() - last_ping >= _BATCH_PING_SECONDS:
+                yield _BATCH_PING_FRAME
+                last_ping = time.monotonic()
+            await asyncio.sleep(_BATCH_POLL_SECONDS)
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers=_BATCH_SSE_HEADERS,
+    )
+
+
 @router.patch("/api/batches/{batch_id}", response_model=BatchResponse)
 async def update_batch(
     batch_id: str, request: BatchUpdateRequest, db: Session = Depends(get_db)
@@ -304,7 +587,11 @@ async def update_batch(
 async def delete_batch(batch_id: str, db: Session = Depends(get_db)):
     """Delete a batch and the images uploaded into it (files included)."""
     batch = _get_batch_or_404(db, batch_id)
-    if batch.status == "running":
+    # `running` blocks because the pipeline holds the images; `queued` blocks
+    # because the serial worker could claim the row (queued → running) in the
+    # gap between this check and the commit. Cancel flips both to a terminal
+    # state the worker never claims, unblocking the delete.
+    if batch.status in ("running", "queued"):
         raise HTTPException(
             status_code=409,
             detail="Cancel the batch before deleting it.",
@@ -370,7 +657,6 @@ async def upload_to_batch(
             ),
         )
 
-    keep_alpha = batch.media_type == "png"
     result = UploadResult(record_ids=[], count=0, errors=[])
     written: list[Path] = []
 
@@ -378,68 +664,15 @@ async def upload_to_batch(
         for upload in files:
             _, full_path = await save_uploaded_file(upload, settings.INBOX_DIR)
             written.append(Path(full_path))
-
-            file_size = Path(full_path).stat().st_size
-            width = height = megapixels = None
-            try:
-                with Image.open(full_path) as img:
-                    width, height = img.size
-                    megapixels = round((width * height) / 1_000_000, 2)
-            except Exception:  # noqa: BLE001
-                logger.warning("Could not read dimensions for %s", full_path)
-
-            record_id = generate_uuid()
-            working_path = str(full_path)
-            stage_detail: dict | None = None
-
-            if not keep_alpha and needs_conversion(full_path, settings):
-                conversion = convert_png_to_jpeg(
-                    full_path,
-                    settings.CONVERTED_DIR,
-                    record_id,
-                    quality=settings.PNG_CONVERSION_QUALITY,
-                )
-                if conversion.converted and conversion.output_path:
-                    working_path = conversion.output_path
-                    written.append(Path(conversion.output_path))
-                stage_detail = {"collector": conversion.to_dict()}
-
-            # For alpha, the thumbnail keeps its channel: the gallery shows
-            # the cut-out over the card's own background (a white JPEG would
-            # paint a plate over the dark theme).
-            if keep_alpha:
-                from services import png_ops
-
-                thumb_path = png_ops.alpha_thumbnail(
-                    working_path, settings.THUMBNAILS_DIR, Path(full_path).stem
-                )
-            else:
-                thumb_path = generate_thumbnail(
-                    working_path, settings.THUMBNAILS_DIR, Path(full_path).stem
-                )
-            if thumb_path:
-                written.append(Path(thumb_path))
-
-            record = ImageRecord(
-                id=record_id,
-                filename=upload.filename or Path(full_path).name,
-                original_path=str(full_path),
-                thumbnail_path=thumb_path or None,
-                status=ImageStatus.PENDING,
-                stage=PipelineStage.COLLECTED,
-                batch_id=batch_id,
-                working_path=working_path,
-                # Deliberately NULL until a pipeline step touches the record:
-                # `stage_updated_at IS NOT NULL` is the "processed" signal the
-                # new home/gallery use, and an upload alone is not processing.
-                stage_updated_at=None,
-                stage_details=stage_detail,
-                width=width,
-                height=height,
-                megapixels=megapixels,
-                file_size_bytes=file_size,
+            # Shared with the create-with-``files`` import: conversion,
+            # thumbnail, and the record insert all happen in one place.
+            record_id = _ingest_inbox_file(
+                db,
+                batch,
+                Path(full_path),
+                upload.filename or Path(full_path).name,
+                written=written,
             )
-            db.add(record)
             result.record_ids.append(record_id)
             result.count += 1
 
@@ -460,21 +693,31 @@ async def upload_to_batch(
 
 
 # --------------------------------------------------------------------------- #
-# Run / cancel
+# Queue / run / cancel
 # --------------------------------------------------------------------------- #
 
-@router.post("/api/batches/{batch_id}/run", response_model=BatchResponse)
-async def run_batch(
-    batch_id: str,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-):
-    """Launch the whole pipeline as one background job; poll GET for progress."""
-    batch = _get_batch_or_404(db, batch_id)
+def _enqueue_precheck(db: Session, batch: Batch) -> int:
+    """Shared by /queue and /run: 409 unless the batch may enter the queue.
+
+    Returns the record count the response echoes. The messages stay the ones
+    ``/run`` always answered with, so existing clients keep parsing them.
+    A ``completed`` batch is terminal: rerunning it is refused ahead of every
+    other precheck so the answer is always "already processed", even if its
+    images or steps were edited away since the run.
+    """
+    if batch.status == "completed":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This batch was already processed — delete it to start a "
+                "fresh batch."
+            ),
+        )
     if batch.status == "running":
         raise HTTPException(status_code=409, detail="This batch is already running.")
-
-    count = _record_count(db, batch_id)
+    if batch.status == "queued":
+        raise HTTPException(status_code=409, detail="This batch is already queued.")
+    count = _record_count(db, batch.id)
     if count == 0:
         raise HTTPException(
             status_code=409,
@@ -482,36 +725,87 @@ async def run_batch(
         )
     if not batch.steps:
         raise HTTPException(status_code=409, detail="This batch has no steps selected.")
+    return count
 
-    # Reset run-scoped state synchronously so the very first poll after the
-    # response already shows `running` with pending steps.
-    batch.status = "running"
+
+def _enqueue(
+    batch_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session,
+    session_factory,
+) -> BatchResponse:
+    """Move the batch into the serial queue and kick the worker."""
+    batch = _get_batch_or_404(db, batch_id)
+    count = _enqueue_precheck(db, batch)
+
+    # Reset run-scoped state with the queue entry, so every poll after the
+    # response shows the queued batch without stale error/finish markers.
+    batch.status = "queued"
+    batch.queued_at = utcnow()
     batch.error = None
     batch.finished_at = None
-    batch.step_progress = {
-        step["key"]: {"status": "pending", "message": "", "counts": None}
-        for step in batch.steps
-    }
     db.commit()
 
-    background_tasks.add_task(pipeline_runner.run_batch, SessionLocal, batch_id, settings)
+    # Committed *before* the kick: a worker mid-run claims this row on its
+    # next pass; a worker about to exit either sees it in its final claim or
+    # the kick that follows schedules a fresh one (atomic with the flag).
+    batch_queue.kick(background_tasks, session_factory, settings)
 
     db.refresh(batch)
     return _batch_response(batch, count)
 
 
+@router.post("/api/batches/{batch_id}/queue", response_model=BatchResponse)
+async def queue_batch(
+    batch_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    session_factory=Depends(get_batch_session_factory),
+):
+    """Enqueue the batch on the serial worker (one batch at a time).
+
+    409 when the batch was already processed (completed), is already
+    running/queued, has no images, or has no steps — the same
+    preconditions ``/run`` answers with.
+    """
+    return _enqueue(batch_id, background_tasks, db, session_factory)
+
+
+@router.post("/api/batches/{batch_id}/run", response_model=BatchResponse)
+async def run_batch(
+    batch_id: str,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    session_factory=Depends(get_batch_session_factory),
+):
+    """Enqueue the whole pipeline (compat path: identical to ``/queue``).
+
+    The path and response shape are unchanged for clients that POST ``/run``
+    today, but the effect is enqueue semantics: the response normally reads
+    ``status='queued'`` and the serial worker starts it when its turn comes.
+    """
+    return _enqueue(batch_id, background_tasks, db, session_factory)
+
+
 @router.post("/api/batches/{batch_id}/cancel", response_model=BatchResponse)
 async def cancel_batch(batch_id: str, db: Session = Depends(get_db)):
     """Request cooperative cancellation: between steps, and within the current
-    step's per-record loop."""
+    step's per-record loop.
+
+    Also valid from ``queued``: the worker only claims ``status='queued'``
+    rows, so the flip alone makes it unclaimable — and if no runner holds the
+    batch (the queued case), that flip *is* the whole effect.
+    """
     batch = _get_batch_or_404(db, batch_id)
-    if batch.status != "running":
+    if batch.status not in ("running", "queued"):
         raise HTTPException(status_code=409, detail="This batch is not running.")
 
     batch.status = "cancelled"
     batch.finished_at = utcnow()
     db.commit()
 
+    # No-op unless a runner holds the in-flight step job (a queued batch has
+    # none); keeping the call keeps the running path byte-for-byte intact.
     pipeline_runner.request_cancel(batch_id)
 
     db.refresh(batch)

@@ -463,6 +463,9 @@ def read_public() -> dict[str, Any]:
         "metadata_delay_seconds": meta.delay_seconds,
         "metadata_extra_instructions": meta.extra_instructions,
         "metadata_priority_terms": ", ".join(meta.priority_terms),
+        # Source folder for the browse/import APIs. Not a secret - it is shown
+        # (and edited) as-is so the operator can verify the exact path.
+        "source_folder": str(raw.get("source_folder") or "").strip(),
         "defaults": {
             "llm_base_url": settings.LLM_BASE_URL,
             "llm_model": settings.LLM_MODEL,
@@ -600,6 +603,15 @@ def _clean_priority_terms(value: Any) -> str:
     return text
 
 
+def _clean_source_folder(value: Any) -> str:
+    """Normalise the source folder: a plain trimmed path, no secrecy.
+
+    ``""`` is a legal value and clears the setting — the browse/import APIs
+    treat an empty string as "not configured" rather than as a path.
+    """
+    return str(value or "").strip()
+
+
 def validate(payload: dict[str, Any]) -> None:
     """Check a payload without storing it.
 
@@ -624,6 +636,8 @@ def validate(payload: dict[str, Any]) -> None:
         _clean_extra_instructions(payload["metadata_extra_instructions"])
     if payload.get("metadata_priority_terms") is not None:
         _clean_priority_terms(payload["metadata_priority_terms"])
+    if payload.get("source_folder") is not None:
+        _clean_source_folder(payload["source_folder"])
     # Enabling Brave without a usable key is refused *here* rather than at search
     # time. A configuration that looks enabled and silently is not is worse than a
     # rejected save: the operator would believe their searches were going through
@@ -760,6 +774,11 @@ def update(payload: dict[str, Any]) -> dict[str, Any]:
         stored["metadata_priority_terms"] = _clean_priority_terms(
             payload["metadata_priority_terms"]
         )
+
+    # --- source folder (browse/import APIs) ------------------------------ #
+    # Plain string: trimmed, stored verbatim; "" clears the setting.
+    if payload.get("source_folder") is not None:
+        stored["source_folder"] = _clean_source_folder(payload["source_folder"])
 
     save_raw(stored)
     logger.info("Application settings updated")

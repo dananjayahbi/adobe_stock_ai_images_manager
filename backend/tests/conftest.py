@@ -34,6 +34,22 @@ def isolated_app_settings(tmp_path, monkeypatch):
     return store
 
 
+@pytest.fixture(autouse=True)
+def no_boot_queue_resume(monkeypatch):
+    """Keep the lifespan's serial-queue boot resume out of the real database.
+
+    The lifespan runs before (and outside) the ``client`` fixture's dependency
+    overrides, so a leftover ``queued`` row in the developer's real store would
+    start a real pipeline in a background thread mid-suite. Tests that care
+    about resume call the real ``resume_on_boot`` directly with the test
+    factory (captured at import, before this patch applies).
+    """
+    from services import batch_queue
+
+    monkeypatch.setattr(batch_queue, "resume_on_boot", lambda db_factory, cfg: None)
+    yield
+
+
 @pytest.fixture()
 def db_session_factory():
     """In-memory SQLite session factory isolated per test."""
@@ -56,6 +72,13 @@ def db_session_factory():
 @pytest.fixture()
 def client(db_session_factory, monkeypatch, tmp_path):
     """TestClient with the DB dependency overridden and background audits stubbed."""
+
+    # Auth is off for this fixture: the legacy suite predates login and never
+    # sends a session cookie. Import here so conftest keeps no top-level auth
+    # dependency (auth_config is read per-request by the middleware).
+    from auth_config import auth_settings
+
+    monkeypatch.setattr(auth_settings, "AUTH_ENABLED", False)
 
     def override_get_db():
         session = db_session_factory()
@@ -91,6 +114,41 @@ def client(db_session_factory, monkeypatch, tmp_path):
     # the caller and are tested through the orchestrator directly.
 
     with TestClient(app) as test_client:
+        yield test_client
+
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def auth_client(db_session_factory, monkeypatch):
+    """TestClient with auth ENABLED and a logged-in session cookie.
+
+    Mirrors ``client`` but keeps the middleware active, logs in through the
+    real endpoint (``TestClient`` persists the resulting cookie across
+    requests), and only tears down dependency overrides afterwards.
+    """
+    from auth_config import auth_settings
+
+    monkeypatch.setattr(auth_settings, "AUTH_ENABLED", True)
+
+    def override_get_db():
+        session = db_session_factory()
+        try:
+            yield session
+        finally:
+            session.close()
+
+    app.dependency_overrides[get_db] = override_get_db
+
+    with TestClient(app) as test_client:
+        response = test_client.post(
+            "/api/auth/login",
+            json={
+                "username": auth_settings.AUTH_USERNAME,
+                "password": auth_settings.AUTH_PASSWORD,
+            },
+        )
+        assert response.status_code == 200, response.text
         yield test_client
 
     app.dependency_overrides.clear()

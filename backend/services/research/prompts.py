@@ -276,19 +276,43 @@ _RELEASE_PHRASES = frozenset(
 )
 
 
-def answer_format_block(*, wants_prompts: bool, count: int = 1) -> str:
+def aspect_token_for(mode: str) -> str | None:
+    """The ``--ar H:W`` token the operator's system prompt for ``mode`` requires.
+
+    The system prompt is the single owner of the House Standard — including the
+    aspect ratio — so the runtime reads the token from it rather than
+    hardcoding one (an untouched install still resolves to the shipped
+    ``--ar 16:9`` default, because that is what its default text says). ``None``
+    means the text specifies no ratio: callers then impose and validate none,
+    because the system prompt is the only authority.
+    """
+    from services.research import synthesis, system_prompts
+
+    match = synthesis.AR_TOKEN.search(system_prompts.effective(mode) or "")
+    if not match:
+        return None
+    return f"--ar {match.group(1)}:{match.group(2)}"
+
+
+def answer_format_block(
+    *, wants_prompts: bool, count: int = 1, mode: str = "generate"
+) -> str:
     """The answer-format section for a run.
 
     For a prompt run this is the JSON contract (from
-    :func:`services.research.synthesis.prompt_format_instruction`); otherwise the
-    prose block. Kept here so the system prompt and the user turn cannot disagree
+    :func:`services.research.synthesis.prompt_format_instruction`), with the
+    aspect token resolved from this mode's system prompt so the contract and
+    the House Standard cannot disagree about the ratio; otherwise the prose
+    block. Kept here so the system prompt and the user turn cannot disagree
     about what the model is being asked to emit.
     """
     if not wants_prompts:
         return PROSE_ANSWER_FORMAT
     from services.research import synthesis
 
-    return synthesis.prompt_format_instruction(max(1, count)).strip()
+    return synthesis.prompt_format_instruction(
+        max(1, count), aspect_token=aspect_token_for(mode)
+    ).strip()
 
 
 def compose_system_prompt(
@@ -327,7 +351,9 @@ def compose_system_prompt(
         _fill_markers(
             RESEARCH_INSTRUCTION,
             tool_list_text(tool_specs),
-            answer_format_block(wants_prompts=wants_prompts, count=count),
+            answer_format_block(
+                wants_prompts=wants_prompts, count=count, mode=mode
+            ),
         ),
         "",
         "OBJECTIVE FOR THIS RUN",
@@ -364,19 +390,28 @@ def _objective(mode: str, validity_check: bool, released: bool = False, count: i
         return (
             "The operator gave you a description and wants generation prompts for "
             "it. You do not need to research unless the request is ambiguous; the "
-            "operator's description is the authority on the subject. Produce "
-            f"exactly {max(1, count)} prompt(s), each describing a clearly "
-            "different image: vary the subject, setting, activity, time of day "
-            "and camera position so no two would produce similar frames. Your "
-            "FINAL reply must be the JSON object from ANSWER FORMAT — nothing "
-            "before it, nothing after it."
+            "operator's description is the authority on the subject. Base the "
+            "subject on THIS message: every prompt stays inside the description or "
+            "niche the operator just gave — never swap it for an unrelated topic "
+            "and never carry a subject over from earlier in the conversation. "
+            f"Produce exactly {max(1, count)} prompt(s), each a genuinely "
+            "different image: change what is depicted — a different object or "
+            "variant, a different arrangement, composition, camera angle and "
+            "framing — not just the wording, so no two would produce similar "
+            "frames. If the description names one specific object, that object "
+            "appears in every prompt and only its depiction changes. Your FINAL "
+            "reply must be the JSON object from ANSWER FORMAT — nothing before it, "
+            "nothing after it."
         )
     if mode == "batch":
         return (
             "The operator described a niche and asked for a set of prompts. Produce "
-            "exactly the requested number, each describing a clearly different "
-            "image inside that niche: vary the subject, setting, activity, time of "
-            "day and camera position so no two would produce similar frames. Your "
+            "exactly the requested number, each a genuinely different image inside "
+            "that niche: for every prompt choose a different subject or variant the "
+            "niche contains, plus a different arrangement, composition, camera "
+            "angle and framing — never the same subject reworded. Stay inside the "
+            "niche the operator gave in THIS message; do not drift to unrelated "
+            "topics or reuse a subject from earlier in the conversation. Your "
             "FINAL reply must be the JSON object from ANSWER FORMAT. The "
             "non-similarity requirement is the point of this mode: a set of "
             "near-identical frames is a failed batch."
@@ -427,23 +462,27 @@ def _objective(mode: str, validity_check: bool, released: bool = False, count: i
         )
     if mode == "ideas":
         scoring = (
-            " The operator asked for a validity check: call `assess_validity` for "
-            "each idea you propose (pass `subject` = the idea) so each one gets a "
-            "real scorecard, and hold ideas below the target out of your "
-            "recommendation."
+            " The operator asked for a validity check: call `assess_validity` "
+            "separately for EACH idea you propose (pass `subject` = the idea) "
+            "so each one gets its own real scorecard, and present every idea "
+            "together with the score its own call returned."
             if validity_check
             else ""
         )
         return (
             "The operator asked you to find ideas rather than to write prompts. "
             "Research what is in demand and what is over-supplied, then propose "
-            "the number of distinct niche(s) or concept(s) they asked for in "
-            "their message — if they did not say how many, propose five — "
-            "strongest first. Rate each idea against the "
-            f"{_target_text()} collective-confidence target: only recommend one "
-            "when your evidence supports roughly that level, and say plainly when "
-            "it does not. For each, say briefly why it is worth pursuing and what "
-            "the competition looks like. Do NOT write prompts: the operator will "
-            f"pick one and ask for them.{scoring}"
+            "EXACTLY the number of distinct niche(s) or concept(s) they asked "
+            "for in their message — read it from their wording; if they did "
+            "not say how many, propose five — strongest first. Deliver all of "
+            "them: do not stop after one idea and do not drop any from your "
+            "answer. Rate each idea against the "
+            f"{_target_text()} collective-confidence target to rank and "
+            "recommend — recommend the strongest, say plainly when an idea "
+            "falls short of that level, and mark weaker ones as lower "
+            "confidence, but present them with their real scores rather than "
+            "holding them back. For each, say briefly why it is worth pursuing "
+            "and what the competition looks like. Do NOT write prompts: the "
+            f"operator will pick one and ask for them.{scoring}"
         )
     return "Answer the operator's request using the tools available to you."

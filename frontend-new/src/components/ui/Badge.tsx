@@ -1,8 +1,9 @@
 import type { ReactNode } from "react";
 
-type Tone = "neutral" | "success" | "warn" | "danger" | "info";
+/** Badge tone vocabulary — exported so tone maps (lib/states.ts) stay in sync. */
+export type BadgeTone = "neutral" | "success" | "warn" | "danger" | "info";
 
-const TONES: Record<Tone, string> = {
+const TONES: Record<BadgeTone, string> = {
   neutral: "border-parchment-500 text-ink-600 bg-parchment-200",
   success: "border-olive-500 text-olive-400 bg-olive-400/15",
   warn: "border-rust-400 text-rust-400 bg-rust-400/15",
@@ -11,7 +12,7 @@ const TONES: Record<Tone, string> = {
 };
 
 interface BadgeProps {
-  tone?: Tone;
+  tone?: BadgeTone;
   children: ReactNode;
   className?: string;
 }

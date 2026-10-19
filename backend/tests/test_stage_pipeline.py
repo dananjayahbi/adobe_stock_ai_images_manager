@@ -16,7 +16,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from models import ImageRecord, ImageStatus, PipelineStage
+from models import ImageLifecycleState, ImageRecord, ImageStatus, PipelineStage
 from services import jobs as jobs_module
 from services.stage_registry import (
     ORDERED_STAGES,
@@ -80,8 +80,19 @@ def pipeline_env(db_session_factory, monkeypatch, tmp_path):
     return {"settings": settings, "tmp_path": tmp_path, "factory": db_session_factory}
 
 
-def _make_record(factory, tmp_path, *, name="sample.jpg", stage=PipelineStage.COLLECTED):
-    """Persist a COLLECTED record backed by a real JPEG on disk."""
+def _make_record(
+    factory,
+    tmp_path,
+    *,
+    name="sample.jpg",
+    stage=PipelineStage.COLLECTED,
+    state=None,
+):
+    """Persist a COLLECTED record backed by a real JPEG on disk.
+
+    ``state`` defaults to COLLECTED; CSV-eligibility fixtures pass e.g.
+    ``ImageLifecycleState.READY_TO_PUBLISH`` for a record the operator queued.
+    """
     from tests.test_acceptance_scorer import _noisy_gradient
 
     inbox = tmp_path / "inbox"
@@ -104,6 +115,7 @@ def _make_record(factory, tmp_path, *, name="sample.jpg", stage=PipelineStage.CO
             original_path=str(path),
             status=ImageStatus.PENDING,
             stage=stage,
+            state=state if state is not None else ImageLifecycleState.COLLECTED,
             working_path=str(path),
             file_size_bytes=path.stat().st_size,
             megapixels=4.8,
@@ -153,7 +165,7 @@ def _stub_metadata(monkeypatch, title="Mountain ridge at golden hour"):
     monkeypatch.setattr(
         gemini_metadata,
         "generate_metadata",
-        lambda path, api_key=None: {
+        lambda *args, **kwargs: {
             "title": title,
             "description": "Layered peaks under warm evening light.",
             "keywords": ["mountains", "sunset", "landscape", "golden hour", "peaks"],
@@ -497,7 +509,7 @@ def test_metadata_stage_survives_a_model_failure(pipeline_env, monkeypatch):
     from tasks import stage_orchestrator
 
     monkeypatch.setattr(
-        gemini_metadata, "generate_metadata", lambda path, api_key=None: None
+        gemini_metadata, "generate_metadata", lambda *args, **kwargs: None
     )
 
     record_id, _ = _make_record(
@@ -524,8 +536,8 @@ def test_metadata_stage_processes_records_sequentially(pipeline_env, monkeypatch
 
     order: list[str] = []
 
-    def recording_generate(path, api_key=None):
-        order.append(str(path))
+    def recording_generate(*args, **kwargs):
+        order.append(str(args[0]))
         return {
             "title": f"Title {len(order)}",
             "description": "d",
@@ -576,7 +588,7 @@ def test_metadata_stage_skips_terminal_records(pipeline_env, monkeypatch):
 # Stage 6 - CSV from the database
 # --------------------------------------------------------------------------- #
 
-def test_build_metadata_csv_includes_only_ready_stages(pipeline_env):
+def test_build_metadata_csv_includes_only_deliverable_records(pipeline_env):
     from tasks import stage_orchestrator
 
     ready_id, _ = _make_record(
@@ -584,6 +596,8 @@ def test_build_metadata_csv_includes_only_ready_stages(pipeline_env):
         pipeline_env["tmp_path"],
         name="ready.jpg",
         stage=PipelineStage.METADATA_READY,
+        # Queued for publish — the state the export gate reads.
+        state=ImageLifecycleState.READY_TO_PUBLISH,
     )
     _make_record(
         pipeline_env["factory"],
@@ -620,6 +634,7 @@ def test_build_metadata_csv_accepts_explicit_ids(pipeline_env):
             pipeline_env["tmp_path"],
             name=f"asset{i}.jpg",
             stage=PipelineStage.PUBLISHED,
+            state=ImageLifecycleState.PUBLISHED,
         )[0]
         for i in range(3)
     ]

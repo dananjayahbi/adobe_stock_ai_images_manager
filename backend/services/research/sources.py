@@ -246,6 +246,38 @@ def normalise_url(raw: object) -> str:
     return parsed._replace(fragment="").geturl()
 
 
+def url_key(raw: object) -> str:
+    """Canonical key for comparing two URLs as *the same page*.
+
+    Pure string work — no I/O, no DNS — because it runs on the hot path of every
+    ``fetch_page`` call (the blocked-list guard) and on every write to the
+    blocked list, where resolving a host would turn a comparison into a network
+    round-trip.
+
+    ``https://example.com`` and ``https://example.com/`` are one page, not two,
+    so trailing slashes are stripped after :func:`normalise_url` has already
+    folded case-insensitive schemes, bare hosts and dropped fragments. A URL
+    :func:`normalise_url` refuses (an unusable scheme, a hostless string) still
+    needs a stable key for the fallback path — the raw text minus whitespace and
+    ``#fragment`` — rather than collapsing everything unusable into ``""``,
+    which would make every bad URL block every other one.
+    """
+    try:
+        canonical = normalise_url(raw)
+    except ValueError:
+        # ``urlparse`` raises on some malformed URLs (an unterminated IPv6
+        # bracket, say) where ``normalise_url`` has no answer at all; those
+        # belong to the same fallback path as a plain refusal, or a model
+        # tool call with a broken URL would crash the guard instead of
+        # falling through to the fetch's own validation.
+        canonical = ""
+    if not canonical:
+        text = " ".join(str(raw if raw is not None else "").split())
+        text = text.split("#", 1)[0]
+        return text.rstrip("/")
+    return canonical.rstrip("/")
+
+
 def parse(payload: object) -> SourceSet:
     """Parse a decoded JSON payload into a :class:`SourceSet`.
 

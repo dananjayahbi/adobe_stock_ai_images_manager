@@ -7,6 +7,20 @@ interface SelectionToolbarProps {
   onSelectAll: () => void;
   onClear: () => void;
   onDownload: () => void;
+  /** Direct Adobe-template CSV export for the selection (optional). */
+  onExportCsv?: () => void;
+  /**
+   * Usage state of the selection: which mark buttons make sense. `null`
+   * (nothing selected is still on screen) hides both.
+   */
+  selectedUsage?: "used" | "unused" | "mixed" | null;
+  /** Mark the selection used (true) or unused (false). */
+  onMarkUsage?: (isUsed: boolean) => void;
+  /**
+   * Push the selection toward ready-to-upload, running each image's missing
+   * pipeline steps first (opens the pre-flight dialog).
+   */
+  onPromote?: () => void;
   onGroup: () => void;
   onDelete: () => void;
   /** Total images visible, so "select all" can say what it selects. */
@@ -25,6 +39,10 @@ export default function SelectionToolbar({
   onSelectAll,
   onClear,
   onDownload,
+  onExportCsv,
+  selectedUsage,
+  onMarkUsage,
+  onPromote,
   onGroup,
   onDelete,
   visibleCount,
@@ -44,6 +62,29 @@ export default function SelectionToolbar({
         <Button variant="secondary" size="sm" onClick={onDownload}>
           ↓ Download
         </Button>
+        {onExportCsv && (
+          <Button variant="secondary" size="sm" onClick={onExportCsv}>
+            ⇪ CSV
+          </Button>
+        )}
+        {/* Only offer the direction the selection can actually move: an
+            all-used selection needs "unused", anything else needs "used",
+            and a mix offers both. */}
+        {onMarkUsage && selectedUsage && selectedUsage !== "used" && (
+          <Button variant="secondary" size="sm" onClick={() => onMarkUsage(true)}>
+            ✓ Mark used
+          </Button>
+        )}
+        {onMarkUsage && selectedUsage && selectedUsage !== "unused" && (
+          <Button variant="secondary" size="sm" onClick={() => onMarkUsage(false)}>
+            ○ Mark unused
+          </Button>
+        )}
+        {onPromote && (
+          <Button variant="secondary" size="sm" onClick={onPromote}>
+            ↑ Ready to upload
+          </Button>
+        )}
         <Button variant="secondary" size="sm" onClick={onGroup}>
           ▸ Group
         </Button>

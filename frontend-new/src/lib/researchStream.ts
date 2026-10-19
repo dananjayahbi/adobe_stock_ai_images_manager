@@ -56,6 +56,15 @@ export interface ResearchStreamState {
   /** The model's own one-line statement of what it produced. */
   promptSummary: string;
   validity: ResearchValidity | null;
+  /**
+   * Every scorecard the current turn produced — an `ideas` turn assesses each
+   * idea separately and each assessment renders its own card. `validity` above
+   * keeps its single-slot meaning (the latest assessment) for older readers;
+   * old runs replaying through this reducer fill the list the same way.
+   */
+  validities: ResearchValidity[];
+  /** The turn `validities` was built in — a later turn replaces the set. */
+  validityTurn: number | null;
   followUpActions: FollowUpAction[];
   notices: string[];
   error: string;
@@ -81,6 +90,8 @@ export function initialState(): ResearchStreamState {
     prompts: [],
     promptSummary: "",
     validity: null,
+    validities: [],
+    validityTurn: null,
     followUpActions: [],
     notices: [],
     error: "",
@@ -183,14 +194,29 @@ export function reduceEvent(
         promptSummary: event.summary?.trim() ?? "",
       };
 
-    case "validity":
+    case "validity": {
+      // Scorecards accumulate *within the turn that produced them*: an `ideas`
+      // turn calls `assess_validity` once per idea and each call must render
+      // its own card. A later turn replaces the set, so a research follow-up
+      // still shows exactly the one assessment it produced — the old
+      // single-slot behaviour for every non-ideas mode.
+      const turn = state.turns.length;
+      const entry = event.validity ?? null;
+      const continues = entry !== null && state.validityTurn === turn;
       return {
         ...state,
-        validity: event.validity ?? null,
+        validity: entry,
+        validities: entry
+          ? continues
+            ? [...state.validities, entry]
+            : [entry]
+          : state.validities,
+        validityTurn: entry ? turn : state.validityTurn,
         // New actions replace old ones; absent keeps the previous set so a
         // re-describe without buttons does not silently drop the gate.
         followUpActions: event.follow_up_actions ?? state.followUpActions,
       };
+    }
 
     case "notice":
       // Deduplicated: a repeated notice would stack the same banner.

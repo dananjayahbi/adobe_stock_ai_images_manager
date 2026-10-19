@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from config import settings
 from database import SessionLocal, get_db
-from models import ImageRecord, ImageStatus, PipelineStage, utcnow
+from models import ImageLifecycleState, ImageRecord, ImageStatus, PipelineStage, utcnow
 from schemas import (
     CategoryResponse,
     CsvExportRequest,
@@ -43,6 +43,7 @@ from schemas import (
 )
 from services import csv_export, upscaler
 from services.adobe_categories import all_categories, resolve_category
+from services.image_lifecycle import refresh_state_for_stage
 from services.jobs import STATUS_FAILED, STATUS_RUNNING, JobItem, registry
 from services.stage_registry import (
     STAGE_BY_VALUE,
@@ -202,6 +203,21 @@ async def stage_summary(db: Session = Depends(get_db)) -> StageSummaryResponse:
         .scalar()
     )
 
+    state_rows = (
+        db.query(ImageRecord.state, func.count(ImageRecord.id))
+        .group_by(ImageRecord.state)
+        .all()
+    )
+    # Zero-filled so consumers can index every key without a None check.
+    state_counts: dict[str, int] = {state.value: 0 for state in ImageLifecycleState}
+    for state_value, count in state_rows:
+        key = (
+            state_value.value
+            if isinstance(state_value, ImageLifecycleState)
+            else str(state_value)
+        )
+        state_counts[key] = state_counts.get(key, 0) + count
+
     return StageSummaryResponse(
         counts=counts,
         total=sum(counts_by_stage.values()),
@@ -209,6 +225,7 @@ async def stage_summary(db: Session = Depends(get_db)) -> StageSummaryResponse:
         rejected=counts_by_stage.get(PipelineStage.OCR_REJECTED.value, 0),
         incompatible=counts_by_stage.get(PipelineStage.INCOMPATIBLE.value, 0),
         average_score=round(float(average_score), 4) if average_score else None,
+        state_counts=state_counts,
     )
 
 
@@ -287,14 +304,17 @@ def _assert_stage_preconditions(stage_key: str, db: Session, record_ids: list[st
             db.query(func.count(ImageRecord.id))
             .filter(
                 ImageRecord.id.in_(record_ids),
-                ImageRecord.stage == PipelineStage.METADATA_READY,
+                ImageRecord.state == ImageLifecycleState.READY_TO_PUBLISH,
             )
             .scalar()
         )
         if not eligible:
             raise HTTPException(
                 status_code=409,
-                detail="Stage 6 (metadata) must complete before an image can be published.",
+                detail=(
+                    "Records must be queued for publish first "
+                    "(state READY_TO_PUBLISH)."
+                ),
             )
 
     if stage_key in ("refine", "compatibility"):
@@ -511,6 +531,7 @@ async def update_metadata(
     if record.stage == PipelineStage.COMPATIBLE:
         record.stage = PipelineStage.METADATA_READY
         record.stage_updated_at = utcnow()
+        refresh_state_for_stage(record)
 
     db.commit()
     db.refresh(record)
@@ -617,6 +638,12 @@ async def reset_stage(
     record.stage = PipelineStage.COLLECTED
     record.stage_updated_at = utcnow()
     record.status = ImageStatus.PENDING
+    # A restart clears the lifecycle too: back to "not processed", unqueued,
+    # and unmarked — otherwise a reset image would still export/download as
+    # published material it no longer is.
+    record.state = ImageLifecycleState.COLLECTED
+    record.is_used = False
+    record.used_at = None
     record.acceptance_score = None
     record.acceptance_report = None
     record.refine_passes = 0

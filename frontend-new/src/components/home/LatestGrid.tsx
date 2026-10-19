@@ -54,7 +54,7 @@ export default function LatestGrid({ onNewBatch }: LatestGridProps) {
             Latest processed
           </h2>
         </div>
-        <Link href="/gallery">
+        <Link href="/adobe-stock/gallery">
           <Button variant="secondary" size="sm">
             Open gallery →
           </Button>

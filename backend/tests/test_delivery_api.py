@@ -14,8 +14,28 @@ import zipfile
 
 import pytest
 
-from models import PipelineStage
+from models import ImageLifecycleState, PipelineStage
 from tests.test_stage_pipeline import pipeline_env  # noqa: F401  (shared fixture)
+
+
+def _default_state(stage: PipelineStage) -> ImageLifecycleState:
+    """The state a fixture record has, given its stage.
+
+    Mirrors the migration backfill's mapping, plus the one manual step these
+    delivery tests stand in for: a METADATA_READY record is *queued* for
+    publish (otherwise nothing here could reach the CSV at all).
+    """
+    if stage == PipelineStage.PUBLISHED:
+        return ImageLifecycleState.PUBLISHED
+    if stage in (
+        PipelineStage.OCR_REJECTED,
+        PipelineStage.INCOMPATIBLE,
+        PipelineStage.QUARANTINED,
+    ):
+        return ImageLifecycleState.REJECTED
+    if stage == PipelineStage.METADATA_READY:
+        return ImageLifecycleState.READY_TO_PUBLISH
+    return ImageLifecycleState.COLLECTED
 
 
 @pytest.fixture()
@@ -26,6 +46,7 @@ def make_record(db_session_factory):
         filename: str = "img.jpg",
         *,
         stage: PipelineStage = PipelineStage.METADATA_READY,
+        state: ImageLifecycleState | None = None,
         title: str | None = None,
         score: float | None = None,
         working_path: str | None = None,
@@ -39,6 +60,7 @@ def make_record(db_session_factory):
             original_path=f"/tmp/{filename}",
             file_size_bytes=1024,
             stage=stage,
+            state=state or _default_state(stage),
             generated_title=title,
             acceptance_score=score,
             working_path=working_path,
@@ -139,8 +161,8 @@ def test_normalise_name_strips_non_ascii_to_the_ascii_remainder():
     assert asset_naming.normalise_name("Ünïcödé Tïtlé") == "n-c-d-t-tl.jpg"
 
 
-def test_normalise_name_respects_the_thirty_character_cap():
-    """Adobe's cap counts the whole filename, extension included."""
+def test_normalise_name_respects_the_filename_cap():
+    """The cap counts the whole filename, extension included."""
     from services import asset_naming
     from services.upload_table import MAX_FILENAME_LENGTH
 
@@ -159,9 +181,10 @@ def test_validate_name_accepts_a_compliant_name():
 def test_validate_name_reports_the_reason_a_name_is_rejected():
     """Problems are returned, not raised, so a batch can report per record."""
     from services import asset_naming
+    from services.upload_table import MAX_FILENAME_LENGTH
 
-    problems = asset_naming.validate_name("x" * 40 + ".jpg")
-    assert any("30" in problem for problem in problems)
+    problems = asset_naming.validate_name("x" * (MAX_FILENAME_LENGTH + 4))
+    assert any(str(MAX_FILENAME_LENGTH) in problem for problem in problems)
 
     problems = asset_naming.validate_name("photo.png")
     assert any("png" in problem for problem in problems)
@@ -731,24 +754,68 @@ def test_bundle_requires_an_explicit_selection(client, make_record):
     assert "explicit selection" in response.json()["detail"]
 
 
-def test_bundle_reports_when_nothing_is_staged(client, make_record, tmp_path, monkeypatch):
+def test_bundle_falls_back_to_the_working_file_before_publishing(
+    client, make_record, tmp_path, monkeypatch
+):
+    """The gallery's default "Ready to publish" selection has no staged copy.
+
+    Publishing is what creates the staged file, so a bundle of METADATA_READY
+    records must ship the working file — the exact bytes a later publish would
+    stage — paired with a CSV row naming that same file.
+    """
+    from config import settings
+
+    ready_dir = tmp_path / "ready-unused"
+    ready_dir.mkdir(exist_ok=True)
+    monkeypatch.setattr(settings, "READY_DIR", ready_dir)
+
+    working = tmp_path / "working.jpg"
+    working.write_bytes(b"WORKING-QUALITY-COPY")
+    record_id = make_record(
+        "ready-but-unpublished.jpg",
+        title="Ready But Unpublished",
+        working_path=str(working),
+    )
+
+    response = client.post(
+        "/api/assets/bundle",
+        json={"record_ids": [record_id], "only_ready": False},
+    )
+
+    assert response.status_code == 200
+    with zipfile.ZipFile(io.BytesIO(response.content)) as archive:
+        names = archive.namelist()
+        csv_text = archive.read("adobe-stock-metadata.csv").decode("utf-8-sig")
+        image_names = [name for name in names if not name.endswith(".csv")]
+        assert len(image_names) == 1
+        assert archive.read(image_names[0]) == b"WORKING-QUALITY-COPY"
+
+    csv_names = [line.split(",")[0] for line in csv_text.splitlines()[1:] if line.strip()]
+    # The invariant, on the fallback path too: CSV row == archived file.
+    assert set(csv_names) == set(image_names)
+
+
+def test_bundle_reports_when_no_file_exists_anywhere(
+    client, make_record, tmp_path, monkeypatch
+):
     from config import settings
 
     ready_dir = tmp_path / "ready-empty"
     ready_dir.mkdir(exist_ok=True)
     monkeypatch.setattr(settings, "READY_DIR", ready_dir)
 
+    # original_path points at /tmp/... which does not exist in the test
+    # environment — neither staged nor working nor original is on disk.
     record_id = make_record("unstaged.jpg", title="Unstaged")
 
     response = client.post("/api/assets/bundle", json={"record_ids": [record_id]})
 
     assert response.status_code == 409
-    # The message must say *why* nothing can be staged, not just that it cannot:
-    # publishing is what creates the staged file, which is the whole reason the
-    # operator's "Zip + CSV" click failed.
+    # The message must say *why* nothing can be bundled, and point at the
+    # action that still works in this state.
     detail = response.json()["detail"]
-    assert "staged file" in detail
-    assert "Publishing" in detail
+    assert "file to bundle" in detail
+    assert "CSV" in detail
 
 
 # --------------------------------------------------------------------------- #

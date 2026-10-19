@@ -385,7 +385,11 @@ export async function clearPrioritySources(): Promise<PrioritySourceFile> {
  * instead of saving.
  */
 export async function downloadSourceTemplate(): Promise<void> {
-  const response = await fetch(`${API_BASE_URL}/api/research/sources/template`);
+  const response = await fetch(`${API_BASE_URL}/api/research/sources/template`, {
+    // Cross-origin to the API host — the session cookie rides along only
+    // when credentials are included.
+    credentials: "include",
+  });
   if (!response.ok) {
     throw new Error(`Could not download the template (HTTP ${response.status}).`);
   }
@@ -411,4 +415,43 @@ export function sourceHost(source: PrioritySource): string {
   } catch {
     return source.url;
   }
+}
+
+// --------------------------------------------------------------------------- //
+// Blocked fetch URLs (pages fetch_page failed on and refuses to retry)
+// --------------------------------------------------------------------------- //
+
+export interface BlockedUrlEntry {
+  /** The URL as the model asked for it, so it matches the transcript. */
+  url: string;
+  host: string;
+  /** Why the last read failed (e.g. "HTTP 403", a timeout). */
+  error: string;
+  /** UTC ISO timestamp of the most recent failure. */
+  blocked_at: string;
+  /** How many times this URL has failed in total. */
+  failures: number;
+}
+
+export interface BlockedUrlList {
+  entries: BlockedUrlEntry[];
+  total: number;
+}
+
+export async function fetchBlockedUrls(): Promise<BlockedUrlList> {
+  const { data } = await api.get<BlockedUrlList>("/api/research/blocked");
+  return data;
+}
+
+/** Release one blocked URL so the agent may try it again. */
+export async function unblockUrl(url: string): Promise<BlockedUrlList> {
+  const { data } = await api.delete<BlockedUrlList>("/api/research/blocked", {
+    params: { url },
+  });
+  return data;
+}
+
+export async function clearBlockedUrls(): Promise<BlockedUrlList> {
+  const { data } = await api.delete<BlockedUrlList>("/api/research/blocked");
+  return data;
 }

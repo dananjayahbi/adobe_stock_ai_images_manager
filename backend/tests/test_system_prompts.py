@@ -24,7 +24,7 @@ import pytest
 from services import prompt_library
 from services.research import agent as agent_module
 from services.research import events as event_module
-from services.research import prompts, system_prompts
+from services.research import prompts, synthesis, system_prompts
 
 
 @pytest.fixture()
@@ -170,6 +170,67 @@ class TestRoundTrip:
         )
         assert "PRIORITY SOURCES" in composed
         assert "JUST CONTENT GUIDANCE" in composed
+
+
+class TestAspectRatioFollowsTheSystemPrompt:
+    """The operator's system prompt is the only authority on the ratio.
+
+    The runtime used to hardcode ``--ar 16:9`` into the answer contract and the
+    validation warnings, so a House Standard saying ``1:1`` was overridden. The
+    token is now *read from* the saved text.
+    """
+
+    def test_the_token_is_read_from_the_saved_prompt(self):
+        system_prompts.save("generate", "Every prompt must end with --ar 1:1.")
+        assert prompts.aspect_token_for("generate") == "--ar 1:1"
+
+    def test_a_prompt_without_a_token_imposes_none(self):
+        system_prompts.save("generate", "Pure white background, no ratio set.")
+        assert prompts.aspect_token_for("generate") is None
+
+    def test_an_untouched_install_falls_back_to_the_shipped_default(self):
+        assert prompts.aspect_token_for("generate") == synthesis.ASPECT_TOKEN
+
+    def test_legacy_modes_resolve_the_generate_prompt(self):
+        system_prompts.save("generate", "Always end with --ar 4:5.")
+        assert prompts.aspect_token_for("static") == "--ar 4:5"
+        assert prompts.aspect_token_for("batch") == "--ar 4:5"
+
+    def test_the_answer_format_carries_the_saved_ratio_only(self):
+        system_prompts.save("generate", "Always --ar 1:1. Never another ratio.")
+        composed = prompts.compose_system_prompt(
+            tool_specs=[],
+            mode="generate",
+            validity_check=False,
+            max_tools=5,
+        )
+        assert "--ar 1:1" in composed
+        assert "--ar 16:9" not in composed
+
+
+class TestObjectivesAnchorSubjectAndDemandVariety:
+    """Two failures these wordings exist to prevent: a run that swapped the
+    operator's subject for an unrelated one (blacksmith tongs in, soap out), and
+    a batch of near-identical frames Adobe refuses as similar content."""
+
+    def test_generate_stays_inside_the_message_and_varies_within_it(self):
+        objective = prompts._objective("generate", False, count=5)
+        assert "THIS message" in objective
+        assert "never swap it for an unrelated topic" in objective
+        assert "genuinely different" in objective
+        # The subject is anchored, so "vary the subject" is no longer a licence
+        # to replace it — only the depiction changes.
+        assert "that object appears in every prompt" in objective
+
+    def test_batch_explores_different_subjects_inside_the_niche(self):
+        objective = prompts._objective("batch", False)
+        assert "different subject or variant the niche contains" in objective
+        assert "never the same subject reworded" in objective
+        assert "do not drift to unrelated" in objective
+
+    def test_both_objectives_still_reference_the_answer_format(self):
+        assert "ANSWER FORMAT" in prompts._objective("generate", False)
+        assert "ANSWER FORMAT" in prompts._objective("batch", False)
 
 
 class TestModesOnTheWire:

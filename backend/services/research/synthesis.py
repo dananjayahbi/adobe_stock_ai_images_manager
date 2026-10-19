@@ -14,11 +14,12 @@ Four things are enforced rather than trusted:
    If the model ignores the schema the parser falls back to the old delimited
    and paragraph paths, each announcing itself, because a run must not silently
    yield zero prompts.
-2. **House rules.** Every prompt must end with the literal ``--ar 16:9``, must be
-   a real paragraph, and must be clear of Adobe's restricted terms. A violation
-   becomes a *warning attached to that prompt*, not a rejection: the operator is
-   the final judge, and silently discarding the model's work would be worse than
-   showing it with a flag.
+2. **House rules.** Every prompt must end with the aspect-ratio token the
+   operator's system prompt requires (``--ar 16:9`` is only the shipped
+   default), must be a real paragraph, and must be clear of Adobe's restricted
+   terms. A violation becomes a *warning attached to that prompt*, not a
+   rejection: the operator is the final judge, and silently discarding the
+   model's work would be worse than showing it with a flag.
 3. **Distinctness.** Two prompts that share most of their discriminating words
    would become two near-identical images, and Adobe refuses similar content.
    Duplicates are reported and the weaker one is dropped from the *suggested*
@@ -48,9 +49,39 @@ MIN_PROMPT_LENGTH = 80
 #: Upper bound, so one runaway paragraph cannot dominate the library.
 MAX_PROMPT_LENGTH = 2_000
 
-#: The aspect-ratio token every prompt must carry. Checked literally because it
-#: is the one house rule a downstream generator acts on mechanically.
+#: The *shipped default* aspect-ratio token — the one the default House Standard
+#: carries. It is only a fallback for callers that pass no token: the ratio a run
+#: actually enforces is read from the operator's system prompt
+#: (:func:`services.research.prompts.aspect_token_for`), because the House
+#: Standard, not this module, owns the aspect ratio.
 ASPECT_TOKEN = "--ar 16:9"
+
+#: An ``--ar H:W`` token in any spacing or case, so an operator's ``--ar 1:1``
+#: and a model's ``--ar 16:9`` are recognised and compared by value rather than
+#: by spelling.
+AR_TOKEN = re.compile(r"--ar\s*(\d+)\s*:\s*(\d+)", re.I)
+
+
+def normalise_aspect_token(token: str | None) -> str | None:
+    """Canonical ``--ar H:W`` spelling of ``token``.
+
+    Returns ``None`` when ``token`` is missing, empty, or names no ratio at all —
+    which every caller reads as "there is no aspect requirement to enforce".
+    """
+    if not token:
+        return None
+    match = AR_TOKEN.search(str(token))
+    if not match:
+        return None
+    return f"--ar {match.group(1)}:{match.group(2)}"
+
+
+def _has_aspect_token(text: str, token: str) -> bool:
+    """Whether ``text`` carries ``token``, comparing the ratio not the spelling."""
+    match = AR_TOKEN.search(text or "")
+    if not match:
+        return False
+    return f"--ar {match.group(1)}:{match.group(2)}" == token
 
 #: Pairwise wording similarity at which two prompts are treated as one idea.
 #: Lower than the duplicate detector's own threshold for *records*, because two
@@ -65,13 +96,18 @@ MAX_PROMPTS = 60
 #:
 #: A schema rather than a delimiter: every field the library needs arrives
 #: labelled, so nothing has to be inferred from prose, and a missing field is a
-#: missing key instead of a silently truncated paragraph.
+#: missing key instead of a silently truncated paragraph. The ``body``
+#: description is a placeholder — :func:`prompt_format_instruction` rewrites it
+#: with the aspect token from the operator's system prompt on every call.
 JSON_CONTRACT: dict = {
     "summary": "one sentence describing what was produced",
     "prompts": [
         {
             "title": "short human label, max 60 characters",
-            "body": f"the full generation prompt paragraph, ending with {ASPECT_TOKEN}",
+            "body": (
+                "the full generation prompt paragraph, ending with the aspect "
+                "token the House Standard specifies"
+            ),
             "tags": ["2-4 short topical tags"],
             "category": 1,
             "notes": "optional one-line note for the operator",
@@ -140,19 +176,49 @@ class DraftPrompt:
         }
 
 
-def prompt_format_instruction(count: int) -> str:
+def prompt_format_instruction(
+    count: int, aspect_token: str | None = ASPECT_TOKEN
+) -> str:
     """The output-format block appended to the objective for prompt-producing runs.
 
     Given to the model verbatim so the parser is reading a contract rather than
-    guessing at prose. Two details are deliberate:
+    guessing at prose. Four details are deliberate:
 
     * the schema is shown as JSON, not described, because a model reproduces a
       shape it can see far more reliably than one described in a sentence;
     * the count is stated as a target rather than a command, because asking for
       exactly N sometimes yields N copies of one idea — which is the failure this
-      whole feature exists to avoid.
+      whole feature exists to avoid;
+    * ``aspect_token`` is *passed in* (resolved from the operator's system prompt
+      by :func:`services.research.prompts.aspect_token_for`) so the House
+      Standard is the single owner of the ratio — the runtime must follow it,
+      not override it. ``None`` means the House Standard sets no ratio, and the
+      block then imposes none;
+    * every entry must stay inside the operator's subject while genuinely
+      differing from the others — near-identical prompts become near-identical
+      images, and Adobe refuses similar content.
     """
-    schema = json.dumps(JSON_CONTRACT, indent=2)
+    token = normalise_aspect_token(aspect_token)
+    contract = json.loads(json.dumps(JSON_CONTRACT))
+    if token:
+        contract["prompts"][0]["body"] = (
+            f"the full generation prompt paragraph, ending with {token}"
+        )
+        aspect_rule = (
+            f"- Each `body` must end with the literal token `{token}` — the aspect "
+            "ratio from the House Standard. Follow the House Standard exactly; "
+            "never substitute a different ratio."
+        )
+    else:
+        contract["prompts"][0]["body"] = (
+            "the full generation prompt paragraph, ending with the aspect-ratio "
+            "token (`--ar …`) the House Standard specifies"
+        )
+        aspect_rule = (
+            "- Follow the House Standard's aspect ratio and end each `body` with "
+            "its `--ar …` token exactly; if it specifies none, add no `--ar` token."
+        )
+    schema = json.dumps(contract, indent=2)
     return (
         f"\nOUTPUT FORMAT — this is a contract, not a suggestion\n"
         f"Reply with ONE JSON object and nothing else. No prose before it, no "
@@ -160,9 +226,12 @@ def prompt_format_instruction(count: int) -> str:
         f"{schema}\n\n"
         f"Rules for the JSON:\n"
         f"- `prompts` must contain {count} entr{'y' if count == 1 else 'ies'}.\n"
-        f"- Each `body` must end with the literal token `{ASPECT_TOKEN}`.\n"
-        f"- Each `body` must describe a DIFFERENT image — vary subject, setting, "
-        f"time of day and camera position, not just wording.\n"
+        f"{aspect_rule}\n"
+        f"- Each `body` must describe a DIFFERENT image: stay inside the "
+        "operator's subject or niche in every entry — never swap it for an "
+        "unrelated topic — but change what is depicted: a different object or "
+        "variant, a different arrangement, composition, camera angle and "
+        "framing. Rewording one scene is not a variation.\n"
         f"- `category` must be one of Adobe's numeric codes: "
         f"{', '.join(f'{code}={name}' for code, name in CATEGORY_CODES.items())}.\n"
         f"- If you can only write {count} genuinely different images, return fewer "
@@ -180,8 +249,8 @@ def _parse_json_payload(answer: str) -> tuple[dict | None, str]:
     """Find and decode the JSON object in an answer.
 
     Returns ``(payload, error)``. The object is located by brace matching from the
-    first ``{`` rather than by a regex, so a ``body`` containing a brace (or the
-    literal ``--ar 16:9`` token) cannot truncate the payload.
+    first ``{`` rather than by a regex, so a ``body`` containing a brace (or an
+    ``--ar`` aspect token) cannot truncate the payload.
     """
     text = _strip_json_fence(answer or "")
     start = text.find("{")
@@ -418,7 +487,7 @@ def parse_prompts_with_summary(answer: str) -> tuple[list[DraftPrompt], str, str
     candidates = [
         paragraph
         for paragraph in paragraphs
-        if len(paragraph) >= MIN_PROMPT_LENGTH or ASPECT_TOKEN in paragraph
+        if len(paragraph) >= MIN_PROMPT_LENGTH or AR_TOKEN.search(paragraph)
     ]
     if not candidates:
         return [], (
@@ -436,12 +505,16 @@ def parse_prompts_with_summary(answer: str) -> tuple[list[DraftPrompt], str, str
     ), ""
 
 
-def validate_prompt(body: str) -> list[str]:
+def validate_prompt(body: str, aspect_token: str | None = ASPECT_TOKEN) -> list[str]:
     """House-rule warnings for one prompt.
 
     Warnings rather than errors: the operator may have a reason to keep a prompt
     that omits the aspect token, and an image that violates a rule is still
     cheaper to fix now than after it has been generated.
+
+    ``aspect_token`` is the ``--ar H:W`` token the operator's system prompt
+    requires (pass ``None`` when it specifies none, and no aspect warning is
+    raised) — the House Standard is the only authority on the ratio.
     """
     warnings: list[str] = []
     text = (body or "").strip()
@@ -454,8 +527,9 @@ def validate_prompt(body: str) -> list[str]:
     if len(text) > MAX_PROMPT_LENGTH:
         warnings.append(f"Unusually long ({len(text)} characters); generators may ignore the tail.")
 
-    if ASPECT_TOKEN not in text:
-        warnings.append(f"Missing the house aspect token `{ASPECT_TOKEN}`.")
+    token = normalise_aspect_token(aspect_token)
+    if token and not _has_aspect_token(text, token):
+        warnings.append(f"Missing the house aspect token `{token}`.")
 
     restricted = scan_metadata(text)
     if restricted:
@@ -513,9 +587,13 @@ def flag_duplicates(prompts: list[DraftPrompt]) -> list[tuple[int, int, float]]:
 
 
 def build_drafts(
-    answer: str,
+    answer: str, aspect_token: str | None = ASPECT_TOKEN
 ) -> tuple[list[DraftPrompt], list[tuple[int, int, float]], str, str]:
     """Parse, validate and de-duplicate an answer in one pass.
+
+    ``aspect_token`` is forwarded to :func:`validate_prompt` — the token the
+    run's own system prompt requires, so validation follows the House Standard
+    the model was actually given.
 
     Returns ``(drafts, duplicate_pairs, note, summary)``. Warnings are *appended*
     to any the parser already attached, so a structural complaint about one entry
@@ -523,7 +601,7 @@ def build_drafts(
     """
     drafts, note, summary = parse_prompts_with_summary(answer)
     for draft in drafts:
-        draft.warnings = list(draft.warnings) + validate_prompt(draft.body)
+        draft.warnings = list(draft.warnings) + validate_prompt(draft.body, aspect_token)
     pairs = flag_duplicates(drafts)
     return drafts, pairs, note, summary
 

@@ -3,8 +3,10 @@
 Adobe Stock matches a CSV row to an uploaded image **by filename**, so the name
 carries real consequences:
 
-* it must be **≤ 30 characters including the extension** (Adobe's hard portal
-  limit, counted on the whole filename),
+* it must be a **filesystem-safe name** whose CSV value matches the uploaded
+  file exactly (Adobe's "30 characters maximum" listing is advisory guidance —
+  the uploader accepts longer names; the tool caps at
+  ``settings.CSV_MAX_FILENAME_LENGTH`` so full descriptive titles survive),
 * it must survive a filesystem round trip (ZIP, download, re-upload),
 * and it must be **stable** - the name in the CSV has to be the name of the file
   the operator actually uploads.
@@ -108,7 +110,7 @@ def normalise_name(raw: str, *, fallback_suffix: str = ".jpg") -> str:
     """Turn operator input into an Adobe-safe filename.
 
     Slugifies the stem, forces a JPEG extension, and truncates the *stem* (never
-    the extension) so the result always satisfies the 30-character cap. This is
+    the extension) so the result always satisfies the filename cap. This is
     deliberately forgiving: the operator types a human name and the tool makes it
     compliant rather than rejecting the input outright.
     """
@@ -144,7 +146,7 @@ def validate_name(name: str) -> list[str]:
 
     if len(raw) > MAX_FILENAME_LENGTH:
         problems.append(
-            f"{len(raw)} characters — Adobe allows at most {MAX_FILENAME_LENGTH} "
+            f"{len(raw)} characters — names are capped at {MAX_FILENAME_LENGTH} "
             "including the extension."
         )
 
@@ -223,9 +225,9 @@ def is_explicit(record: ImageRecord) -> bool:
 def deduplicate(names: list[str]) -> list[str]:
     """Make a batch of filenames unique, preserving order.
 
-    Adobe's 30-character cap makes collisions likely across a long batch, and
-    two identically-named files in one ZIP or CSV would silently drop a row.
-    Later duplicates gain a numeric suffix carved out of the stem, never the
+    Long descriptive titles can collide across a batch, and two
+    identically-named files in one ZIP or CSV would silently drop a row. Later
+    duplicates gain a numeric suffix carved out of the stem, never the
     extension.
     """
     seen: dict[str, int] = {}
